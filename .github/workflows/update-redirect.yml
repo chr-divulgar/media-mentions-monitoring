@@ -18,7 +18,7 @@ jobs:
 
       - name: Update index.html
         run: |
-          sed "s|__VITE_API__|${{ steps.get_var.outputs.url }}|g" docs/index.html > docs/index.html.tmp
+          sed "s|__VITE_API__|${{ secrets.VITE_API }}|g" docs/index.html > docs/index.html.tmp
           mv docs/index.html.tmp docs/index.html
 
       - name: Commit and push changes
