@@ -10,7 +10,7 @@
     "build": "concurrently \"nx build web-api-local\"",
     "build:api": "cd apps/web-api && set NODE_ENV=production&& set BACK_PORT=3001 && pnpm run build ",
     "build:ui": "cd apps/web-ui && set VITE_PORT=4300 && pnpm run build ",
-    "start": "concurrently  \"cd apps/web-api && set BACK_PORT=3001 && node dist/main.js \"  \"cd apps/web-ui  &&  npx vite preview --port 4300 --host localhost \""
+    "start": "cd apps/web-api && pnpm run start:prod"
   },
   "devDependencies": {
     "@google-cloud/speech": "^7.2.1",

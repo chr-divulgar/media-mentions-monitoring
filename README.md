@@ -1,41 +1,44 @@
-# Radio Alert
+# Media Mentions Monitoring
 
 ## Documentación
 
-- [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) — qué hace hoy el sistema, arquitectura, flujos principales, endpoints y variables de entorno.
+- [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) — arquitectura, flujos principales, endpoints y variables de entorno.
 
 ---
 
-# `Turborepo` Vite starter
+## Despliegue y ejecución
 
-This is an official starter Turborepo.
+El backend (NestJS) sirve el frontend (React + Vite) como archivos estáticos. Solo necesitas desplegar el backend y acceder a la URL pública, donde estará disponible la web y las APIs.
 
-## Using this example
+### Pasos para producción
 
-Run the following command:
+1. Construir el frontend:
+   ```sh
+   pnpm --filter ./apps/web-ui build
+   ```
+2. Copiar el build al backend:
+   ```sh
+   xcopy /E /I /Y apps\web-ui\dist apps\web-api\public
+   ```
+3. Iniciar el backend:
+   ```sh
+   pnpm --filter ./apps/web-api dev
+   ```
 
-```sh
-npx create-turbo@latest -e with-vite
-```
+El backend servirá la web en la misma URL y puerto configurado.
 
-## What's inside?
+---
 
-This Turborepo includes the following packages and apps:
+## Estructura del monorepo
 
-### Apps and Packages
+- apps/web-api: Backend NestJS
+- apps/web-ui: Frontend React + Vite
+- packages/: Paquetes compartidos
 
-- `docs`: a vanilla [vite](https://vitejs.dev) ts app
-- `web`: another vanilla [vite](https://vitejs.dev) ts app
-- `@repo/ui`: a stub component & utility library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: shared `eslint` configurations
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+---
 
-Each package and app is 100% [TypeScript](https://www.typescriptlang.org/).
+## Herramientas
 
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
+- [TypeScript](https://www.typescriptlang.org/) para tipado estático
+- [ESLint](https://eslint.org/) para linting
 - [Prettier](https://prettier.io) for code formatting

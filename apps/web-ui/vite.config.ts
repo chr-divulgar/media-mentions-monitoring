@@ -10,7 +10,7 @@ export default defineConfig(() => {
       "process.env": {},
     },
     plugins: [react()],
-    base: "/radio-alert",
+    base: "/",
     server: {
       port,
       host: "localhost",

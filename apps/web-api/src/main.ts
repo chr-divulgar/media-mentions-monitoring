@@ -9,6 +9,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app/app.module';
 
 import compression from '@fastify/compress';
+import fastifyStatic from '@fastify/static';
+import { join } from 'path';
 import {
   FastifyAdapter,
   NestFastifyApplication,
@@ -38,6 +40,12 @@ async function bootstrap() {
 
   app.enableCors(corsOptions);
   app.register(compression);
+  // Servir archivos estáticos del frontend
+  app.register(fastifyStatic, {
+    root: join(__dirname, '..', 'public'),
+    prefix: '/',
+    decorateReply: false,
+  });
   const configService = app.get(ConfigService);
   const globalPrefix = '';
   app.setGlobalPrefix(globalPrefix);

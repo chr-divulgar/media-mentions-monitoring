@@ -34,16 +34,35 @@ $ pnpm install
 
 ## Running the app
 
-```bash
+````bash
 # development
-$ pnpm run start
+pnpm run start
+
+### Desarrollo
+
+```bash
+# Instalar dependencias
+pnpm install
+
+# Construir el frontend y copiarlo al backend
+pnpm --filter ../web-ui build
+xcopy /E /I /Y ../web-ui/dist public
+
+# Iniciar el backend (sirve el frontend en la misma URL)
+pnpm run start
+````
+
+El backend servirá la aplicación web y las APIs en la misma URL y puerto configurado.
 
 # watch mode
+
 $ pnpm run start:dev
 
 # production mode
+
 $ pnpm run start:prod
-```
+
+````
 
 ## Test
 
@@ -56,7 +75,7 @@ $ pnpm run test:e2e
 
 # test coverage
 $ pnpm run test:cov
-```
+````
 
 ## Support
 
