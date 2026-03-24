@@ -26,7 +26,7 @@ if "%ERRORLEVEL%"=="0" (
 )
 
 :: Start Cloudflare tunnel in the background and redirect output to a file
-start /B cmd /c "cloudflared tunnel --url http://%IP_ADDRESS%:3000 > cloudflared_output.log 2>&1"
+start /B cmd /c "cloudflared tunnel --url http://%IP_ADDRESS%:3001 > cloudflared_output.log 2>&1"
 
 :: Wait for a few seconds to ensure some output is generated
 timeout /t 5 /nobreak > nul
@@ -44,9 +44,9 @@ set "VITE_API_LOCAL=%EXTRACTED_URL%"
 echo %GH_TOKEN% | gh auth login --with-token
 
 :: Set the repository variable using GitHub CLI
-gh variable set VITE_API_LOCAL --body "%VITE_API_LOCAL%" --repo rpt-monitoreo/radio-alert
+gh secret set VITE_API --body "%VITE_API_LOCAL%" --repo chr-divulgar/media-mentions-monitoring
 
 :: Dispatch the GitHub Actions workflow
-gh workflow run deploy.ui.yml --repo rpt-monitoreo/radio-alert
+gh workflow run update-redirect.yml --repo chr-divulgar/media-mentions-monitoring
 
 endlocal
