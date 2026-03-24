@@ -9,17 +9,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get VITE_API variable
-        id: get_var
-        run: |
-          echo "url=$(gh variable get VITE_API --repo ${{ github.repository }} --json value | jq -r .value)" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Update index.html
         run: |
           sed "s|__VITE_API__|${{ secrets.VITE_API }}|g" docs/index.html > docs/index.html.tmp
           mv docs/index.html.tmp docs/index.html
+
+      - name: Show index.html after replace (debug)
+        run: |
+          cat docs/index.html
 
       - name: Commit and push changes
         run: |
