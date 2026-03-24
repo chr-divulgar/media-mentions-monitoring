@@ -28,12 +28,25 @@ async function bootstrap() {
     AppModule,
     fastifyAdapter,
   );
+
+  const allowedOrigins = [
+    'https://rpt-monitoreo.github.io',
+    'http://localhost:4300',
+    'http://localhost:4200',
+  ];
+
   const corsOptions: CorsOptions = {
-    origin: [
-      'https://rpt-monitoreo.github.io',
-      'http://localhost:4300',
-      'http://localhost:4200',
-    ],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      // Allow any subdomain of trycloudflare.com
+      if (/^https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com$/.test(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'), false);
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   };
@@ -49,7 +62,7 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const globalPrefix = '';
   app.setGlobalPrefix(globalPrefix);
-  const port = configService.get<number>('BACK_PORT') || 3000;
+  const port = configService.get<number>('BACK_PORT') || 3001;
   await app.listen(port, '0.0.0.0');
 
   Logger.log(
