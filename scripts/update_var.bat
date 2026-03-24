@@ -29,7 +29,7 @@ if "%ERRORLEVEL%"=="0" (
 start /B cmd /c "cloudflared tunnel --url http://%IP_ADDRESS%:3001 > cloudflared_output.log 2>&1"
 
 :: Wait for a few seconds to ensure some output is generated
-timeout /t 5 /nobreak > nul
+timeout /t 10 /nobreak > nul
 
 :: Extract the URL from cloudflared_output.log using PowerShell
 for /f "tokens=*" %%i in ('powershell -Command "Select-String -Path 'cloudflared_output.log' -Pattern 'https.*\.com' | ForEach-Object { if ($_.Matches[0].Value -notlike 'https://developers*') { $_.Matches[0].Value } }"') do set EXTRACTED_URL=%%i
