@@ -41,7 +41,7 @@ echo Extracted URL: %EXTRACTED_URL%
 set "VITE_API_LOCAL=%EXTRACTED_URL%"
 
 :: Authenticate with GitHub CLI using GH_TOKEN
-echo %GH_TOKEN% | gh auth login --with-token
+:: echo %GH_TOKEN% | gh auth login --with-token
 
 :: Set the repository variable using GitHub CLI
 gh secret set VITE_API --body "%VITE_API_LOCAL%" --repo chr-divulgar/media-mentions-monitoring
