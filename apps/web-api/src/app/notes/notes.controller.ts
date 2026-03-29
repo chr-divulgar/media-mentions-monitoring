@@ -56,4 +56,37 @@ export class NotesController {
       );
     }
   }
+
+  @Post('dates')
+  async getDates() {
+    try {
+      return await this.notesService.getMinMaxDates();
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: `There was an error processing the request getDates ${error}`,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('list')
+  async listNotes(@Body() body: { startDate: string; endDate: string }) {
+    try {
+      return await this.notesService.listNotesByDateRange(
+        body.startDate,
+        body.endDate,
+      );
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: `There was an error processing the request listNotes ${error}`,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }

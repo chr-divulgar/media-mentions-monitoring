@@ -19,6 +19,18 @@ export class NotesService {
   }
 
   async setNote(noteDto: NoteDto): Promise<NoteDto> {
+    // Validar campos obligatorios
+    if (
+      !noteDto.date ||
+      !noteDto.media ||
+      !noteDto.mediaName ||
+      !noteDto.title
+    ) {
+      throw new Error(
+        'Faltan campos obligatorios: fecha, medio, nombre del medio o título',
+      );
+    }
+
     const existingNote = await this.noteRepo.findOneBy({
       _id: new ObjectId(noteDto.id),
     });
@@ -121,9 +133,13 @@ export class NotesService {
     if (!Array.isArray(notes)) {
       throw new Error('Input must be an array of notes');
     }
-    // Filtrar notas duplicadas por combinación única
+    // Filtrar notas duplicadas por combinación única y validar campos obligatorios
     const insertedNotes: NoteDto[] = [];
     for (const n of notes) {
+      if (!n.date || !n.media || !n.mediaName || !n.title) {
+        // Saltar notas que no tengan los campos mínimos requeridos
+        continue;
+      }
       const exists = await this.noteRepo.findOneBy({
         title: n.title,
         date: n.date,
@@ -138,5 +154,37 @@ export class NotesService {
       await this.noteRepo.insertMany(insertedNotes);
     }
     return { inserted: insertedNotes.length };
+  }
+
+  // Devuelve el rango de fechas min/max de la colección note
+  async getMinMaxDates(): Promise<{
+    minDate: string | null;
+    maxDate: string | null;
+  }> {
+    // Buscar la nota más antigua y la más reciente por campo "date"
+    const minNote = await this.noteRepo.findOne({ order: { date: 'ASC' } });
+    const maxNote = await this.noteRepo.findOne({ order: { date: 'DESC' } });
+    return {
+      minDate: minNote?.date ?? null,
+      maxDate: maxNote?.date ?? null,
+    };
+  }
+
+  // Trae todas las notas en un rango de fechas (inclusive)
+  async listNotesByDateRange(
+    startDate: string,
+    endDate: string,
+  ): Promise<NoteDto[]> {
+    // Se asume formato YYYY-MM-DD
+    const notes = await this.noteRepo.find({
+      where: {
+        date: {
+          $gte: startDate,
+          $lte: endDate,
+        },
+      },
+      order: { date: 'ASC' },
+    });
+    return notes;
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   DatePicker,
   Button,
@@ -12,18 +12,91 @@ import {
 import { UploadOutlined } from "@ant-design/icons";
 import * as XLSX from "xlsx";
 import dayjs from "dayjs";
+import isoWeek from "dayjs/plugin/isoWeek";
+dayjs.extend(isoWeek);
 import api from "../../services/Agent";
+import { useQuery } from "react-query";
+import NotesTable from "./NotesTable";
+import NoteEditModal from "./NoteEditModal";
 
 const NotesPage: React.FC = () => {
+  // Por defecto, seleccionar la semana del último dato (maxDate)
   const [selectedDates, setSelectedDates] = useState<any>(null);
+  const [minDate, setMinDate] = useState<string | null>(null);
+  const [maxDate, setMaxDate] = useState<string | null>(null);
+
+  // Estado para modal de nueva nota
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [addNote, setAddNote] = useState<any>(null);
+
+  // Guardar nueva nota
+  const handleAddNote = async (note: any) => {
+    try {
+      await api.post("/notes/import-excel", [note]);
+      message.success("Nota agregada correctamente");
+      setAddModalOpen(false);
+      refetch();
+    } catch (err) {
+      message.error("Error al agregar la nota");
+    }
+  };
+  // Consultar min/max date al montar
+  useEffect(() => {
+    const fetchDates = async () => {
+      try {
+        const res = await api.post("/notes/dates", {});
+        setMinDate(res.data.minDate);
+        setMaxDate(res.data.maxDate);
+        if (res.data.maxDate) {
+          const max = dayjs(res.data.maxDate, "YYYY-MM-DD");
+          setSelectedDates([max.startOf("isoWeek"), max.endOf("isoWeek")]);
+        }
+      } catch (err) {
+        setMinDate(null);
+        setMaxDate(null);
+      }
+    };
+    fetchDates();
+  }, []);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [selectedSheets, setSelectedSheets] = useState<string[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const workbookRef = useRef<XLSX.WorkBook | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Consultar notas por rango de fechas
+  const {
+    data: notes,
+    isLoading: isLoadingNotes,
+    error: errorNotes,
+    refetch,
+  } = useQuery(
+    ["notes", selectedDates],
+    async () => {
+      if (!selectedDates || !selectedDates[0] || !selectedDates[1]) return [];
+      const res = await api.post("/notes/list", {
+        startDate: selectedDates[0].format("YYYY-MM-DD"),
+        endDate: selectedDates[1].format("YYYY-MM-DD"),
+      });
+      return res.data;
+    },
+    { enabled: !!selectedDates && !!selectedDates[0] && !!selectedDates[1] },
+  );
+
   const handleDateChange = (dates: any) => {
     setSelectedDates(dates);
+    // Refrescar notas al cambiar fechas
+    refetch();
+  };
+
+  // Función para seleccionar una semana completa al hacer clic en un día
+  const handleCalendarChange = (dates: any) => {
+    if (Array.isArray(dates) && dates[0] && !dates[1]) {
+      // Cuando el usuario selecciona solo un día, selecciona la semana completa
+      const start = dayjs(dates[0]).startOf("isoWeek");
+      const end = dayjs(dates[0]).endOf("isoWeek");
+      setSelectedDates([start, end]);
+    }
   };
 
   const handleUpload = (file: File) => {
@@ -79,24 +152,34 @@ const NotesPage: React.FC = () => {
     selectedSheets.forEach((sheetName) => {
       const ws = workbookRef.current!.Sheets[sheetName];
       const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-      json.forEach((row) => {
+      json.forEach((row, rowIdx) => {
         const note: Record<string, any> = {};
         Object.entries(columnMap).forEach(([col, key]) => {
           let value = row[col] ?? "";
           // Si la columna es fecha, formatear a YYYY-MM-DD
           if (key === "date" && value) {
-            // Si es un número (serial de Excel), convertirlo
             if (typeof value === "number") {
-              // Excel serial date: días desde 1899-12-30, pero Excel cuenta mal el 29/2/1900 (bug histórico), así que hay que sumar 1 día
               const utcDays = Math.floor(value);
               const utcDate = new Date(
                 Date.UTC(1899, 11, 30) + (utcDays + 1) * 86400000,
               );
               value = dayjs(utcDate).format("YYYY-MM-DD");
             } else {
-              // Intenta parsear con dayjs, si es válido, formatea
               const d = dayjs(value);
               value = d.isValid() ? d.format("YYYY-MM-DD") : value;
+            }
+          }
+          // Si la columna es LINK, buscar el hipervínculo real si existe
+          if (key === "link") {
+            // Buscar el hipervínculo en la hoja de Excel
+            const ws = workbookRef.current!.Sheets[sheetName];
+            const cellAddress = XLSX.utils.encode_cell({
+              r: rowIdx + 1,
+              c: Object.keys(row).indexOf(col),
+            });
+            const cell = ws[cellAddress];
+            if (cell && cell.l && cell.l.Target) {
+              value = cell.l.Target;
             }
           }
           note[key] = value;
@@ -121,6 +204,11 @@ const NotesPage: React.FC = () => {
     beforeUpload: handleUpload,
   };
 
+  function getCurrentWeek(): any {
+    const today = dayjs();
+    return [today.startOf("isoWeek"), today.endOf("isoWeek")];
+  }
+
   return (
     <div>
       <Row align="middle" justify="space-between" style={{ marginBottom: 24 }}>
@@ -130,14 +218,42 @@ const NotesPage: React.FC = () => {
             onChange={handleDateChange}
             style={{ minWidth: 240 }}
             allowClear={false}
+            // Limitar fechas habilitadas según min/max
+            disabledDate={(current) => {
+              if (!minDate || !maxDate) return false;
+              const min = dayjs(minDate, "YYYY-MM-DD");
+              const max = dayjs(maxDate, "YYYY-MM-DD");
+              return current < min || current > max;
+            }}
+            // Permitir seleccionar por semana
+            renderExtraFooter={() => (
+              <Button
+                size="small"
+                onClick={() => setSelectedDates(getCurrentWeek())}
+                style={{ width: "100%" }}
+              >
+                Seleccionar semana actual
+              </Button>
+            )}
+            // Al seleccionar un día, seleccionar la semana completa
+            onCalendarChange={handleCalendarChange}
           />
         </Col>
-        <Col>
+        <Col style={{ display: "flex", gap: 8 }}>
           <Upload {...uploadProps}>
             <Button type="primary" icon={<UploadOutlined />}>
               Cargar XLSX
             </Button>
           </Upload>
+          <Button
+            type="primary"
+            onClick={() => {
+              setAddNote({});
+              setAddModalOpen(true);
+            }}
+          >
+            Agregar Nota
+          </Button>
         </Col>
       </Row>
       <Modal
@@ -203,7 +319,19 @@ const NotesPage: React.FC = () => {
         )}
       </Modal>
       <h1>Notas</h1>
-      <p>Aquí irá el contenido de la página de notas.</p>
+      {isLoadingNotes ? (
+        <div>Cargando notas...</div>
+      ) : errorNotes ? (
+        <div>Error al cargar notas</div>
+      ) : (
+        <NotesTable selectedDates={selectedDates} notes={notes || []} />
+      )}
+      <NoteEditModal
+        open={addModalOpen}
+        note={addNote}
+        onSave={handleAddNote}
+        onCancel={() => setAddModalOpen(false)}
+      />
     </div>
   );
 };
