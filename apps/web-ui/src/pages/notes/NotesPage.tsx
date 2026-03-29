@@ -86,11 +86,30 @@ const NotesPage: React.FC = () => {
         onCancel={() => setModalVisible(false)}
         okButtonProps={{ disabled: selectedSheets.length === 0 }}
       >
-        <Checkbox.Group
-          options={sheetNames}
-          value={selectedSheets}
-          onChange={handleSheetSelect}
-        />
+        <Checkbox.Group value={selectedSheets} onChange={handleSheetSelect}>
+          <Row gutter={[16, 8]}>
+            {sheetNames.map((name) => (
+              <Col span={8} key={name} style={{ marginBottom: 8 }}>
+                <Checkbox value={name}>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      maxWidth: 120,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      verticalAlign: "middle",
+                      cursor: "pointer",
+                    }}
+                    title={name}
+                  >
+                    {name}
+                  </span>
+                </Checkbox>
+              </Col>
+            ))}
+          </Row>
+        </Checkbox.Group>
       </Modal>
       <h1>Notas</h1>
       <p>Aquí irá el contenido de la página de notas.</p>
