@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource, MongoRepository } from 'typeorm';
 import { ObjectId } from 'mongodb';
-import { NoteDto } from '@repo/shared';
+import { NoteDto, DashboardDataDto, NoteOrigin } from '@repo/shared';
 import { Note } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as moment from 'moment';
@@ -186,5 +186,51 @@ export class NotesService {
       order: { date: 'ASC' },
     });
     return notes;
+  }
+
+  /**
+   * Calcula los datos agrupados del dashboard por sección.
+   * Evita enviar toda la lista de notas al frontend.
+   */
+  async getDashboardData(
+    startDate: string,
+    endDate: string,
+  ): Promise<DashboardDataDto> {
+    const notes = await this.listNotesByDateRange(startDate, endDate);
+
+    // --- Sección 1: Comportamiento (sentimiento) ---
+    const sentimentCounts: Record<string, number> = {};
+    for (const n of notes) {
+      const key = n.sentiment || 'Sin sentimiento';
+      sentimentCounts[key] = (sentimentCounts[key] || 0) + 1;
+    }
+    const sentimentData = Object.entries(sentimentCounts).map(
+      ([type, value]) => ({ type, value }),
+    );
+
+    // --- Sección 2: Tipo de medio ---
+    const mediaCounts: Record<string, number> = {};
+    for (const n of notes) {
+      const key = n.media || 'Sin medio';
+      mediaCounts[key] = (mediaCounts[key] || 0) + 1;
+    }
+    const mediaData = Object.entries(mediaCounts).map(([type, value]) => ({
+      type,
+      value,
+    }));
+
+    return {
+      behavior: {
+        totalNotes: notes.length,
+        directNotes: notes.filter((n) => n.origin === NoteOrigin.DIRECTA)
+          .length,
+        indirectNotes: notes.filter((n) => n.origin === NoteOrigin.INDIRECTA)
+          .length,
+        sentimentData,
+      },
+      sentiment: {
+        mediaData,
+      },
+    };
   }
 }

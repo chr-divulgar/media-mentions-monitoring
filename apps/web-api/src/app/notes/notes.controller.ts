@@ -6,7 +6,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { NotesService } from './notes.service';
-import { NoteDto } from '@repo/shared';
+import { NoteDto, DashboardDataDto } from '@repo/shared';
 
 @Controller('notes')
 export class NotesController {
@@ -84,6 +84,26 @@ export class NotesController {
         {
           status: HttpStatus.INTERNAL_SERVER_ERROR,
           error: `There was an error processing the request listNotes ${error}`,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('dashboard')
+  async getDashboardData(
+    @Body() body: { startDate: string; endDate: string },
+  ): Promise<DashboardDataDto> {
+    try {
+      return await this.notesService.getDashboardData(
+        body.startDate,
+        body.endDate,
+      );
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: `There was an error processing the request getDashboardData ${error}`,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
