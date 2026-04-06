@@ -30,6 +30,23 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
       ),
     ),
   );
+  const totalNotesColumn = sentimentColumns.find(
+    (column) => column.toLowerCase() === "totalnotes",
+  );
+  const sentimentColumnsWithoutTotalNotes = sentimentColumns.filter(
+    (column) => column !== totalNotesColumn,
+  );
+  const totalAudience = tableData.reduce(
+    (sum, row) => sum + Number(row.audience ?? 0),
+    0,
+  );
+  const sentimentColorMap: Record<string, string> = {
+    negativa: "#ff4d4f",
+    neutra: "#8c8c8c",
+    positiva: "#52c41a",
+  };
+  const getSentimentTextColor = (column: string) =>
+    sentimentColorMap[column.toLowerCase()];
 
   return (
     <div
@@ -37,6 +54,9 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
         ...DASHBOARD_THEME.sectionContainer,
         display: "flex",
         flexDirection: "column",
+        backgroundImage: "url('/base.png')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
       }}
     >
       {/* Renglón de fecha */}
@@ -84,7 +104,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
               marginTop: 4,
             }}
           >
-            Publicaciones
+            #
           </span>
         </div>
 
@@ -198,14 +218,16 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
           display: "flex",
           gap: 12,
           marginTop: 12,
-          alignItems: "flex-start",
+          alignItems: "stretch",
+          flex: 1,
+          overflow: "hidden",
         }}
       >
         <div
           style={{
-            flex: 1,
-            border: "1px solid #d9d9d9",
-            borderRadius: 6,
+            flex: 4,
+            border: "none",
+            borderRadius: 0,
             overflow: "visible",
             display: "flex",
             flexDirection: "column",
@@ -225,38 +247,35 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                   <th
                     style={{
                       textAlign: "left",
-                      padding: "5px 6px",
                       borderBottom: "1px solid #e8e8e8",
                     }}
-                  >
-                    Topic
-                  </th>
-                  <th
-                    style={{
-                      textAlign: "left",
-                      padding: "5px 6px",
-                      borderBottom: "1px solid #e8e8e8",
-                    }}
-                  >
-                    Subtopic
-                  </th>
+                  ></th>
+                  {totalNotesColumn && (
+                    <th
+                      style={{
+                        textAlign: "right",
+                        borderBottom: "1px solid #e8e8e8",
+                      }}
+                    >
+                      #
+                    </th>
+                  )}
                   <th
                     style={{
                       textAlign: "right",
-                      padding: "5px 6px",
                       borderBottom: "1px solid #e8e8e8",
                     }}
                   >
                     Audiencia
                   </th>
-                  {sentimentColumns.map((column) => (
+                  {sentimentColumnsWithoutTotalNotes.map((column) => (
                     <th
                       key={column}
                       style={{
                         textAlign: "right",
-                        padding: "5px 6px",
                         borderBottom: "1px solid #e8e8e8",
                         textTransform: "capitalize",
+                        color: getSentimentTextColor(column) ?? "inherit",
                       }}
                     >
                       {column}
@@ -265,53 +284,94 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {tableData.map((row, index) => (
-                  <tr key={`${row.topic}-${row.subtopic}-${index}`}>
-                    <td
+                {(() => {
+                  const groupedByTopic: { [key: string]: typeof tableData } =
+                    {};
+                  tableData.forEach((row) => {
+                    if (!groupedByTopic[row.topic]) {
+                      groupedByTopic[row.topic] = [];
+                    }
+                    groupedByTopic[row.topic].push(row);
+                  });
+
+                  const topicOrder = Array.from(
+                    new Set(tableData.map((row) => row.topic)),
+                  ).sort(
+                    (a, b) =>
+                      (groupedByTopic[a]?.length ?? 0) -
+                      (groupedByTopic[b]?.length ?? 0),
+                  );
+
+                  return topicOrder.flatMap((topic) => [
+                    <tr
+                      key={`topic-header-${topic}`}
                       style={{
-                        padding: "4px 6px",
-                        borderBottom: "1px solid #f0f0f0",
+                        background: "#f0f0f0",
+                        fontWeight: 600,
                       }}
                     >
-                      {row.topic}
-                    </td>
-                    <td
-                      style={{
-                        padding: "4px 6px",
-                        borderBottom: "1px solid #f0f0f0",
-                      }}
-                    >
-                      {row.subtopic}
-                    </td>
-                    <td
-                      style={{
-                        textAlign: "right",
-                        padding: "4px 6px",
-                        borderBottom: "1px solid #f0f0f0",
-                      }}
-                    >
-                      {row.audience}
-                    </td>
-                    {sentimentColumns.map((column) => (
                       <td
-                        key={`${row.subtopic}-${column}-${index}`}
+                        colSpan={2 + sentimentColumns.length}
                         style={{
-                          textAlign: "right",
-                          padding: "4px 6px",
-                          borderBottom: "1px solid #f0f0f0",
+                          borderBottom: "1px solid #e8e8e8",
+                          textAlign: "left",
                         }}
                       >
-                        {String(row[column as keyof typeof row] ?? 0)}
+                        {topic}
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                    </tr>,
+                    ...(groupedByTopic[topic] ?? []).map((row, index) => (
+                      <tr key={`${row.topic}-${row.subtopic}-${index}`}>
+                        <td
+                          style={{
+                            borderBottom: "1px solid #f0f0f0",
+                          }}
+                        >
+                          {row.subtopic}
+                        </td>
+                        {totalNotesColumn && (
+                          <td
+                            style={{
+                              textAlign: "right",
+                              borderBottom: "1px solid #f0f0f0",
+                            }}
+                          >
+                            {String(
+                              row[totalNotesColumn as keyof typeof row] ?? 0,
+                            )}
+                          </td>
+                        )}
+                        <td
+                          style={{
+                            textAlign: "right",
+                            borderBottom: "1px solid #f0f0f0",
+                          }}
+                        >
+                          {row.audience}
+                        </td>
+                        {sentimentColumnsWithoutTotalNotes.map((column) => (
+                          <td
+                            key={`${row.subtopic}-${column}-${index}`}
+                            style={{
+                              textAlign: "center",
+                              borderBottom: "1px solid #f0f0f0",
+                              color: getSentimentTextColor(column) ?? "inherit",
+                            }}
+                          >
+                            {Number(row[column as keyof typeof row] ?? 0) > 0
+                              ? row[column as keyof typeof row]
+                              : ""}
+                          </td>
+                        ))}
+                      </tr>
+                    )),
+                  ]);
+                })()}
                 {tableData.length === 0 && (
                   <tr>
                     <td
-                      colSpan={3 + sentimentColumns.length}
+                      colSpan={2 + sentimentColumns.length}
                       style={{
-                        padding: "10px 6px",
                         textAlign: "center",
                         color: "#4d4d4d",
                       }}
@@ -327,22 +387,58 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
 
         <div
           style={{
-            flex: 1,
+            flex: 3,
             display: "flex",
-            alignItems: "stretch",
+            flexDirection: "column",
+            alignItems: "center",
             justifyContent: "center",
-            background: DASHBOARD_THEME.sectionBg,
+            textAlign: "center",
           }}
         >
-          <Pie
-            {...getPieConfig(sentimentData)}
+          <div
             style={{
-              width: "100%",
-              height: "100%",
-              background: DASHBOARD_THEME.sectionBg,
+              fontSize: 14,
+              fontWeight: 500,
+              marginBottom: 8,
+              color: "#333333",
             }}
-          />
+          >
+            Sentimiento publicaciones directas
+          </div>
+          <div style={{ width: "100%", height: 190, maxWidth: 320 }}>
+            <Pie
+              {...getPieConfig(sentimentData)}
+              style={{ width: "100%", height: 190 }}
+            />
+          </div>
+          <div
+            style={{
+              color: "#3C357B",
+              fontSize: 20,
+              marginTop: 8,
+              lineHeight: 1.2,
+            }}
+          >
+            Potencial audiencia publicaciones directas
+          </div>
+          <div
+            style={{
+              color: "#000",
+              fontSize: 24,
+              fontWeight: 700,
+              lineHeight: 1.1,
+              marginTop: 4,
+            }}
+          >
+            {totalAudience}
+          </div>
         </div>
+
+        <div
+          style={{
+            flex: 1,
+          }}
+        ></div>
       </div>
     </div>
   );

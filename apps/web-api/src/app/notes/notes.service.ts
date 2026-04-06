@@ -205,7 +205,9 @@ export class NotesService {
 
     // --- Sección 1: Comportamiento (sentimiento) ---
     const sentimentCounts: Record<string, number> = {};
-    for (const n of notes) {
+    for (const n of notes.filter(
+      (note) => note.origin === NoteOrigin.DIRECTA,
+    )) {
       const key = n.sentiment || 'Sin sentimiento';
       sentimentCounts[key] = (sentimentCounts[key] || 0) + 1;
     }
@@ -226,7 +228,9 @@ export class NotesService {
       }
     >();
 
-    for (const n of notes) {
+    for (const n of notes.filter(
+      (note) => note.origin === NoteOrigin.DIRECTA,
+    )) {
       const subtopic = (n.subtopic || 'Sin subtopic').trim();
       const key = subtopic.toLowerCase();
 
@@ -236,9 +240,9 @@ export class NotesService {
           subtopic,
           audience: 0,
           totalNotes: 0,
-          [NoteSentiment.POSITIVO]: 0,
           [NoteSentiment.NEGATIVO]: 0,
           [NoteSentiment.NEUTRO]: 0,
+          [NoteSentiment.POSITIVO]: 0,
         });
       }
 
@@ -258,12 +262,12 @@ export class NotesService {
     const tableData = Array.from(tableDataMap.values())
       .map((row) => ({
         ...row,
-        [NoteSentiment.POSITIVO]: String(row[NoteSentiment.POSITIVO]),
         [NoteSentiment.NEGATIVO]: String(row[NoteSentiment.NEGATIVO]),
         [NoteSentiment.NEUTRO]: String(row[NoteSentiment.NEUTRO]),
+        [NoteSentiment.POSITIVO]: String(row[NoteSentiment.POSITIVO]),
         totalNotes: row.totalNotes,
       }))
-      .sort((a, b) => b.audience - a.audience);
+      .sort((a, b) => b.totalNotes - a.totalNotes);
 
     // --- Sección 2: Tipo de medio ---
     const mediaCounts: Record<string, number> = {};

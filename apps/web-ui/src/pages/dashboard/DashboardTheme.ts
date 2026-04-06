@@ -1,4 +1,6 @@
 /** Paleta centralizada del dashboard — cambiar aquí afecta todas las secciones */
+import { NoteSentimentColor } from "@repo/shared";
+
 export const DASHBOARD_THEME = {
   /** Fondo de cada tarjeta / sección */
   sectionBg: "#fff",
@@ -8,7 +10,6 @@ export const DASHBOARD_THEME = {
   slideBgHex: "FFFFFF",
   /** Estilo del renglón de fecha (aplica a todas las secciones) */
   dateStyle: {
-    background: "#fff",
     color: "#989898",
     padding: "6px 0",
     textAlign: "left" as const,
@@ -37,16 +38,40 @@ export const DASHBOARD_THEME = {
   },
 } as const;
 
-/** Configuración base para gráficos de tipo Pie */
+const SENTIMENT_COLOR_MAP: Record<string, string> = {
+  Negativa: NoteSentimentColor.NEGATIVO,
+  Neutra: NoteSentimentColor.NEUTRO,
+  Positiva: NoteSentimentColor.POSITIVO,
+};
+
+const getSentimentColor = (type: string) => {
+  const normalizedType = type.trim().toLowerCase();
+  const foundKey = Object.keys(SENTIMENT_COLOR_MAP).find(
+    (key) => key.toLowerCase() === normalizedType,
+  );
+  return foundKey ? SENTIMENT_COLOR_MAP[foundKey] : "#999";
+};
+
+/** Configuración base para gráficos de tipo Pie (API @ant-design/plots v2) */
 export const getPieConfig = (data: { type: string; value: number }[]) => ({
-  appendPadding: 10,
   data,
   angleField: "value",
   colorField: "type",
-  radius: 1,
-  label: {
-    content: ({ type, percent }: { type: string; percent: number }) =>
-      `${type}: ${(percent * 100).toFixed(1)}%`,
+  radius: 0.85,
+  scale: {
+    color: {
+      domain: data.map((item) => item.type),
+      range: data.map((item) => getSentimentColor(item.type)),
+    },
   },
+  label: {
+    text: (d: { type: string; value: number }) => {
+      const total = data.reduce((s, c) => s + c.value, 0);
+      const pct = total > 0 ? ((d.value / total) * 100).toFixed(1) : "0.0";
+      return `${pct}%`;
+    },
+    style: { fontSize: 12 },
+  },
+  legend: { color: { title: false } },
   interactions: [{ type: "element-active" }],
 });

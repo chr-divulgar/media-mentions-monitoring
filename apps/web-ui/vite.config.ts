@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
+import path from "node:path";
 
 // https://vitejs.dev/config/
 export default defineConfig(() => {
@@ -10,6 +11,18 @@ export default defineConfig(() => {
       "process.env": {},
     },
     plugins: [react()],
+    resolve: {
+      alias: {
+        "@repo/shared/index": path.resolve(
+          __dirname,
+          "../../packages/shared/index.ts",
+        ),
+        "@repo/shared": path.resolve(
+          __dirname,
+          "../../packages/shared/index.ts",
+        ),
+      },
+    },
     base: "/",
     server: {
       port,
