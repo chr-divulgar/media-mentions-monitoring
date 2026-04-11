@@ -248,60 +248,37 @@ export class NotesService {
     return (directNotes / totalNotes) * 100;
   }
 
-  /**
-   * Calcula los datos agrupados del dashboard por sección.
-   * Evita enviar toda la lista de notas al frontend.
-   */
-  async getDashboardData(
-    startDate: string,
-    endDate: string,
-    period: DashboardPeriod = 'semana',
-  ): Promise<DashboardDataDto> {
-    const notes = await this.listNotesByDateRange(startDate, endDate);
-
-    // --- Obtener datos del período anterior para comparación ---
-    const [prevStartDate, prevEndDate] = this.getPreviousPeriodRange(
-      startDate,
-      period,
-    );
-    const prevNotes = await this.listNotesByDateRange(
-      prevStartDate,
-      prevEndDate,
-    );
-    const prevTotalNotes = prevNotes.length;
-    const prevDirectNotes = prevNotes.filter(
+  private getComparisonDirectPercentage(
+    currentNotes: NoteDto[],
+    previousNotes: NoteDto[],
+  ): number {
+    const prevTotalNotes = previousNotes.length;
+    const prevDirectNotes = previousNotes.filter(
       (n) => n.origin === NoteOrigin.DIRECTA,
     ).length;
 
     // --- Calcular porcentajes de publicaciones directas ---
     const currentDirectPercentage = this.calculateDirectPercentage(
-      notes.filter((n) => n.origin === NoteOrigin.DIRECTA).length,
-      notes.length,
+      currentNotes.filter((n) => n.origin === NoteOrigin.DIRECTA).length,
+      currentNotes.length,
     );
     const prevDirectPercentage = this.calculateDirectPercentage(
       prevDirectNotes,
       prevTotalNotes,
     );
-    const comparisonDirectPercentage =
-      currentDirectPercentage - prevDirectPercentage;
+    return currentDirectPercentage - prevDirectPercentage;
+  }
 
-    // --- Sección 1: Comportamiento (sentimiento) ---
-    const sentimentCounts: Record<string, number> = {};
-    for (const n of notes.filter(
-      (note) => note.origin === NoteOrigin.DIRECTA,
-    )) {
-      const key = n.sentiment || 'Sin sentimiento';
-      sentimentCounts[key] = (sentimentCounts[key] || 0) + 1;
-    }
-    const sentimentData = Object.entries(sentimentCounts).map(
-      ([type, value]) => ({ type, value }),
-    );
+  private getTableDataBySubtopic(
+    notes: NoteDto[],
+  ): DashboardDataDto['behavior']['tableData'] {
     // --- tableData: agrupado por subtopic ---
     const tableDataMap = new Map<
       string,
       {
         topic: string;
         subtopic: string;
+        origin: string;
         audience: number;
         totalNotes: number;
         [NoteSentiment.POSITIVO]: number;
@@ -310,9 +287,7 @@ export class NotesService {
       }
     >();
 
-    for (const n of notes.filter(
-      (note) => note.origin === NoteOrigin.DIRECTA,
-    )) {
+    for (const n of notes) {
       const subtopic = (n.subtopic || 'Sin subtopic').trim();
       const key = subtopic.toLowerCase();
 
@@ -320,6 +295,7 @@ export class NotesService {
         tableDataMap.set(key, {
           topic: n.topic || 'Sin topic',
           subtopic,
+          origin: n.origin || 'Sin origen',
           audience: 0,
           totalNotes: 0,
           [NoteSentiment.NEGATIVO]: 0,
@@ -351,9 +327,48 @@ export class NotesService {
       }))
       .sort((a, b) => b.totalNotes - a.totalNotes);
 
+    return tableData;
+  }
+  /**
+   * Calcula los datos agrupados del dashboard por sección.
+   * Evita enviar toda la lista de notas al frontend.
+   */
+  async getDashboardData(
+    startDate: string,
+    endDate: string,
+    period: DashboardPeriod = 'semana',
+  ): Promise<DashboardDataDto> {
+    const notes = await this.listNotesByDateRange(startDate, endDate);
+    const directNotes = notes.filter((n) => n.origin === NoteOrigin.DIRECTA);
+
+    // --- Obtener datos del período anterior para comparación ---
+    const [prevStartDate, prevEndDate] = this.getPreviousPeriodRange(
+      startDate,
+      period,
+    );
+    const prevNotes = await this.listNotesByDateRange(
+      prevStartDate,
+      prevEndDate,
+    );
+
+    // --- Sección 1: Comportamiento (sentimiento) ---
+    const sentimentCounts: Record<string, number> = {};
+    for (const n of directNotes) {
+      const key = n.sentiment || 'Sin sentimiento';
+      sentimentCounts[key] = (sentimentCounts[key] || 0) + 1;
+    }
+    const sentimentData = Object.entries(sentimentCounts).map(
+      ([type, value]) => ({ type, value }),
+    );
+
+    const tableDataSubtopic = this.getTableDataBySubtopic(notes);
+    const presidentTableData = tableDataSubtopic.filter((row) =>
+      row.topic.toLowerCase().includes('presidente'),
+    );
+    const directTableDataSubtopic = this.getTableDataBySubtopic(directNotes);
     // --- tableByTopic: agrupado por topic a partir de tableData ---
     let tableByTopic = Object.values(
-      tableData.reduce(
+      [...directTableDataSubtopic, ...presidentTableData].reduce(
         (acc, row) => {
           const key = row.topic.toLowerCase();
           if (!acc[key]) {
@@ -376,9 +391,12 @@ export class NotesService {
           }
           return acc;
         },
-        {} as Record<string, (typeof tableData)[0] & { subtopic: string }>,
+        {} as Record<
+          string,
+          (typeof directTableDataSubtopic)[0] & { subtopic: string }
+        >,
       ),
-    ).sort((a, b) => b.totalNotes - a.totalNotes);
+    );
 
     const tableByTopicTotal = tableByTopic.reduce(
       (acc, row) => {
@@ -407,7 +425,8 @@ export class NotesService {
         [NoteSentiment.NEUTRO]: '0',
       },
     );
-    tableByTopic = tableByTopic.sort((a, b) => a.totalNotes - b.totalNotes);
+
+    tableByTopic = tableByTopic.sort((a, b) => a.audience - b.audience);
 
     tableByTopic.push(tableByTopicTotal);
 
@@ -419,12 +438,15 @@ export class NotesService {
           .length,
         indirectNotes: notes.filter((n) => n.origin === NoteOrigin.INDIRECTA)
           .length,
-        tableData,
+        tableData: directTableDataSubtopic,
         sentimentData,
-        comparisonDirectPercentage,
+        comparisonDirectPercentage: this.getComparisonDirectPercentage(
+          notes,
+          prevNotes,
+        ),
       },
       sentiment: {
-        subTopicTop5: tableData
+        subTopicTop5: directTableDataSubtopic
           .sort((a, b) => b.totalNotes - a.totalNotes)
           .slice(0, 5),
         tableByTopic,
