@@ -626,8 +626,8 @@ export class NotesService {
         resultsByPeriod,
         tablesByPeriod,
       },
-      tableByMediaName: this.getTableByMediaName(notes),
-      tableByMedia: this.getTableByMedia(notes),
+      tableByMediaName: this.getTableByMediaName(directNotes),
+      tableByMedia: this.getTableByMedia(directNotes),
     };
   }
 }

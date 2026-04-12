@@ -17,7 +17,7 @@ const colorRange = [
 ];
 
 const MAX_ITEMS_PER_MEDIA = 6;
-const FIXED_CHART_HEIGHT = 220;
+const FIXED_CHART_HEIGHT = 200;
 
 const toTitleCase = (value: string) =>
   value
@@ -105,7 +105,7 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
           flexWrap: "wrap",
           gap: 16,
           marginTop: 8,
-          overflow: "hidden",
+          overflow: "visible",
           alignContent: "flex-start",
         }}
       >
@@ -137,9 +137,9 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
             data: barData,
             xField: "mediaName",
             yField: "value",
-            seriesField: "colorKey",
-            group: true,
+            stack: true,
             colorField: "colorKey",
+            style: { maxWidth: 16 },
             scale: {
               color: {
                 domain: colorDomain,
@@ -159,10 +159,9 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
               {
                 text: (d: { value: number }) =>
                   d.value > 0 ? String(d.value) : "",
-                position: "right" as const,
-                fill: "#262626",
+                position: "inside" as const,
+                fill: "#ffffff",
                 fontSize: 8,
-                dx: 4,
               },
             ],
           };
@@ -177,7 +176,9 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
                 minWidth: chartWidth,
                 display: "flex",
                 flexDirection: "column",
-                overflow: "hidden",
+                overflow: "visible",
+                position: "relative",
+                zIndex: 1,
               }}
             >
               <div
@@ -206,7 +207,7 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
                   color: DASHBOARD_THEME.titleColor,
                   fontSize: 13,
                   fontWeight: 600,
-                  marginTop: 4,
+                  textAlign: "center",
                 }}
               >
                 Potencial audiencia alcanzada:{" "}
