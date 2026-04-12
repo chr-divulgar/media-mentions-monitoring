@@ -8,6 +8,8 @@ import {
   NoteOrigin,
   NoteSentiment,
   TableByMediaNameItem,
+  MediaGroupItem,
+  MediaNameSentimentItem,
 } from '@repo/shared';
 import { Note } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -481,6 +483,57 @@ export class NotesService {
   }
 
   /**
+   * Agrupa notas por tipo de medio (media), luego por mediaName con
+   * conteos de sentimiento y suma de audiencia total para ese tipo de medio.
+   */
+  private getTableByMedia(notes: NoteDto[]): MediaGroupItem[] {
+    const mediaMap = new Map<
+      string,
+      { items: Map<string, MediaNameSentimentItem>; totalAudience: number }
+    >();
+
+    for (const n of notes) {
+      const mediaKey = (n.media || 'Sin medio').trim();
+      const mediaNameKey = (n.mediaName || 'Sin medio').trim().toLowerCase();
+
+      if (!mediaMap.has(mediaKey)) {
+        mediaMap.set(mediaKey, { items: new Map(), totalAudience: 0 });
+      }
+      const group = mediaMap.get(mediaKey)!;
+      group.totalAudience += Number(n.audience ?? 0);
+
+      if (!group.items.has(mediaNameKey)) {
+        group.items.set(mediaNameKey, {
+          mediaName: n.mediaName || 'Sin medio',
+          [NoteSentiment.NEGATIVO]: 0,
+          [NoteSentiment.NEUTRO]: 0,
+          [NoteSentiment.POSITIVO]: 0,
+          totalNotes: 0,
+        });
+      }
+      const row = group.items.get(mediaNameKey)!;
+      if (n.sentiment === NoteSentiment.POSITIVO) {
+        row[NoteSentiment.POSITIVO] += 1;
+      } else if (n.sentiment === NoteSentiment.NEGATIVO) {
+        row[NoteSentiment.NEGATIVO] += 1;
+      } else {
+        row[NoteSentiment.NEUTRO] += 1;
+      }
+      row.totalNotes += 1;
+    }
+
+    return Array.from(mediaMap.entries())
+      .map(([media, group]) => ({
+        media,
+        items: Array.from(group.items.values()).sort(
+          (a, b) => b.totalNotes - a.totalNotes,
+        ),
+        totalAudience: group.totalAudience,
+      }))
+      .sort((a, b) => b.totalAudience - a.totalAudience);
+  }
+
+  /**
    * Calcula los datos agrupados del dashboard por sección.
    * Evita enviar toda la lista de notas al frontend.
    */
@@ -574,6 +627,7 @@ export class NotesService {
         tablesByPeriod,
       },
       tableByMediaName: this.getTableByMediaName(notes),
+      tableByMedia: this.getTableByMedia(notes),
     };
   }
 }

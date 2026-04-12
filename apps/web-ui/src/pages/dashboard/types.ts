@@ -7,6 +7,7 @@ import {
   DashboardSentimentSection,
   DashboardPeriod,
   TableByMediaNameItem,
+  MediaGroupItem,
 } from "@repo/shared";
 
 /** Props base que reciben todas las secciones del dashboard */
@@ -35,4 +36,9 @@ export interface SectionPerformanceProps extends DashboardSectionProps {
 /** Props de la sección "Top 20 que más publicaron por sentimiento" */
 export interface SectionTop20ByMediaNameProps extends DashboardSectionProps {
   tableDataByMediaName: TableByMediaNameItem[];
+}
+
+/** Props de la sección "Participación por tipo de medio" */
+export interface SectionByMediaProps extends DashboardSectionProps {
+  tableByMedia: MediaGroupItem[];
 }

@@ -47,8 +47,24 @@ export interface DashboardPerformanceSection {
   tablesPeriod?: tableWithPeriod[];
 }
 
+/** Un ítem de sentimientos por nombre de medio dentro de un grupo de tipo de medio */
+export interface MediaNameSentimentItem {
+  mediaName: string;
+  [NoteSentiment.NEGATIVO]: number;
+  [NoteSentiment.NEUTRO]: number;
+  [NoteSentiment.POSITIVO]: number;
+  totalNotes: number;
+}
+
+/** Agrupación por tipo de medio con sus ítems y audiencia total */
+export interface MediaGroupItem {
+  media: string;
+  items: MediaNameSentimentItem[];
+  totalAudience: number;
+}
+
 /** Un ítem del top 20 por nombre de medio */
-export interface TableByMediaName {
+export interface TableByMediaNameItem {
   mediaName: string;
   [NoteSentiment.NEGATIVO]: number;
   [NoteSentiment.NEUTRO]: number;
@@ -58,11 +74,15 @@ export interface TableByMediaName {
   isNational: boolean;
 }
 
+/** @deprecated usar TableByMediaNameItem */
+export type TableByMediaName = TableByMediaNameItem;
+
 /** Respuesta completa del endpoint /notes/dashboard */
 export interface DashboardDataDto {
   period: DashboardPeriod;
   behavior: DashboardBehaviorSection;
   sentiment: DashboardSentimentSection;
   performance: DashboardPerformanceSection;
-  tableByMediaName: TableByMediaName[];
+  tableByMediaName: TableByMediaNameItem[];
+  tableByMedia: MediaGroupItem[];
 }
