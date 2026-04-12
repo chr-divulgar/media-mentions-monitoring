@@ -7,6 +7,7 @@ import {
   DashboardPeriod,
   NoteOrigin,
   NoteSentiment,
+  TableByMediaNameItem,
 } from '@repo/shared';
 import { Note } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -238,6 +239,44 @@ export class NotesService {
   }
 
   /**
+   * Construye recursivamente los últimos N períodos (incluyendo el actual).
+   * El resultado queda ordenado: [actual, anterior1, anterior2, ...]
+   */
+  private getLastNPeriodRanges(
+    currentStartDate: string,
+    currentEndDate: string,
+    period: DashboardPeriod,
+    totalPeriods: number,
+    acc: Array<{ startDate: string; endDate: string }> = [],
+  ): Array<{ startDate: string; endDate: string }> {
+    if (totalPeriods <= 0) {
+      return acc;
+    }
+
+    const nextAcc = [
+      ...acc,
+      { startDate: currentStartDate, endDate: currentEndDate },
+    ];
+
+    if (totalPeriods === 1) {
+      return nextAcc;
+    }
+
+    const [prevStartDate, prevEndDate] = this.getPreviousPeriodRange(
+      currentStartDate,
+      period,
+    );
+
+    return this.getLastNPeriodRanges(
+      prevStartDate,
+      prevEndDate,
+      period,
+      totalPeriods - 1,
+      nextAcc,
+    );
+  }
+
+  /**
    * Calcula el porcentaje de publicaciones directas para comparación
    */
   private calculateDirectPercentage(
@@ -329,76 +368,11 @@ export class NotesService {
 
     return tableData;
   }
-  /**
-   * Calcula los datos agrupados del dashboard por sección.
-   * Evita enviar toda la lista de notas al frontend.
-   */
-  async getDashboardData(
-    startDate: string,
-    endDate: string,
-    period: DashboardPeriod = 'semana',
-  ): Promise<DashboardDataDto> {
-    const notes = await this.listNotesByDateRange(startDate, endDate);
-    const directNotes = notes.filter((n) => n.origin === NoteOrigin.DIRECTA);
 
-    // --- Obtener datos del período anterior para comparación ---
-    const [prevStartDate, prevEndDate] = this.getPreviousPeriodRange(
-      startDate,
-      period,
-    );
-    const prevNotes = await this.listNotesByDateRange(
-      prevStartDate,
-      prevEndDate,
-    );
-
-    // --- Sección 1: Comportamiento (sentimiento) ---
-    const sentimentCounts: Record<string, number> = {};
-    for (const n of directNotes) {
-      const key = n.sentiment || 'Sin sentimiento';
-      sentimentCounts[key] = (sentimentCounts[key] || 0) + 1;
-    }
-    const sentimentData = Object.entries(sentimentCounts).map(
-      ([type, value]) => ({ type, value }),
-    );
-
-    const tableDataSubtopic = this.getTableDataBySubtopic(notes);
-    const presidentTableData = tableDataSubtopic.filter((row) =>
-      row.topic.toLowerCase().includes('presidente'),
-    );
-    const directTableDataSubtopic = this.getTableDataBySubtopic(directNotes);
-    // --- tableByTopic: agrupado por topic a partir de tableData ---
-    let tableByTopic = Object.values(
-      [...directTableDataSubtopic, ...presidentTableData].reduce(
-        (acc, row) => {
-          const key = row.topic.toLowerCase();
-          if (!acc[key]) {
-            acc[key] = { ...row, subtopic: '' };
-          } else {
-            acc[key].audience += row.audience;
-            acc[key].totalNotes += row.totalNotes;
-            acc[key][NoteSentiment.POSITIVO] = String(
-              Number(acc[key][NoteSentiment.POSITIVO]) +
-                Number(row[NoteSentiment.POSITIVO]),
-            );
-            acc[key][NoteSentiment.NEGATIVO] = String(
-              Number(acc[key][NoteSentiment.NEGATIVO]) +
-                Number(row[NoteSentiment.NEGATIVO]),
-            );
-            acc[key][NoteSentiment.NEUTRO] = String(
-              Number(acc[key][NoteSentiment.NEUTRO]) +
-                Number(row[NoteSentiment.NEUTRO]),
-            );
-          }
-          return acc;
-        },
-        {} as Record<
-          string,
-          (typeof directTableDataSubtopic)[0] & { subtopic: string }
-        >,
-      ),
-    );
-
-    const tableByTopicTotal = tableByTopic.reduce(
+  private getTotalRow(
+    tableData: DashboardDataDto['behavior']['tableData'],
+  ): DashboardDataDto['sentiment']['tableByTopic'][0] {
+    return tableData.reduce(
       (acc, row) => {
         acc.audience += row.audience;
         acc.totalNotes += row.totalNotes;
@@ -425,11 +399,157 @@ export class NotesService {
         [NoteSentiment.NEUTRO]: '0',
       },
     );
+  }
+  private getTableDataBtyTopic(
+    tableData: DashboardDataDto['behavior']['tableData'],
+  ): DashboardDataDto['sentiment']['tableByTopic'] {
+    let tableByTopic = Object.values(
+      tableData.reduce(
+        (acc, row) => {
+          const key = row.topic.toLowerCase();
+          if (!acc[key]) {
+            acc[key] = { ...row, subtopic: '' };
+          } else {
+            acc[key].audience += row.audience;
+            acc[key].totalNotes += row.totalNotes;
+            acc[key][NoteSentiment.POSITIVO] = String(
+              Number(acc[key][NoteSentiment.POSITIVO]) +
+                Number(row[NoteSentiment.POSITIVO]),
+            );
+            acc[key][NoteSentiment.NEGATIVO] = String(
+              Number(acc[key][NoteSentiment.NEGATIVO]) +
+                Number(row[NoteSentiment.NEGATIVO]),
+            );
+            acc[key][NoteSentiment.NEUTRO] = String(
+              Number(acc[key][NoteSentiment.NEUTRO]) +
+                Number(row[NoteSentiment.NEUTRO]),
+            );
+          }
+          return acc;
+        },
+        {} as Record<string, (typeof tableData)[0] & { subtopic: string }>,
+      ),
+    );
+
+    const tableByTopicTotal = this.getTotalRow(tableByTopic);
 
     tableByTopic = tableByTopic.sort((a, b) => a.audience - b.audience);
 
     tableByTopic.push(tableByTopicTotal);
+    return tableByTopic;
+  }
+  /**
+   * Obtiene el top 20 de medios que más publicaron, con conteo por sentimiento.
+   */
+  private getTableByMediaName(notes: NoteDto[]): TableByMediaNameItem[] {
+    const map = new Map<
+      string,
+      {
+        mediaName: string;
+        [NoteSentiment.NEGATIVO]: number;
+        [NoteSentiment.NEUTRO]: number;
+        [NoteSentiment.POSITIVO]: number;
+        totalNotes: number;
+        isNational: boolean;
+      }
+    >();
 
+    for (const n of notes) {
+      const key = (n.mediaName || 'Sin medio').trim().toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, {
+          mediaName: n.mediaName || 'Sin medio',
+          [NoteSentiment.NEGATIVO]: 0,
+          [NoteSentiment.NEUTRO]: 0,
+          [NoteSentiment.POSITIVO]: 0,
+          totalNotes: 0,
+          isNational: (n.zone ?? '').trim().toLowerCase() === 'nacional',
+        });
+      }
+      const row = map.get(key)!;
+      if (n.sentiment === NoteSentiment.POSITIVO) {
+        row[NoteSentiment.POSITIVO] += 1;
+      } else if (n.sentiment === NoteSentiment.NEGATIVO) {
+        row[NoteSentiment.NEGATIVO] += 1;
+      } else {
+        row[NoteSentiment.NEUTRO] += 1;
+      }
+      row.totalNotes += 1;
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.totalNotes - a.totalNotes);
+  }
+
+  /**
+   * Calcula los datos agrupados del dashboard por sección.
+   * Evita enviar toda la lista de notas al frontend.
+   */
+  async getDashboardData(
+    startDate: string,
+    endDate: string,
+    period: DashboardPeriod = 'semana',
+  ): Promise<DashboardDataDto> {
+    const notes = await this.listNotesByDateRange(startDate, endDate);
+    const directNotes = notes.filter((n) => n.origin === NoteOrigin.DIRECTA);
+
+    // --- Obtener datos de los últimos 4 períodos (incluye actual) ---
+    const last4PeriodRanges = this.getLastNPeriodRanges(
+      startDate,
+      endDate,
+      period,
+      4,
+    );
+
+    const notesByPeriod = await Promise.all(
+      last4PeriodRanges.map((range) =>
+        this.listNotesByDateRange(range.startDate, range.endDate),
+      ),
+    );
+    const prevNotes = notesByPeriod[1] ?? [];
+
+    // --- Sección 1: Comportamiento (sentimiento) ---
+    const sentimentCounts: Record<string, number> = {};
+    for (const n of directNotes) {
+      const key = n.sentiment || 'Sin sentimiento';
+      sentimentCounts[key] = (sentimentCounts[key] || 0) + 1;
+    }
+    const sentimentData = Object.entries(sentimentCounts).map(
+      ([type, value]) => ({ type, value }),
+    );
+    // --- Sección 2: Sentimiento ---
+    const tableDataSubtopic = this.getTableDataBySubtopic(notes);
+    const presidentTableData = tableDataSubtopic.filter((row) =>
+      row.topic.toLowerCase().includes('presidente'),
+    );
+    const directTableDataSubtopic = this.getTableDataBySubtopic(directNotes);
+    // --- tableByTopic: agrupado por topic a partir de tableData ---
+    const tableByTopic = this.getTableDataBtyTopic([
+      ...directTableDataSubtopic,
+      ...presidentTableData,
+    ]);
+    // --- Sección 2: Performance ---
+
+    const tablesByPeriod = last4PeriodRanges.map((range, index) => {
+      const periodNotes =
+        notesByPeriod[index].filter((n) => n.origin === NoteOrigin.DIRECTA) ??
+        [];
+      return {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        tableData: this.getTableDataBySubtopic(periodNotes).slice(0, 5),
+      };
+    });
+
+    const resultsByPeriod = last4PeriodRanges.map((range, index) => {
+      const periodNotes =
+        notesByPeriod[index].filter((n) => n.origin === NoteOrigin.DIRECTA) ??
+        [];
+      return {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        tableData: [this.getTotalRow(this.getTableDataBySubtopic(periodNotes))],
+      };
+    });
     return {
       period,
       behavior: {
@@ -446,11 +566,14 @@ export class NotesService {
         ),
       },
       sentiment: {
-        subTopicTop5: directTableDataSubtopic
-          .sort((a, b) => b.totalNotes - a.totalNotes)
-          .slice(0, 5),
+        subTopicTop5: directTableDataSubtopic.slice(0, 5),
         tableByTopic,
       },
+      performance: {
+        resultsByPeriod,
+        tablesByPeriod,
+      },
+      tableByMediaName: this.getTableByMediaName(notes),
     };
   }
 }

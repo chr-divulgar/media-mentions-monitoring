@@ -30,10 +30,32 @@ export interface DashboardBehaviorSection {
   comparisonDirectPercentage?: number;
 }
 
+export interface tableWithPeriod {
+  startDate: string;
+  endDate: string;
+  tableData: TableDataItem[];
+}
 /** Datos pre-calculados para la sección "Publicaciones y audiencia por sentimiento" */
 export interface DashboardSentimentSection {
   subTopicTop5: TableDataItem[];
   tableByTopic: TableDataItem[];
+}
+
+export interface DashboardPerformanceSection {
+  resultsByPeriod: tableWithPeriod[];
+  tablesByPeriod: tableWithPeriod[];
+  tablesPeriod?: tableWithPeriod[];
+}
+
+/** Un ítem del top 20 por nombre de medio */
+export interface TableByMediaName {
+  mediaName: string;
+  [NoteSentiment.NEGATIVO]: number;
+  [NoteSentiment.NEUTRO]: number;
+  [NoteSentiment.POSITIVO]: number;
+  totalNotes: number;
+  /** true si el campo zone del medio es 'nacional' */
+  isNational: boolean;
 }
 
 /** Respuesta completa del endpoint /notes/dashboard */
@@ -41,4 +63,6 @@ export interface DashboardDataDto {
   period: DashboardPeriod;
   behavior: DashboardBehaviorSection;
   sentiment: DashboardSentimentSection;
+  performance: DashboardPerformanceSection;
+  tableByMediaName: TableByMediaName[];
 }

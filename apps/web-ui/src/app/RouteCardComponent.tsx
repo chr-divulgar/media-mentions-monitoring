@@ -1,6 +1,6 @@
-import { ProCard, PageContainer } from '@ant-design/pro-components';
-import { FC, ReactNode } from 'react';
-import { Button } from 'antd';
+import { ProCard, PageContainer } from "@ant-design/pro-components";
+import { FC, ReactNode } from "react";
+import { Button } from "antd";
 interface RouteCardProps {
   children: ReactNode;
 }
@@ -23,8 +23,8 @@ const RouteCard: FC<RouteCardProps> = ({ children }) => (
   >
     <ProCard
       style={{
-        height: '200vh',
         minHeight: 800,
+        height: "100%",
       }}
       gutter={{ xs: 8, sm: 16, md: 0 }}
     >

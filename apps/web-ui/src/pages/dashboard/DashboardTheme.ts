@@ -11,12 +11,9 @@ export const DASHBOARD_THEME = {
   /** Estilo del renglón de fecha (aplica a todas las secciones) */
   dateStyle: {
     color: "#989898",
-    padding: "6px 0",
     textAlign: "left" as const,
     borderRadius: 4,
     fontSize: 12,
-    marginBottom: 4,
-    letterSpacing: 0.5,
   },
   /** Estilo de los títulos de sección (aplica a todas las secciones) */
   titleStyle: {

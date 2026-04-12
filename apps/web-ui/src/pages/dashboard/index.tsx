@@ -12,8 +12,11 @@ import type { DashboardDataDto, DashboardPeriod } from "@repo/shared";
 import { DASHBOARD_THEME } from "./DashboardTheme";
 import SectionBehavior from "./SectionBehavior";
 import SectionSentiment from "./SectionSentiment";
+import SectionPerformance from "./SectionPerformance";
+import SectionTop20ByMediaName from "./SectionTop20ByMediaName";
 
 const DashboardPage: React.FC = () => {
+  const [messageApi, contextHolder] = message.useMessage();
   const [selectedPeriod, setSelectedPeriod] =
     useState<DashboardPeriod>("semana");
   const [selectedDates, setSelectedDates] = useState<
@@ -172,7 +175,7 @@ const DashboardPage: React.FC = () => {
     const hasSentiment =
       (dashboardData?.behavior.sentimentData.length ?? 0) > 0;
     if (!hasSentiment) {
-      message.warning("No hay datos para exportar");
+      messageApi.warning("No hay datos para exportar");
       return;
     }
     try {
@@ -196,10 +199,10 @@ const DashboardPage: React.FC = () => {
         slide.addImage({ data: imgData, x: 0, y: 0, w: 10, h: 5.625 });
       }
       await pptx.writeFile({ fileName: "dashboard-notas.pptx" });
-      message.success("Presentación descargada correctamente");
+      messageApi.success("Presentación descargada correctamente");
     } catch (err) {
       console.error(err);
-      message.error("Error al generar la presentación");
+      messageApi.error("Error al generar la presentación");
     }
   };
 
@@ -227,18 +230,46 @@ const DashboardPage: React.FC = () => {
             sentimentData={dashboardData.sentiment}
           />
         )}
+        {dashboardData?.performance && (
+          <SectionPerformance
+            dateRange={fechaRango}
+            period={selectedPeriod}
+            performanceData={dashboardData.performance}
+          />
+        )}
+        {dashboardData?.tableByMediaName && (
+          <SectionTop20ByMediaName
+            dateRange={fechaRango}
+            period={selectedPeriod}
+            tableDataByMediaName={dashboardData.tableByMediaName}
+          />
+        )}
       </div>
     );
   }
 
   return (
-    <div>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "calc(100vh - 220px)",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
+      {contextHolder}
       <div
         style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: 24,
+          padding: "12px 0",
+          borderBottom: "1px solid #f0f0f0",
+          marginBottom: 16,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -298,7 +329,7 @@ const DashboardPage: React.FC = () => {
           </Button>
         </div>
       </div>
-      <div>{content}</div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>{content}</div>
     </div>
   );
 };
