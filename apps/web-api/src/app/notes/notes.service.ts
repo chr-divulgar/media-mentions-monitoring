@@ -345,7 +345,10 @@ export class NotesService {
         });
       }
 
-      const row = tableDataMap.get(key)!;
+      const row = tableDataMap.get(key);
+      if (!row) {
+        continue;
+      }
       row.audience += Number(n.audience ?? 0);
 
       if (n.sentiment === NoteSentiment.POSITIVO) {
@@ -409,9 +412,7 @@ export class NotesService {
       tableData.reduce(
         (acc, row) => {
           const key = row.topic.toLowerCase();
-          if (!acc[key]) {
-            acc[key] = { ...row, subtopic: '' };
-          } else {
+          if (key in acc) {
             acc[key].audience += row.audience;
             acc[key].totalNotes += row.totalNotes;
             acc[key][NoteSentiment.POSITIVO] = String(
@@ -426,6 +427,8 @@ export class NotesService {
               Number(acc[key][NoteSentiment.NEUTRO]) +
                 Number(row[NoteSentiment.NEUTRO]),
             );
+          } else {
+            acc[key] = { ...row, subtopic: '' };
           }
           return acc;
         },
@@ -440,6 +443,93 @@ export class NotesService {
     tableByTopic.push(tableByTopicTotal);
     return tableByTopic;
   }
+
+  private normalizeText(value?: string): string {
+    return (value ?? '')
+      .normalize('NFD')
+      .replaceAll(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private isPresidentNote(note: Pick<NoteDto, 'topic'>): boolean {
+    return this.normalizeText(note.topic).includes('presidente');
+  }
+
+  private getMostRepeatedTitleBySentiment(
+    notes: NoteDto[],
+    sentiment: NoteSentiment,
+  ): DashboardDataDto['president']['topImpact'] {
+    const titlesMap = new Map<
+      string,
+      {
+        title: string;
+        mediaNames: Set<string>;
+        repeatCount: number;
+        audience: number;
+      }
+    >();
+
+    for (const note of notes) {
+      if (note.sentiment !== sentiment) {
+        continue;
+      }
+
+      const title = (note.title ?? '').trim();
+      if (!title) {
+        continue;
+      }
+
+      const key = this.normalizeText(title);
+
+      if (!titlesMap.has(key)) {
+        titlesMap.set(key, {
+          title,
+          mediaNames: new Set<string>(),
+          repeatCount: 0,
+          audience: 0,
+        });
+      }
+
+      const current = titlesMap.get(key);
+      if (!current) {
+        continue;
+      }
+      current.repeatCount += 1;
+      current.audience += Number(note.audience ?? 0);
+
+      const mediaName = (note.mediaName ?? '').trim();
+      if (mediaName) {
+        current.mediaNames.add(mediaName);
+      }
+    }
+
+    const topTitle = Array.from(titlesMap.values()).sort((a, b) => {
+      if (b.repeatCount !== a.repeatCount) {
+        return b.repeatCount - a.repeatCount;
+      }
+
+      if (b.audience !== a.audience) {
+        return b.audience - a.audience;
+      }
+
+      return a.title.localeCompare(b.title, 'es');
+    })[0];
+
+    if (!topTitle) {
+      return null;
+    }
+
+    return {
+      title: topTitle.title,
+      mediaNames: Array.from(topTitle.mediaNames).sort((a, b) =>
+        a.localeCompare(b, 'es'),
+      ),
+      repeatCount: topTitle.repeatCount,
+      sentiment,
+    };
+  }
+
   /**
    * Obtiene el top 20 de medios que más publicaron, con conteo por sentimiento.
    */
@@ -452,6 +542,7 @@ export class NotesService {
         [NoteSentiment.NEUTRO]: number;
         [NoteSentiment.POSITIVO]: number;
         totalNotes: number;
+        audience: number;
         isNational: boolean;
       }
     >();
@@ -465,10 +556,14 @@ export class NotesService {
           [NoteSentiment.NEUTRO]: 0,
           [NoteSentiment.POSITIVO]: 0,
           totalNotes: 0,
+          audience: 0,
           isNational: (n.zone ?? '').trim().toLowerCase() === 'nacional',
         });
       }
-      const row = map.get(key)!;
+      const row = map.get(key);
+      if (!row) {
+        continue;
+      }
       if (n.sentiment === NoteSentiment.POSITIVO) {
         row[NoteSentiment.POSITIVO] += 1;
       } else if (n.sentiment === NoteSentiment.NEGATIVO) {
@@ -477,6 +572,7 @@ export class NotesService {
         row[NoteSentiment.NEUTRO] += 1;
       }
       row.totalNotes += 1;
+      row.audience += Number(n.audience ?? 0);
     }
 
     return Array.from(map.values()).sort((a, b) => b.totalNotes - a.totalNotes);
@@ -499,7 +595,10 @@ export class NotesService {
       if (!mediaMap.has(mediaKey)) {
         mediaMap.set(mediaKey, { items: new Map(), totalAudience: 0 });
       }
-      const group = mediaMap.get(mediaKey)!;
+      const group = mediaMap.get(mediaKey);
+      if (!group) {
+        continue;
+      }
       group.totalAudience += Number(n.audience ?? 0);
 
       if (!group.items.has(mediaNameKey)) {
@@ -511,7 +610,10 @@ export class NotesService {
           totalNotes: 0,
         });
       }
-      const row = group.items.get(mediaNameKey)!;
+      const row = group.items.get(mediaNameKey);
+      if (!row) {
+        continue;
+      }
       if (n.sentiment === NoteSentiment.POSITIVO) {
         row[NoteSentiment.POSITIVO] += 1;
       } else if (n.sentiment === NoteSentiment.NEGATIVO) {
@@ -544,6 +646,7 @@ export class NotesService {
   ): Promise<DashboardDataDto> {
     const notes = await this.listNotesByDateRange(startDate, endDate);
     const directNotes = notes.filter((n) => n.origin === NoteOrigin.DIRECTA);
+    const presidentNotes = notes.filter((note) => this.isPresidentNote(note));
 
     // --- Obtener datos de los últimos 4 períodos (incluye actual) ---
     const last4PeriodRanges = this.getLastNPeriodRanges(
@@ -628,6 +731,27 @@ export class NotesService {
       },
       tableByMediaName: this.getTableByMediaName(directNotes),
       tableByMedia: this.getTableByMedia(directNotes),
+      president: {
+        tableByMediaName: this.getTableByMediaName(presidentNotes),
+        totalNotes: presidentNotes.length,
+        totalAudience: presidentNotes.reduce(
+          (acc, note) => acc + Number(note.audience ?? 0),
+          0,
+        ),
+        positiveNotes: presidentNotes.filter(
+          (note) => note.sentiment === NoteSentiment.POSITIVO,
+        ).length,
+        neutralNotes: presidentNotes.filter(
+          (note) => note.sentiment === NoteSentiment.NEUTRO,
+        ).length,
+        negativeNotes: presidentNotes.filter(
+          (note) => note.sentiment === NoteSentiment.NEGATIVO,
+        ).length,
+        topImpact: this.getMostRepeatedTitleBySentiment(
+          presidentNotes,
+          NoteSentiment.NEGATIVO,
+        ),
+      },
     };
   }
 }

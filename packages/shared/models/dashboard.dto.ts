@@ -30,7 +30,7 @@ export interface DashboardBehaviorSection {
   comparisonDirectPercentage?: number;
 }
 
-export interface tableWithPeriod {
+export interface TableWithPeriod {
   startDate: string;
   endDate: string;
   tableData: TableDataItem[];
@@ -42,9 +42,9 @@ export interface DashboardSentimentSection {
 }
 
 export interface DashboardPerformanceSection {
-  resultsByPeriod: tableWithPeriod[];
-  tablesByPeriod: tableWithPeriod[];
-  tablesPeriod?: tableWithPeriod[];
+  resultsByPeriod: TableWithPeriod[];
+  tablesByPeriod: TableWithPeriod[];
+  tablesPeriod?: TableWithPeriod[];
 }
 
 /** Un ítem de sentimientos por nombre de medio dentro de un grupo de tipo de medio */
@@ -70,12 +70,30 @@ export interface TableByMediaNameItem {
   [NoteSentiment.NEUTRO]: number;
   [NoteSentiment.POSITIVO]: number;
   totalNotes: number;
+  audience: number;
   /** true si el campo zone del medio es 'nacional' */
   isNational: boolean;
 }
 
 /** @deprecated usar TableByMediaNameItem */
 export type TableByMediaName = TableByMediaNameItem;
+
+export interface DashboardPresidentImpactItem {
+  title: string;
+  mediaNames: string[];
+  repeatCount: number;
+  sentiment: NoteSentiment;
+}
+
+export interface DashboardPresidentSection {
+  tableByMediaName: TableByMediaNameItem[];
+  totalNotes: number;
+  totalAudience: number;
+  positiveNotes: number;
+  neutralNotes: number;
+  negativeNotes: number;
+  topImpact: DashboardPresidentImpactItem | null;
+}
 
 /** Respuesta completa del endpoint /notes/dashboard */
 export interface DashboardDataDto {
@@ -85,4 +103,5 @@ export interface DashboardDataDto {
   performance: DashboardPerformanceSection;
   tableByMediaName: TableByMediaNameItem[];
   tableByMedia: MediaGroupItem[];
+  president: DashboardPresidentSection;
 }

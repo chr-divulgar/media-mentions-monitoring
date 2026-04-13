@@ -15,6 +15,7 @@ import SectionSentiment from "./SectionSentiment";
 import SectionPerformance from "./SectionPerformance";
 import SectionTop20ByMediaName from "./SectionTop20ByMediaName";
 import SectionByMedia from "./SectionByMedia";
+import SectionPresident from "./SectionPresident";
 
 const DashboardPage: React.FC = () => {
   const [messageApi, contextHolder] = message.useMessage();
@@ -245,6 +246,7 @@ const DashboardPage: React.FC = () => {
             tableDataByMediaName={dashboardData.tableByMediaName}
           />
         )}
+
         {dashboardData?.tableByMedia &&
           dashboardData.tableByMedia.length > 0 && (
             <SectionByMedia
@@ -253,6 +255,13 @@ const DashboardPage: React.FC = () => {
               tableByMedia={dashboardData.tableByMedia}
             />
           )}
+        {dashboardData?.president && (
+          <SectionPresident
+            dateRange={fechaRango}
+            period={selectedPeriod}
+            presidentData={dashboardData.president}
+          />
+        )}
       </div>
     );
   }

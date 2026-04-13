@@ -4,6 +4,7 @@
 import {
   DashboardBehaviorSection,
   DashboardPerformanceSection,
+  DashboardPresidentSection,
   DashboardSentimentSection,
   DashboardPeriod,
   TableByMediaNameItem,
@@ -36,6 +37,11 @@ export interface SectionPerformanceProps extends DashboardSectionProps {
 /** Props de la sección "Top 20 que más publicaron por sentimiento" */
 export interface SectionTop20ByMediaNameProps extends DashboardSectionProps {
   tableDataByMediaName: TableByMediaNameItem[];
+}
+
+/** Props de la sección "Publicaciones sobre el Presidente" */
+export interface SectionPresidentProps extends DashboardSectionProps {
+  presidentData: DashboardPresidentSection;
 }
 
 /** Props de la sección "Participación por tipo de medio" */
