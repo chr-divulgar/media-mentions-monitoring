@@ -12,6 +12,7 @@ import type { DashboardDataDto, DashboardPeriod } from "@repo/shared";
 import { DASHBOARD_THEME } from "./DashboardTheme";
 import SectionBehavior from "./SectionBehavior";
 import SectionSentiment from "./SectionSentiment";
+import SectionByZone from "./SectionByZone";
 import SectionPerformance from "./SectionPerformance";
 import SectionTop20ByMediaName from "./SectionTop20ByMediaName";
 import SectionByMedia from "./SectionByMedia";
@@ -260,6 +261,13 @@ const DashboardPage: React.FC = () => {
             dateRange={fechaRango}
             period={selectedPeriod}
             presidentData={dashboardData.president}
+          />
+        )}
+        {dashboardData?.sectionByZone && (
+          <SectionByZone
+            dateRange={fechaRango}
+            period={selectedPeriod}
+            sectionByZone={dashboardData.sectionByZone}
           />
         )}
       </div>

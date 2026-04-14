@@ -6,6 +6,7 @@ import {
   DashboardPerformanceSection,
   DashboardPresidentSection,
   DashboardSentimentSection,
+  DashboardZoneSection,
   DashboardPeriod,
   TableByMediaNameItem,
   MediaGroupItem,
@@ -47,4 +48,9 @@ export interface SectionPresidentProps extends DashboardSectionProps {
 /** Props de la sección "Participación por tipo de medio" */
 export interface SectionByMediaProps extends DashboardSectionProps {
   tableByMedia: MediaGroupItem[];
+}
+
+/** Props de la sección "Publicaciones de notas por regiones" */
+export interface SectionByZoneProps extends DashboardSectionProps {
+  sectionByZone: DashboardZoneSection;
 }

@@ -635,6 +635,64 @@ export class NotesService {
       .sort((a, b) => b.totalAudience - a.totalAudience);
   }
 
+  private getSectionByZone(
+    notes: NoteDto[],
+  ): DashboardDataDto['sectionByZone'] {
+    const zoneMap = new Map<
+      string,
+      {
+        zone: string;
+        audience: number;
+        totalNotes: number;
+        [NoteSentiment.NEGATIVO]: number;
+        [NoteSentiment.NEUTRO]: number;
+        [NoteSentiment.POSITIVO]: number;
+      }
+    >();
+
+    for (const note of notes) {
+      const zone = (note.zone ?? '').trim();
+      const normalizedZone = this.normalizeText(zone);
+
+      if (!normalizedZone || normalizedZone === 'nacional') {
+        continue;
+      }
+
+      if (!zoneMap.has(normalizedZone)) {
+        zoneMap.set(normalizedZone, {
+          zone,
+          audience: 0,
+          totalNotes: 0,
+          [NoteSentiment.NEGATIVO]: 0,
+          [NoteSentiment.NEUTRO]: 0,
+          [NoteSentiment.POSITIVO]: 0,
+        });
+      }
+
+      const row = zoneMap.get(normalizedZone);
+      if (!row) {
+        continue;
+      }
+
+      row.audience += Number(note.audience ?? 0);
+      row.totalNotes += 1;
+
+      if (note.sentiment === NoteSentiment.POSITIVO) {
+        row[NoteSentiment.POSITIVO] += 1;
+      } else if (note.sentiment === NoteSentiment.NEGATIVO) {
+        row[NoteSentiment.NEGATIVO] += 1;
+      } else {
+        row[NoteSentiment.NEUTRO] += 1;
+      }
+    }
+
+    return {
+      tableByZone: Array.from(zoneMap.values()).sort(
+        (a, b) => b.totalNotes - a.totalNotes,
+      ),
+    };
+  }
+
   /**
    * Calcula los datos agrupados del dashboard por sección.
    * Evita enviar toda la lista de notas al frontend.
@@ -646,6 +704,10 @@ export class NotesService {
   ): Promise<DashboardDataDto> {
     const notes = await this.listNotesByDateRange(startDate, endDate);
     const directNotes = notes.filter((n) => n.origin === NoteOrigin.DIRECTA);
+    const regionalDirectNotes = directNotes.filter((note) => {
+      const normalizedZone = this.normalizeText(note.zone);
+      return Boolean(normalizedZone) && normalizedZone !== 'nacional';
+    });
     const presidentNotes = notes.filter((note) => this.isPresidentNote(note));
 
     // --- Obtener datos de los últimos 4 períodos (incluye actual) ---
@@ -729,6 +791,7 @@ export class NotesService {
         resultsByPeriod,
         tablesByPeriod,
       },
+      sectionByZone: this.getSectionByZone(regionalDirectNotes),
       tableByMediaName: this.getTableByMediaName(directNotes),
       tableByMedia: this.getTableByMedia(directNotes),
       president: {

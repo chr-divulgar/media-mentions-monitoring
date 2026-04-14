@@ -47,6 +47,19 @@ export interface DashboardPerformanceSection {
   tablesPeriod?: TableWithPeriod[];
 }
 
+export interface DashboardZoneItem {
+  zone: string;
+  audience: number;
+  totalNotes: number;
+  [NoteSentiment.POSITIVO]: number;
+  [NoteSentiment.NEGATIVO]: number;
+  [NoteSentiment.NEUTRO]: number;
+}
+
+export interface DashboardZoneSection {
+  tableByZone: DashboardZoneItem[];
+}
+
 /** Un ítem de sentimientos por nombre de medio dentro de un grupo de tipo de medio */
 export interface MediaNameSentimentItem {
   mediaName: string;
@@ -101,6 +114,7 @@ export interface DashboardDataDto {
   behavior: DashboardBehaviorSection;
   sentiment: DashboardSentimentSection;
   performance: DashboardPerformanceSection;
+  sectionByZone: DashboardZoneSection;
   tableByMediaName: TableByMediaNameItem[];
   tableByMedia: MediaGroupItem[];
   president: DashboardPresidentSection;
