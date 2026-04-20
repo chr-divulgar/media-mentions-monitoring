@@ -54,3 +54,9 @@ export interface SectionByMediaProps extends DashboardSectionProps {
 export interface SectionByZoneProps extends DashboardSectionProps {
   sectionByZone: DashboardZoneSection;
 }
+
+/** Props de la sección inicial */
+export interface SectionInitialProps extends DashboardSectionProps {}
+
+/** Props de la sección final */
+export interface SectionFinalProps extends DashboardSectionProps {}

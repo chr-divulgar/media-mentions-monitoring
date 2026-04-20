@@ -17,6 +17,8 @@ import SectionPerformance from "./SectionPerformance";
 import SectionTop20ByMediaName from "./SectionTop20ByMediaName";
 import SectionByMedia from "./SectionByMedia";
 import SectionPresident from "./SectionPresident";
+import SectionInitial from "./SectionInitial";
+import SectionFinal from "./SectionFinal";
 
 const DashboardPage: React.FC = () => {
   const [messageApi, contextHolder] = message.useMessage();
@@ -219,6 +221,7 @@ const DashboardPage: React.FC = () => {
   } else {
     content = (
       <div id="dashboard-fixed-sections">
+        <SectionInitial dateRange={fechaRango} period={selectedPeriod} />
         {dashboardData?.behavior && (
           <SectionBehavior
             dateRange={fechaRango}
@@ -270,6 +273,7 @@ const DashboardPage: React.FC = () => {
             sectionByZone={dashboardData.sectionByZone}
           />
         )}
+        <SectionFinal dateRange={fechaRango} period={selectedPeriod} />
       </div>
     );
   }
