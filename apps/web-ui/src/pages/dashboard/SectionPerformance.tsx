@@ -1,6 +1,6 @@
 import React from "react";
 import dayjs from "dayjs";
-import { Column } from "@ant-design/plots";
+import { DualAxes } from "@ant-design/plots";
 import { NoteSentiment, NoteSentimentColor } from "@repo/shared";
 import { DASHBOARD_THEME } from "./DashboardTheme";
 import type { SectionPerformanceProps } from "./types";
@@ -44,7 +44,9 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
   const { resultsByPeriod } = performanceData;
   const tablesByPeriod =
     performanceData.tablesByPeriod ?? performanceData.tablesPeriod ?? [];
-
+  const ymax = Math.max(
+    ...resultsByPeriod.map((p) => p.tableData?.[0]?.totalNotes ?? 0),
+  );
   const barData = resultsByPeriod.flatMap((periodItem) => {
     const row = Array.isArray(periodItem.tableData)
       ? periodItem.tableData[0]
@@ -94,39 +96,92 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
     (sentiment) => sentimentColorMap[sentiment],
   );
 
-  const chartConfig = {
-    data: barData,
-    xField: "range",
-    yField: "value",
-    seriesField: "sentiment",
-    isGroup: true,
-    colorField: "sentiment",
-    color: sentimentColors,
+  const dualConfig = {
+    height: 150,
+    children: [
+      {
+        type: "interval",
+        data: barData,
+        xField: "range",
+        yField: "value",
+        seriesField: "sentiment",
+        isGroup: true,
+        colorField: "sentiment",
+        color: sentimentColors,
+        scale: {
+          color: {
+            domain: sentimentOrder,
+            range: sentimentColors,
+          },
+        },
+        legend: { color: { title: false } },
+        axis: {
+          y: { title: "Menciones", position: "left" },
+        },
+        style: {
+          maxWidth: 30,
+        },
+        label: {
+          position: "top" as const,
+          style: { fontSize: 10, dy: -11 },
+        },
+      },
+      {
+        type: "line" as const,
+        data: resultsByPeriod.map((periodItem) => ({
+          range: formatDateRange(periodItem.startDate, periodItem.endDate),
+          value: periodItem.tableData?.[0]?.totalNotes ?? 0,
+        })),
+        encode: { x: "range", y: "value" },
+        style: {
+          stroke: "#FFD600",
+          lineWidth: 4,
+        },
+        axis: {
+          y: { position: "right" },
+        },
+        labels: [
+          {
+            text: (datum: { value: number }) =>
+              datum.value > 0 ? datum.value.toLocaleString("es-CO") : "",
+            position: "top",
+            fill: "#000",
+            fontSize: 13,
+            fontWeight: "bold",
+            dy: -10,
+          },
+        ],
+        legend: false,
+        tooltip: (datum: { value: number }) => ({
+          name: "Total general",
+          value: datum.value.toLocaleString("es-CO"),
+        }),
+      },
+    ],
     scale: {
+      y: { min: 0, max: ymax },
+    },
+    legend: {
       color: {
-        domain: sentimentOrder,
-        range: sentimentColors,
+        position: "top",
+        itemName: {
+          formatter: (name: string) => {
+            if (name === "total") return "Total general";
+            return name;
+          },
+        },
+        itemMarker: (name: string) => {
+          if (name === "total") {
+            return {
+              symbol: "line",
+              style: { stroke: "#FFD600", lineWidth: 4 },
+            };
+          }
+          return { symbol: "square", style: { fill: sentimentColorMap[name] } };
+        },
       },
-    },
-    legend: { position: "top" as const },
-    xAxis: {
-      label: {
-        autoRotate: true,
-        style: { fontSize: 10 },
-      },
-    },
-    yAxis: {
-      title: { text: "Número de notas" },
-    },
-    style: {
-      maxWidth: 30,
-    },
-    label: {
-      position: "top" as const,
-      style: { fontSize: 10 },
     },
   };
-
   return (
     <div
       style={{
@@ -142,193 +197,182 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
 
       <div style={DASHBOARD_THEME.titleStyle}>Desempeño por sentimiento</div>
 
-      <div style={{ height: 150, marginTop: 8 }}>
-        <Column {...chartConfig} />
+      <div style={{ height: 130 }}>
+        <DualAxes {...dualConfig} autoFit />
       </div>
+
       <div
         style={{
-          flex: 1,
-          display: "flex",
-          overflow: "hidden",
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
         }}
       >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            flex: 4,
-            overflow: "hidden",
-          }}
-        >
-          {tablesByPeriod.map((periodTable, index) => {
-            const rangeLabel = formatDateRange(
-              periodTable.startDate,
-              periodTable.endDate,
-            );
-            const tableRows = periodTable.tableData.slice(0, 5);
+        {tablesByPeriod.map((periodTable, index) => {
+          const rangeLabel = formatDateRange(
+            periodTable.startDate,
+            periodTable.endDate,
+          );
+          const tableRows = periodTable.tableData.slice(0, 5);
 
-            return (
+          return (
+            <div
+              key={`${periodTable.startDate}-${periodTable.endDate}-${index}`}
+              style={{
+                borderRadius: 4,
+                padding: 6,
+                overflow: "hidden",
+              }}
+            >
               <div
-                key={`${periodTable.startDate}-${periodTable.endDate}-${index}`}
                 style={{
-                  border: "1px solid #f0f0f0",
-                  borderRadius: 4,
-                  padding: 6,
-                  overflow: "hidden",
+                  color: "#00323f",
+                  fontWeight: "bold",
+                  fontSize: 18,
                 }}
               >
-                <div
-                  style={{
-                    ...DASHBOARD_THEME.dateStyle,
-                    marginBottom: 4,
-                    padding: 0,
-                    fontSize: 11,
-                  }}
-                >
-                  {rangeLabel}
-                </div>
+                {rangeLabel}
+              </div>
 
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: 9,
-                    color: "#4d4d4d",
-                  }}
-                >
-                  <thead>
-                    <tr style={{ background: "#f5f5f5" }}>
-                      <th
-                        style={{
-                          textAlign: "left",
-                          borderBottom: "1px solid #e8e8e8",
-                        }}
-                      >
-                        Tema
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          borderBottom: "1px solid #e8e8e8",
-                        }}
-                      >
-                        #
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          borderBottom: "1px solid #e8e8e8",
-                        }}
-                      >
-                        Audiencia
-                      </th>
-                      <th
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  color: "#4d4d4d",
+                  fontSize: 12,
+                  lineHeight: 1,
+                }}
+              >
+                <thead>
+                  <tr style={{ background: "#f5f5f5" }}>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        borderBottom: "1px solid #e8e8e8",
+                      }}
+                    >
+                      Tema
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "center",
+                        borderBottom: "1px solid #e8e8e8",
+                      }}
+                    >
+                      #
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        borderBottom: "1px solid #e8e8e8",
+                      }}
+                    >
+                      Audiencia
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "center",
+                        borderBottom: "1px solid #e8e8e8",
+                        color: NoteSentimentColor.NEGATIVO,
+                      }}
+                    >
+                      {NoteSentiment.NEGATIVO.slice(0, 3) + "."}
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "center",
+                        borderBottom: "1px solid #e8e8e8",
+                        color: NoteSentimentColor.NEUTRO,
+                      }}
+                    >
+                      {NoteSentiment.NEUTRO.slice(0, 3) + "."}
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "center",
+                        borderBottom: "1px solid #e8e8e8",
+                        color: NoteSentimentColor.POSITIVO,
+                      }}
+                    >
+                      {NoteSentiment.POSITIVO.slice(0, 3) + "."}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map((row, rowIndex) => (
+                    <tr key={`${row.topic}-${row.subtopic}-${rowIndex}`}>
+                      <td style={{ borderBottom: "1px solid #f0f0f0" }}>
+                        {row.subtopic || row.topic}
+                      </td>
+                      <td
                         style={{
                           textAlign: "center",
-                          borderBottom: "1px solid #e8e8e8",
+                          borderBottom: "1px solid #f0f0f0",
+                        }}
+                      >
+                        {row.totalNotes}
+                      </td>
+                      <td
+                        style={{
+                          textAlign: "right",
+                          borderBottom: "1px solid #f0f0f0",
+                        }}
+                      >
+                        {Number(row.audience).toLocaleString("es-CO")}
+                      </td>
+                      <td
+                        style={{
+                          textAlign: "center",
+                          borderBottom: "1px solid #f0f0f0",
                           color: NoteSentimentColor.NEGATIVO,
                         }}
                       >
-                        {NoteSentiment.NEGATIVO}
-                      </th>
-                      <th
+                        {Number(row[NoteSentiment.NEGATIVO] ?? 0) > 0
+                          ? row[NoteSentiment.NEGATIVO]
+                          : ""}
+                      </td>
+                      <td
                         style={{
                           textAlign: "center",
-                          borderBottom: "1px solid #e8e8e8",
+                          borderBottom: "1px solid #f0f0f0",
                           color: NoteSentimentColor.NEUTRO,
                         }}
                       >
-                        {NoteSentiment.NEUTRO}
-                      </th>
-                      <th
+                        {Number(row[NoteSentiment.NEUTRO] ?? 0) > 0
+                          ? row[NoteSentiment.NEUTRO]
+                          : ""}
+                      </td>
+                      <td
                         style={{
                           textAlign: "center",
-                          borderBottom: "1px solid #e8e8e8",
+                          borderBottom: "1px solid #f0f0f0",
                           color: NoteSentimentColor.POSITIVO,
                         }}
                       >
-                        {NoteSentiment.POSITIVO}
-                      </th>
+                        {Number(row[NoteSentiment.POSITIVO] ?? 0) > 0
+                          ? row[NoteSentiment.POSITIVO]
+                          : ""}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {tableRows.map((row, rowIndex) => (
-                      <tr key={`${row.topic}-${row.subtopic}-${rowIndex}`}>
-                        <td style={{ borderBottom: "1px solid #f0f0f0" }}>
-                          {row.subtopic || row.topic}
-                        </td>
-                        <td
-                          style={{
-                            textAlign: "right",
-                            borderBottom: "1px solid #f0f0f0",
-                          }}
-                        >
-                          {row.totalNotes}
-                        </td>
-                        <td
-                          style={{
-                            textAlign: "right",
-                            borderBottom: "1px solid #f0f0f0",
-                          }}
-                        >
-                          {row.audience}
-                        </td>
-                        <td
-                          style={{
-                            textAlign: "center",
-                            borderBottom: "1px solid #f0f0f0",
-                            color: NoteSentimentColor.NEGATIVO,
-                          }}
-                        >
-                          {Number(row[NoteSentiment.NEGATIVO] ?? 0) > 0
-                            ? row[NoteSentiment.NEGATIVO]
-                            : ""}
-                        </td>
-                        <td
-                          style={{
-                            textAlign: "center",
-                            borderBottom: "1px solid #f0f0f0",
-                            color: NoteSentimentColor.NEUTRO,
-                          }}
-                        >
-                          {Number(row[NoteSentiment.NEUTRO] ?? 0) > 0
-                            ? row[NoteSentiment.NEUTRO]
-                            : ""}
-                        </td>
-                        <td
-                          style={{
-                            textAlign: "center",
-                            borderBottom: "1px solid #f0f0f0",
-                            color: NoteSentimentColor.POSITIVO,
-                          }}
-                        >
-                          {Number(row[NoteSentiment.POSITIVO] ?? 0) > 0
-                            ? row[NoteSentiment.POSITIVO]
-                            : ""}
-                        </td>
-                      </tr>
-                    ))}
+                  ))}
 
-                    {tableRows.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={6}
-                          style={{
-                            textAlign: "center",
-                            color: "#4d4d4d",
-                          }}
-                        >
-                          No hay datos para mostrar
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ flex: 1 }}></div>
+                  {tableRows.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        style={{
+                          textAlign: "center",
+                          color: "#4d4d4d",
+                        }}
+                      >
+                        No hay datos para mostrar
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -4,23 +4,22 @@ import { NoteSentimentColor } from "@repo/shared";
 export const DASHBOARD_THEME = {
   /** Fondo de cada tarjeta / sección */
   sectionBg: "#fff",
-  /** Color de los títulos de sección */
-  titleColor: "#00684d",
+
   /** Fondo de la slide en el PPT (hex sin #) */
   slideBgHex: "FFFFFF",
   /** Estilo del renglón de fecha (aplica a todas las secciones) */
   dateStyle: {
-    color: "#989898",
-    textAlign: "left" as const,
-    borderRadius: 4,
+    color: "#7f7f7f",
     fontSize: 12,
+    fontStyle: "italic",
   },
   /** Estilo de los títulos de sección (aplica a todas las secciones) */
   titleStyle: {
-    color: "#00684d",
-    fontWeight: 700,
-    fontSize: 32,
+    color: "#00323f",
+    fontWeight: "bold",
+    fontSize: 40,
     textAlign: "left" as const,
+    lineHeight: 1.2,
   },
   /** Estilo de contenedor de cada sección (slide-like card) */
   sectionContainer: {
@@ -68,6 +67,9 @@ export const getPieConfig = (data: { type: string; value: number }[]) => ({
       return `${pct}%`;
     },
     style: { fontSize: 12 },
+    position: "outside",
+    autoRotate: false,
+    autoHide: false,
   },
   legend: { color: { title: false } },
   interactions: [{ type: "element-active" }],

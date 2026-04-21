@@ -183,15 +183,22 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
             >
               <div
                 style={{
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "#262626",
-                  marginBottom: 2,
-                  textTransform: "uppercase",
-                  letterSpacing: 0.5,
+                  ...DASHBOARD_THEME.titleStyle,
+                  fontSize: 24,
+                  lineHeight: 1,
                 }}
               >
                 {group.media}
+              </div>
+              <div
+                style={{
+                  ...DASHBOARD_THEME.titleStyle,
+                  fontSize: 24,
+                  lineHeight: 1,
+                }}
+              >
+                {group.items.reduce((sum, item) => sum + item.totalNotes, 0) +
+                  " notas"}
               </div>
 
               <div
@@ -201,17 +208,17 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
               >
                 <Bar {...chartConfig} />
               </div>
-
               <div
                 style={{
-                  color: DASHBOARD_THEME.titleColor,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  textAlign: "center",
+                  ...DASHBOARD_THEME.titleStyle,
+                  fontSize: 16,
+                  fontWeight: "normal",
                 }}
               >
                 Potencial audiencia alcanzada:{" "}
-                {group.totalAudience.toLocaleString("es-CO")}
+                <span style={{ fontWeight: "bold" }}>
+                  {group.totalAudience.toLocaleString("es-CO")}
+                </span>
               </div>
             </div>
           );

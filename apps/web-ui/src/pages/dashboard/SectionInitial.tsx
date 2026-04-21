@@ -3,8 +3,6 @@ import { DASHBOARD_THEME } from "./DashboardTheme";
 import type { SectionInitialProps } from "./types";
 
 const SectionInitial: React.FC<SectionInitialProps> = ({ dateRange }) => {
-  const titleText = "Análisis Monitoreo de medios de comunicación";
-
   return (
     <div
       style={{
@@ -15,12 +13,11 @@ const SectionInitial: React.FC<SectionInitialProps> = ({ dateRange }) => {
         backgroundRepeat: "no-repeat",
         display: "flex",
       }}
-      aria-label={`Sección inicial ${dateRange}`}
     >
-      <div style={{ flex: 1 }} />
+      <div style={{ flex: 4 }} />
       <div
         style={{
-          flex: 1,
+          flex: 2,
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
@@ -31,23 +28,36 @@ const SectionInitial: React.FC<SectionInitialProps> = ({ dateRange }) => {
       >
         <div
           style={{
-            ...DASHBOARD_THEME.titleStyle,
+            color: "#FFFFFF",
+            fontWeight: "bold",
             textAlign: "center",
             fontSize: 40,
             lineHeight: 1.2,
           }}
         >
-          {titleText}
+          Análisis Monitoreo Medios de Comunicación
         </div>
         <div
           style={{
-            ...DASHBOARD_THEME.titleStyle,
+            color: "#FFFFFF",
+            fontWeight: "bold",
             textAlign: "center",
-            fontSize: 24,
+            fontSize: 20,
+            marginTop: 24,
+          }}
+        >
+          {dateRange}
+        </div>
+        <div
+          style={{
+            color: "#FFFFFF",
+            fontWeight: "bold",
+            textAlign: "center",
+            fontSize: 20,
             lineHeight: 1.2,
           }}
         >
-          Jefatura de comunicaciones externas y prensa
+          Jefatura de Comunicaciones Externas y Prensa
         </div>
       </div>
     </div>

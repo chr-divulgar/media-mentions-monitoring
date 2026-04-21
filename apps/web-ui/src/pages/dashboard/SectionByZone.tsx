@@ -96,6 +96,8 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
             text: "audience",
             fill: "#1890ff",
             fontSize: 11,
+            dy: -6,
+            dx: 6,
           },
         ],
         legend: false,
@@ -125,6 +127,7 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
             position: "top",
             fill: "#262626",
             fontSize: 10,
+            dy: -12,
           },
         ],
         axis: {
@@ -165,27 +168,46 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
           overflow: "hidden",
         }}
       >
+        <div style={{ flex: 1 }} />
         <div
           style={{
             flex: 2,
             display: "flex",
             flexDirection: "column",
             justifyContent: "flex-start",
-            fontSize: 16,
-            lineHeight: 1.4,
+            color: "#7f7f7f",
+            lineHeight: 1.2,
           }}
         >
-          <div style={{ ...DASHBOARD_THEME.titleStyle, fontSize: 20 }}>
-            Total publicaciones {totalPublicaciones.toLocaleString("es-CO")}
+          <div>
+            Total publicaciones{" "}
+            <span style={{ fontWeight: "bold" }}>
+              {totalPublicaciones.toLocaleString("es-CO")}
+            </span>
           </div>
-          <div style={{ color: NoteSentimentColor.POSITIVO }}>
-            Positivas {totalPositivas.toLocaleString("es-CO")}
+          <div>
+            Positivas{" "}
+            <span
+              style={{ fontWeight: "bold", color: NoteSentimentColor.POSITIVO }}
+            >
+              {totalPositivas.toLocaleString("es-CO")}
+            </span>
           </div>
-          <div style={{ color: NoteSentimentColor.NEUTRO }}>
-            Neutras {totalNeutras.toLocaleString("es-CO")}
+          <div>
+            Neutras{" "}
+            <span
+              style={{ fontWeight: "bold", color: NoteSentimentColor.NEUTRO }}
+            >
+              {totalNeutras.toLocaleString("es-CO")}
+            </span>
           </div>
-          <div style={{ color: NoteSentimentColor.NEGATIVO }}>
-            Negativas {totalNegativas.toLocaleString("es-CO")}
+          <div>
+            Negativas{" "}
+            <span
+              style={{ fontWeight: "bold", color: NoteSentimentColor.NEGATIVO }}
+            >
+              {totalNegativas.toLocaleString("es-CO")}
+            </span>
           </div>
         </div>
 
@@ -194,21 +216,17 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
             flex: 2,
             display: "flex",
             flexDirection: "column",
-            justifyContent: "flex-start",
-            color: "#3C357B",
-            textAlign: "center",
+            justifyContent: "center",
+            textAlign: "left",
+            color: "#000",
+            lineHeight: 1.2,
+            marginBottom: 42,
           }}
         >
-          <div style={{ fontSize: 20, lineHeight: 1.3 }}>
-            Potencial audiencia alcanzada
-          </div>
+          Potencial audiencia alcanzada
           <div
             style={{
-              color: "#000",
-              fontSize: 28,
-              fontWeight: 700,
-              lineHeight: 1.2,
-              marginTop: 10,
+              fontWeight: "bold",
             }}
           >
             {totalAudiencia.toLocaleString("es-CO")}

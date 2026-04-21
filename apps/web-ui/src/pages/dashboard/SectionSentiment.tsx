@@ -20,23 +20,32 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
   const totalAudiencia = totalRow?.audience ?? 0;
 
   // Datos para las barras: una fila por (topic × sentimiento), orden fijo: Negativa → Neutra → Positiva
-  const barData = tableByTopic.flatMap((row) => [
-    {
-      topic: row.topic,
-      sentiment: NoteSentiment.NEGATIVO,
-      value: Number(row[NoteSentiment.NEGATIVO]),
-    },
-    {
-      topic: row.topic,
-      sentiment: NoteSentiment.NEUTRO,
-      value: Number(row[NoteSentiment.NEUTRO]),
-    },
-    {
-      topic: row.topic,
-      sentiment: NoteSentiment.POSITIVO,
-      value: Number(row[NoteSentiment.POSITIVO]),
-    },
-  ]);
+  // Precalcular totales por topic para mostrar arriba de la barra
+  const topicTotals: Record<string, number> = {};
+  const barData = tableByTopic.flatMap((row) => {
+    const total =
+      Number(row[NoteSentiment.NEGATIVO]) +
+      Number(row[NoteSentiment.NEUTRO]) +
+      Number(row[NoteSentiment.POSITIVO]);
+    topicTotals[row.topic] = total;
+    return [
+      {
+        topic: row.topic,
+        sentiment: NoteSentiment.NEGATIVO,
+        value: Number(row[NoteSentiment.NEGATIVO]),
+      },
+      {
+        topic: row.topic,
+        sentiment: NoteSentiment.NEUTRO,
+        value: Number(row[NoteSentiment.NEUTRO]),
+      },
+      {
+        topic: row.topic,
+        sentiment: NoteSentiment.POSITIVO,
+        value: Number(row[NoteSentiment.POSITIVO]),
+      },
+    ];
+  });
 
   // Datos para el área: una fila por topic
   const areaData = tableByTopic.map((row) => ({
@@ -74,15 +83,25 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
         },
         labels: [
           {
-            text: "audience",
+            text: (datum: { topic: string; audience: number }) => {
+              return Number(datum.audience).toLocaleString("es-CO");
+            },
             fill: "#1890ff",
-            fontSize: 11,
+            fontSize: 12,
+            dx: 20,
+            textAlign: "left",
+            textBaseline: "bottom",
+            background: {
+              fill: "#fff",
+              stroke: "#1890ff",
+              radius: 4,
+            },
           },
         ],
-        legend: false,
+        legend: { color: { title: false } },
         tooltip: (datum: { topic: string; audience: number }) => ({
           name: "Audiencia",
-          value: datum.audience,
+          value: Number(datum.audience).toLocaleString("es-CO"),
         }),
       },
       {
@@ -100,11 +119,52 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
           maxWidth: 40,
         },
         labels: [
+          // Valor individual: dentro si es grande, fuera a la derecha con línea si es pequeño
           {
-            text: "value",
-            position: "inside",
-            fill: "#fff",
+            text: (datum: { value: number }) =>
+              datum.value > 0 ? datum.value.toLocaleString("es-CO") : "",
+            position: (datum: { value: number }) =>
+              datum.value >= 10 ? "inside" : "right",
+            fill: (datum: { value: number }) =>
+              datum.value >= 10 ? "#fff" : "#3C357B",
             fontSize: 11,
+            fontWeight: (datum: { value: number }) =>
+              datum.value >= 10 ? 400 : 700,
+            labelLine: (datum: { value: number }) => datum.value < 10,
+            dx: (datum: { value: number }) => (datum.value >= 10 ? 0 : 8),
+            dy: (datum: { value: number; sentiment: NoteSentiment }) => {
+              if (datum.value >= 10) return 0;
+              // Separar verticalmente según el sentimiento
+              switch (datum.sentiment) {
+                case NoteSentiment.NEGATIVO:
+                  return -12;
+                case NoteSentiment.NEUTRO:
+                  return 0;
+                case NoteSentiment.POSITIVO:
+                  return 12;
+                default:
+                  return 0;
+              }
+            },
+          },
+          // Total arriba de la barra
+          {
+            text: (datum: {
+              topic: string;
+              sentiment: NoteSentiment;
+              value: number;
+            }) => {
+              if (datum.sentiment === NoteSentiment.POSITIVO) {
+                const total = topicTotals[datum.topic];
+                return total > 0 ? total.toLocaleString("es-CO") : "";
+              }
+              return "";
+            },
+            position: "top",
+            fill: "#3C357B",
+            fontSize: 12,
+            fontWeight: 700,
+            dy: -14,
           },
         ],
         axis: {
@@ -162,7 +222,7 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
         {/* Columna 1 (1/5): Subtítulo */}
         <div
           style={{
-            flex: 1,
+            flex: 3,
             display: "flex",
             alignItems: "flex-start",
             justifyContent: "flex-start",
@@ -171,18 +231,18 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
           <div
             style={{
               ...DASHBOARD_THEME.titleStyle,
-              fontSize: 16,
-              textAlign: "center",
+              fontSize: 24,
+              lineHeight: 1,
             }}
           >
-            Temas con mayores publicaciones por sentimiento y audiencia
+            Temas con mayores publicaciones y audiencia
           </div>
         </div>
 
         {/* Columna 2-3 (2/5): Tabla subTopicTop5 */}
         <div
           style={{
-            flex: 2,
+            flex: 6,
             overflow: "auto",
           }}
         >
@@ -190,8 +250,8 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
             style={{
               width: "100%",
               borderCollapse: "collapse",
-              fontSize: 10,
               color: "#4d4d4d",
+              lineHeight: 1,
             }}
           >
             <thead>
@@ -199,15 +259,15 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
                 <th
                   style={{
                     textAlign: "left",
-                    borderBottom: "1px solid #e8e8e8",
+                    fontWeight: "normal",
                   }}
                 >
                   Tema
                 </th>
                 <th
                   style={{
-                    textAlign: "right",
-                    borderBottom: "1px solid #e8e8e8",
+                    textAlign: "center",
+                    fontWeight: "normal",
                   }}
                 >
                   #
@@ -215,7 +275,7 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
                 <th
                   style={{
                     textAlign: "right",
-                    borderBottom: "1px solid #e8e8e8",
+                    fontWeight: "normal",
                   }}
                 >
                   Audiencia
@@ -228,9 +288,10 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
                       borderBottom: "1px solid #e8e8e8",
                       textTransform: "capitalize",
                       color: sentimentColorMap[column] ?? "inherit",
+                      fontWeight: "normal",
                     }}
                   >
-                    {column}
+                    {column.slice(0, 3) + "."}
                   </th>
                 ))}
               </tr>
@@ -247,7 +308,7 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
                   </td>
                   <td
                     style={{
-                      textAlign: "right",
+                      textAlign: "center",
                       borderBottom: "1px solid #f0f0f0",
                     }}
                   >
@@ -257,9 +318,10 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
                     style={{
                       textAlign: "right",
                       borderBottom: "1px solid #f0f0f0",
+                      paddingLeft: 4,
                     }}
                   >
-                    {row.audience}
+                    {Number(row.audience).toLocaleString("es-CO")}
                   </td>
                   {sentimentColumnsTable.map((column) => (
                     <td
@@ -295,18 +357,17 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
         {/* Columna 4 (1/5): Totales */}
         <div
           style={{
-            flex: 1,
+            flex: 3,
             display: "flex",
             flexDirection: "column",
-            alignItems: "center",
+            alignItems: "flex-start",
             justifyContent: "flex-start",
-            textAlign: "center",
+            textAlign: "left",
+            color: "#7f7f7f",
           }}
         >
           <div
             style={{
-              color: "#3C357B",
-              fontSize: 14,
               lineHeight: 1.2,
             }}
           >
@@ -314,9 +375,7 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
           </div>
           <div
             style={{
-              color: "#000",
-              fontSize: 24,
-              fontWeight: 700,
+              fontWeight: "bold",
               lineHeight: 1.1,
               marginTop: 4,
             }}
@@ -325,29 +384,16 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
           </div>
           <div
             style={{
-              color: "#3C357B",
-              fontSize: 14,
               lineHeight: 1.2,
               marginTop: 16,
             }}
           >
             Potencial audiencia alcanzada
           </div>
-          <div
-            style={{
-              color: "#000",
-              fontSize: 24,
-              fontWeight: 700,
-              lineHeight: 1.1,
-              marginTop: 4,
-            }}
-          >
-            {totalAudiencia}
+          <div style={{ fontWeight: "bold", lineHeight: 1.1, marginTop: 4 }}>
+            {Number(totalAudiencia).toLocaleString("es-CO")}
           </div>
         </div>
-
-        {/* Columna 5 (1/5): Vacía */}
-        <div style={{ flex: 1 }}></div>
       </div>
     </div>
   );

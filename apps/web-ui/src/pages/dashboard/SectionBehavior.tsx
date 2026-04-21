@@ -1,6 +1,6 @@
 import React from "react";
 import { Pie } from "@ant-design/plots";
-import { ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
+import { CaretUpFilled, CaretDownFilled } from "@ant-design/icons";
 import { DASHBOARD_THEME, getPieConfig } from "./DashboardTheme";
 import type { SectionBehaviorProps } from "./types";
 
@@ -37,7 +37,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
 
   const getArrow = (comparison?: number): React.ReactNode => {
     if (comparison === undefined || comparison === 0) return null;
-    return comparison > 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />;
+    return comparison > 0 ? <CaretUpFilled /> : <CaretDownFilled />;
   };
 
   const comparisonValue = comparisonDirectPercentage ?? 0;
@@ -57,7 +57,8 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
     (column) => column.toLowerCase() === "totalnotes",
   );
   const sentimentColumnsWithoutTotalNotes = sentimentColumns.filter(
-    (column) => column !== totalNotesColumn,
+    (column) =>
+      column !== totalNotesColumn && column.toLowerCase() !== "origin",
   );
   const totalAudience = tableData.reduce(
     (sum, row) => sum + Number(row.audience ?? 0),
@@ -122,12 +123,10 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
           <span
             style={{
               color: "#fff",
-              fontSize: 14,
-              fontWeight: 500,
-              marginTop: 4,
+              fontWeight: "bold",
             }}
           >
-            #
+            Publicaciones
           </span>
         </div>
 
@@ -145,7 +144,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
           {/* Parte 1 */}
           <div
             style={{
-              flex: 1,
+              flex: 2,
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -154,42 +153,46 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
               padding: "8px 6px",
             }}
           >
-            <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1 }}>
+            <div style={{ fontSize: 24, fontWeight: "bold" }}>
               {directNotes}
             </div>
-            <div style={{ fontSize: 12, marginTop: 6 }}>
-              El volumen total de la conversación
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>
-              {directPct}%
-            </div>
+            <div>El volumen total de la conversación</div>
+            <div style={{ fontSize: 22, fontWeight: "bold" }}>{directPct}%</div>
           </div>
 
           {/* Parte 2 */}
           <div
             style={{
-              flex: 1,
+              flex: 2,
               display: "flex",
               flexDirection: "column",
               justifyContent: "center",
-              padding: "8px 10px",
-              borderLeft: "1px solid rgba(255,255,255,0.35)",
-              borderRight: "1px solid rgba(255,255,255,0.35)",
+              alignItems: "center",
               textAlign: "left",
             }}
           >
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+            <div
+              style={{
+                fontSize: 24,
+                fontWeight: "bold",
+                alignSelf: "center",
+                lineHeight: 1.2,
+              }}
+            >
               Publicaciones directas
             </div>
-            <div style={{ fontSize: 12, lineHeight: 1.25 }}>
-              Empresa o Grupo Empresarial
-            </div>
-            <div style={{ fontSize: 12, lineHeight: 1.25 }}>
-              Financiera - especializadas
-            </div>
-            <div style={{ fontSize: 12, lineHeight: 1.25 }}>
-              Presidente – Ricardo Roa
-            </div>
+            <ul
+              style={{
+                lineHeight: 1.2,
+                margin: 0,
+                paddingLeft: 18,
+                listStyleType: "disc",
+              }}
+            >
+              <li>Empresa o Grupo Empresarial</li>
+              <li>Financiera - especializadas</li>
+              <li>Presidente – Ricardo Roa</li>
+            </ul>
           </div>
 
           {/* Parte 3 */}
@@ -207,15 +210,15 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
             {comparisonText && (
               <div
                 style={{
-                  fontSize: 34,
-                  fontWeight: 900,
+                  fontSize: 24,
+                  fontWeight: "bold",
                   lineHeight: 1,
                 }}
               >
                 {getArrow(comparisonValue)} {comparisonText}
               </div>
             )}
-            <div style={{ fontSize: 13, marginTop: 6 }}>
+            <div style={{ fontSize: 14 }}>
               vs. {getPeriodLabel(period)} anterior
             </div>
           </div>
@@ -235,11 +238,11 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
             padding: "8px 6px",
           }}
         >
-          <div style={{ fontSize: 28, fontWeight: 700, lineHeight: 1 }}>
-            {indirectPct}%
-          </div>
-          <div style={{ fontSize: 14, marginTop: 6, lineHeight: 1.25 }}>
+          <div style={{ marginTop: 6, lineHeight: 1.25 }}>
             Publicaciones Indirectas
+          </div>
+          <div style={{ fontSize: 24, fontWeight: "bold", lineHeight: 1 }}>
+            {indirectPct}%
           </div>
         </div>
       </div>
@@ -256,7 +259,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
       >
         <div
           style={{
-            flex: 4,
+            flex: 12,
             border: "none",
             borderRadius: 0,
             overflow: "visible",
@@ -269,47 +272,37 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                fontSize: 10,
+                fontSize: 16,
+                lineHeight: 1,
                 color: "#4d4d4d",
               }}
             >
               <thead>
-                <tr style={{ background: "#f5f5f5" }}>
-                  <th
-                    style={{
-                      textAlign: "left",
-                      borderBottom: "1px solid #e8e8e8",
-                    }}
-                  ></th>
+                <tr style={{ background: "#fff" }}>
+                  <th></th>
                   {totalNotesColumn && (
                     <th
                       style={{
-                        textAlign: "right",
-                        borderBottom: "1px solid #e8e8e8",
+                        textAlign: "center",
                       }}
                     >
                       #
                     </th>
                   )}
-                  <th
-                    style={{
-                      textAlign: "right",
-                      borderBottom: "1px solid #e8e8e8",
-                    }}
-                  >
+                  <th style={{ fontWeight: "initial", textAlign: "right" }}>
                     Audiencia
                   </th>
                   {sentimentColumnsWithoutTotalNotes.map((column) => (
                     <th
                       key={column}
                       style={{
-                        textAlign: "right",
-                        borderBottom: "1px solid #e8e8e8",
+                        textAlign: "center",
                         textTransform: "capitalize",
+                        fontWeight: "initial",
                         color: getSentimentTextColor(column) ?? "inherit",
                       }}
                     >
-                      {column}
+                      {column.slice(0, 3) + "."}
                     </th>
                   ))}
                 </tr>
@@ -363,7 +356,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                         {totalNotesColumn && (
                           <td
                             style={{
-                              textAlign: "right",
+                              textAlign: "center",
                               borderBottom: "1px solid #f0f0f0",
                             }}
                           >
@@ -378,7 +371,9 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                             borderBottom: "1px solid #f0f0f0",
                           }}
                         >
-                          {row.audience}
+                          {row.audience !== undefined && row.audience !== null
+                            ? Number(row.audience).toLocaleString("es-CO")
+                            : ""}
                         </td>
                         {sentimentColumnsWithoutTotalNotes.map((column) => (
                           <td
@@ -418,7 +413,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
 
         <div
           style={{
-            flex: 3,
+            flex: 6,
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -428,10 +423,11 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
         >
           <div
             style={{
-              fontSize: 14,
-              fontWeight: 500,
               marginBottom: 8,
               color: "#333333",
+              textAlign: "left",
+              width: "100%",
+              marginLeft: 24,
             }}
           >
             Sentimiento publicaciones directas
@@ -444,10 +440,11 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
           </div>
           <div
             style={{
-              color: "#3C357B",
-              fontSize: 20,
-              marginTop: 8,
+              color: DASHBOARD_THEME.titleStyle.color,
+              fontSize: 24,
+              fontWeight: "bold",
               lineHeight: 1.2,
+              textAlign: "left",
             }}
           >
             Potencial audiencia publicaciones directas
@@ -456,12 +453,13 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
             style={{
               color: "#000",
               fontSize: 24,
-              fontWeight: 700,
+              fontWeight: "bold",
               lineHeight: 1.1,
-              marginTop: 4,
+              width: "100%",
+              textAlign: "left",
             }}
           >
-            {totalAudience}
+            {Number(totalAudience).toLocaleString("es-CO")}
           </div>
         </div>
 

@@ -135,14 +135,15 @@ const SectionPresident: React.FC<SectionPresidentProps> = ({
 
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr 1fr",
-
+          display: "flex",
+          flexDirection: "row",
+          flexWrap: "wrap",
+          gap: 12,
           alignItems: "stretch",
           flex: 1,
         }}
       >
-        <div style={{ gridColumn: "span 2" }}>
+        <div style={{ flex: 4 }}>
           <div
             style={{
               ...DASHBOARD_THEME.titleStyle,
@@ -151,82 +152,79 @@ const SectionPresident: React.FC<SectionPresidentProps> = ({
           >
             Publicaciones de mayor impacto
           </div>
-          <div style={{ fontSize: 16, color: "#262626", marginBottom: 8 }}>
+          <div style={{ color: "#7f7f7f" }}>
             {presidentData.topImpact?.sentiment ?? NoteSentiment.NEGATIVO}
           </div>
           <div
             style={{
-              color: DASHBOARD_THEME.titleColor,
-              fontSize: 10,
-              fontWeight: 600,
-              lineHeight: 1.4,
+              color: DASHBOARD_THEME.titleStyle.color,
+
+              lineHeight: 1,
               marginBottom: 4,
               whiteSpace: "pre-line",
             }}
           >
             {presidentData.topImpact?.mediaNames.length
-              ? presidentData.topImpact.mediaNames.join(", ")
+              ? toTitleCase(presidentData.topImpact.mediaNames.join(", "))
               : "Sin medios registrados"}
           </div>
           <div
             style={{
-              fontSize: 16,
-              lineHeight: 1.45,
-              color: "#262626",
+              lineHeight: 1.2,
+              color: "#7f7f7f",
+              marginTop: 8,
             }}
           >
             {presidentData.topImpact?.title ?? "Sin título repetido"}
           </div>
         </div>
 
-        <div style={{ gridColumn: "span 2" }}>
-          <div
-            style={{
-              ...DASHBOARD_THEME.titleStyle,
-              fontSize: 18,
-            }}
-          >
-            Total publicaciones
-          </div>
-
-          <div style={{ fontSize: 11, color: "#262626" }}>
+        <div style={{ flex: 2 }}>
+          <div style={{ color: "#7f7f7f", lineHeight: 1.2 }}>
             <div>
               Total publicaciones{" "}
-              {presidentData.totalNotes.toLocaleString("es-CO")}
+              <span style={{ fontWeight: "bold" }}>
+                {presidentData.totalNotes.toLocaleString("es-CO")}
+              </span>
             </div>
             <div>
-              Positivas {presidentData.positiveNotes.toLocaleString("es-CO")}
+              Positivas{" "}
+              <span style={{ fontWeight: "bold" }}>
+                {presidentData.positiveNotes.toLocaleString("es-CO")}
+              </span>
             </div>
             <div>
-              Neutras {presidentData.neutralNotes.toLocaleString("es-CO")}
+              Neutras{" "}
+              <span style={{ fontWeight: "bold" }}>
+                {presidentData.neutralNotes.toLocaleString("es-CO")}
+              </span>
             </div>
             <div>
-              Negativas {presidentData.negativeNotes.toLocaleString("es-CO")}
+              Negativas{" "}
+              <span style={{ fontWeight: "bold" }}>
+                {presidentData.negativeNotes.toLocaleString("es-CO")}
+              </span>
             </div>
           </div>
+        </div>
 
+        <div
+          style={{
+            flex: 2,
+            justifyContent: "center",
+            color: "#000",
+            lineHeight: 1.2,
+          }}
+        >
+          Potencial audiencia alcanzada
           <div
             style={{
-              color: NoteSentimentColor.POSITIVO,
-              fontSize: 11,
-              fontWeight: 500,
-            }}
-          >
-            Potencial audiencia alcanzada
-          </div>
-          <div
-            style={{
-              color: "#262626",
-              fontSize: 12,
-              fontWeight: 700,
-              marginTop: 4,
+              fontWeight: "bold",
             }}
           >
             {presidentData.totalAudience.toLocaleString("es-CO")}
           </div>
         </div>
-
-        <div />
       </div>
     </div>
   );

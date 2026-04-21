@@ -220,7 +220,7 @@ const DashboardPage: React.FC = () => {
     content = <div>Error al cargar datos</div>;
   } else {
     content = (
-      <div id="dashboard-fixed-sections">
+      <div id="dashboard-fixed-sections" style={{ fontSize: 16 }}>
         <SectionInitial dateRange={fechaRango} period={selectedPeriod} />
         {dashboardData?.behavior && (
           <SectionBehavior

@@ -31,7 +31,9 @@ const toTitleCase = (value: string) =>
     .toLocaleLowerCase("es-CO")
     .split(/\s+/)
     .map((word) =>
-      word ? `${word.charAt(0).toLocaleUpperCase("es-CO")}${word.slice(1)}` : word,
+      word
+        ? `${word.charAt(0).toLocaleUpperCase("es-CO")}${word.slice(1)}`
+        : word,
     )
     .join(" ");
 
@@ -156,12 +158,10 @@ const SectionTop20ByMediaName: React.FC<SectionTop20ByMediaNameProps> = ({
       >
         <div
           style={{
-            width: "50%",
-            color: DASHBOARD_THEME.titleColor,
-            fontSize: 26,
-            fontWeight: 600,
+            width: "60%",
+            ...DASHBOARD_THEME.titleStyle,
+            fontSize: 24,
             lineHeight: 1.25,
-            textAlign: "center",
           }}
         >
           En total {topMediaCount} medios publicaron
@@ -170,18 +170,22 @@ const SectionTop20ByMediaName: React.FC<SectionTop20ByMediaNameProps> = ({
         </div>
         <div
           style={{
-            width: "25%",
-            fontSize: 16,
+            width: "40%",
             lineHeight: 1.35,
             color: "#262626",
-            textAlign: "center",
+            textAlign: "left",
           }}
         >
-          Total registros {totalNotesAllMedia.toLocaleString("es-CO")} en
-          {totalMediaCount.toLocaleString("es-CO")} medios.
+          Total registros{" "}
+          <span style={{ fontWeight: "bold" }}>
+            {totalNotesAllMedia.toLocaleString("es-CO")}
+          </span>{" "}
+          en{" "}
+          <span style={{ fontWeight: "bold" }}>
+            {totalMediaCount.toLocaleString("es-CO")}
+          </span>{" "}
+          medios.
         </div>
-
-        <div style={{ width: "25%" }} />
       </div>
     </div>
   );
