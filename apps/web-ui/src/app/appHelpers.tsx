@@ -17,7 +17,7 @@ import MenuCard from "../components/MenuCard";
 export function headerTitleRender(
   logo: React.ReactNode,
   title: React.ReactNode,
-  props: GlobalHeaderProps
+  props: GlobalHeaderProps,
 ) {
   const defaultDom = (
     <button
@@ -69,7 +69,7 @@ export function menuFooterRender(props?: SiderMenuProps) {
 export function menuItemRender(
   item: MenuDataItem,
   dom: React.ReactNode,
-  setPathname: React.Dispatch<React.SetStateAction<string>>
+  setPathname: React.Dispatch<React.SetStateAction<string>>,
 ) {
   return (
     <Link
@@ -101,7 +101,7 @@ export function getAvatarProps(): AvatarProps & {
   return {
     src: "https://gw.alipayobjects.com/zos/antfincdn/efFD%24IOql2/weixintupian_20170331104822.jpg",
     size: "small",
-    title: "Qinini",
+    title: "Ecopetrol",
     render: (_props: AvatarProps, dom: ReactNode) => {
       return (
         <Dropdown

@@ -12,6 +12,8 @@ El backend (NestJS) sirve el frontend (React + Vite) como archivos estáticos. S
 
 ### Pasos para producción
 
+Cambiar el puerto a 3001
+
 1. Construir el frontend:
    ```sh
    pnpm --filter ./apps/web-ui build
@@ -20,9 +22,13 @@ El backend (NestJS) sirve el frontend (React + Vite) como archivos estáticos. S
    ```sh
    xcopy /E /I /Y apps\web-ui\dist apps\web-api\public
    ```
-3. Iniciar el backend:
+3. Build el backend:
    ```sh
-   pnpm --filter ./apps/web-api dev
+   pnpm --filter ./apps/web-api build
+   ```
+4. Iniciar el Backend
+   ```sh
+   pnpm --filter ./apps/web-api start:prod
    ```
 
 El backend servirá la web en la misma URL y puerto configurado.

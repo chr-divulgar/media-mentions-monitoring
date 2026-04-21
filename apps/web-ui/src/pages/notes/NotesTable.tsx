@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import dayjs from "dayjs";
-import { NoteDto, dateFormat } from "@repo/shared/index";
+import { NoteDto } from "@repo/shared/index";
 import { SearchOutlined, EditOutlined } from "@ant-design/icons";
 import type {
   InputRef,
@@ -21,7 +21,7 @@ interface NotesTableProps {
 
 type DataIndex = keyof NoteDto;
 
-const NotesTable: React.FC<NotesTableProps> = ({ selectedDates, notes }) => {
+const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
   const [searchText, setSearchText] = useState("");
   const [searchedColumn, setSearchedColumn] = useState("");
   const searchInput = useRef<InputRef>(null);

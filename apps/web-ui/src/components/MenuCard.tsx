@@ -1,37 +1,39 @@
-import { CaretDownFilled } from '@ant-design/icons';
+import { CaretDownFilled } from "@ant-design/icons";
 
-import { css } from '@emotion/css';
-import { Divider, Popover, theme } from 'antd';
-import { v4 as uuidv4 } from 'uuid';
+import { css } from "@emotion/css";
+import { Divider, Popover, theme } from "antd";
+import { v4 as uuidv4 } from "uuid";
 
-import List from './List';
+import List from "./List";
+import { useNavigate } from "react-router-dom";
 
 const MenuCard = () => {
   const { token } = theme.useToken();
+  const navigate = useNavigate();
   return (
     <div
       style={{
-        display: 'flex',
-        alignItems: 'center',
+        display: "flex",
+        alignItems: "center",
       }}
     >
       <Divider
         style={{
-          height: '1.5em',
+          height: "1.5em",
         }}
         type="vertical"
       />
       <Popover
         placement="bottom"
         overlayStyle={{
-          width: 'calc(100vw - 24px)',
-          padding: '24px',
+          width: "calc(100vw - 24px)",
+          padding: "24px",
           paddingTop: 8,
-          height: '307px',
-          borderRadius: '0 0 6px 6px',
+          height: "307px",
+          borderRadius: "0 0 6px 6px",
         }}
         content={
-          <div style={{ display: 'flex', padding: '32px 40px' }}>
+          <div style={{ display: "flex", padding: "32px 40px" }}>
             <div style={{ flex: 1 }}>
               <List title="soluciones financieras" />
               <List
@@ -44,8 +46,8 @@ const MenuCard = () => {
 
             <div
               style={{
-                width: '308px',
-                borderInlineStart: '1px solid ' + token.colorBorder,
+                width: "308px",
+                borderInlineStart: "1px solid " + token.colorBorder,
                 paddingInlineStart: 16,
               }}
             >
@@ -72,6 +74,7 @@ const MenuCard = () => {
                         background-color: ${token.colorBgTextHover};
                       }
                     `}
+                    onClick={() => navigate("/alerts")}
                   >
                     <img src="https://gw.alipayobjects.com/zos/antfincdn/6FTGmLLmN/bianzu%25252013.svg" />
                     <div
@@ -86,7 +89,7 @@ const MenuCard = () => {
                           line-height: 22px;
                         `}
                       >
-                        Ant Design
+                        CHR Divulgar
                       </div>
                       <div
                         className={css`
@@ -109,12 +112,12 @@ const MenuCard = () => {
           style={{
             color: token.colorTextHeading,
             fontWeight: 500,
-            cursor: 'pointer',
-            display: 'flex',
+            cursor: "pointer",
+            display: "flex",
             gap: 4,
             paddingInlineStart: 8,
             paddingInlineEnd: 12,
-            alignItems: 'center',
+            alignItems: "center",
           }}
           className={css`
             &:hover {

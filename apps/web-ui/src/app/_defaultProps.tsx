@@ -1,11 +1,12 @@
 import {
-  ChromeFilled,
+  //ChromeFilled,
   CrownFilled,
-  SmileFilled,
+  //SmileFilled,
   TabletFilled,
 } from "@ant-design/icons";
 
 export default {
+  title: "CHR Divulgar",
   route: {
     path: "/",
     routes: [
@@ -18,13 +19,13 @@ export default {
         path: "/notes",
         name: "Notas",
         icon: <TabletFilled />,
-      },
+      } /* 
       {
         path: "/alerts",
         name: "Alertas",
         icon: <SmileFilled />,
-      },
-      {
+      }, */,
+      /* {
         path: "/admin",
         name: "Admin",
         icon: <CrownFilled />,
@@ -60,7 +61,7 @@ export default {
         path: "https://ant.design",
         name: "Ant Design ",
         icon: <ChromeFilled />,
-      },
+      }, */
     ],
   },
   bgLayoutImgList: [
