@@ -15,6 +15,8 @@ import { Platform } from '../entities';
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}
 
+  // ─── Platforms ────────────────────────────────────────────────────────────
+
   @Get('get-platforms/:media')
   async getPlatforms(@Param('media') media: string): Promise<Platform[]> {
     try {
@@ -23,7 +25,22 @@ export class SettingsController {
       throw new HttpException(
         {
           status: HttpStatus.INTERNAL_SERVER_ERROR,
-          error: `There was an error processing the request get-platforms ${error}`,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('create-platform')
+  async createPlatform(@Body() dto: PlatformDto): Promise<Platform> {
+    try {
+      return await this.settingsService.createPlatform(dto);
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: error instanceof Error ? error.message : String(error),
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
@@ -31,14 +48,14 @@ export class SettingsController {
   }
 
   @Post('update-platform')
-  async updatePlatform(@Body() platformDto: PlatformDto): Promise<Platform> {
+  async updatePlatform(@Body() dto: PlatformDto): Promise<Platform> {
     try {
-      return await this.settingsService.updatePlatform(platformDto);
+      return await this.settingsService.updatePlatform(dto);
     } catch (error) {
       throw new HttpException(
         {
           status: HttpStatus.INTERNAL_SERVER_ERROR,
-          error: `There was an error processing the request update-platform ${error}`,
+          error: error instanceof Error ? error.message : String(error),
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );

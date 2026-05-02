@@ -1,7 +1,5 @@
-// audio.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PlatformDto } from '@repo/shared';
-
 import { DataSource, MongoRepository } from 'typeorm';
 import { ObjectId } from 'mongodb';
 import { Platform } from '../entities';
@@ -17,29 +15,31 @@ export class SettingsService {
     this.platformRepo = this.dataSource.getMongoRepository(Platform);
   }
 
-  async getPlatforms(media: string): Promise<Platform[]> {
-    console.log('media', media);
+  // ─── Platforms ────────────────────────────────────────────────────────────
 
-    return this.platformRepo.find({ where: { media: media } });
+  async getPlatforms(media: string): Promise<Platform[]> {
+    return this.platformRepo.find({ where: { media } });
   }
 
-  async updatePlatform(platformDto: PlatformDto): Promise<Platform> {
-    const existingPlatform = await this.platformRepo.findOneBy({
-      _id: new ObjectId(platformDto.id),
+  async createPlatform(dto: PlatformDto): Promise<Platform> {
+    const platform = this.platformRepo.create({
+      name: dto.name,
+      url: dto.url ?? '',
+      media: dto.media,
     });
+    return this.platformRepo.save(platform);
+  }
 
-    if (!existingPlatform) {
-      throw new Error('Platform not found');
-    }
+  async updatePlatform(dto: PlatformDto): Promise<Platform> {
+    const existing = await this.platformRepo.findOneBy({
+      _id: new ObjectId(dto.id),
+    });
+    if (!existing) throw new NotFoundException('Platform not found');
 
-    // Update the platform with new data
-    existingPlatform.name = platformDto.name ?? existingPlatform.name;
-    existingPlatform.url = platformDto.url ?? existingPlatform.url;
-    existingPlatform.media = platformDto.media ?? existingPlatform.media;
-    existingPlatform.name = platformDto.name ?? existingPlatform.name;
-    existingPlatform.slots = platformDto.slots ?? existingPlatform.slots;
+    existing.name = dto.name ?? existing.name;
+    existing.url = dto.url ?? existing.url;
+    existing.media = dto.media ?? existing.media;
 
-    // Save the updated platform
-    return await this.platformRepo.save(existingPlatform);
+    return this.platformRepo.save(existing);
   }
 }

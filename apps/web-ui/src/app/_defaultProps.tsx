@@ -1,8 +1,9 @@
 import {
   //ChromeFilled,
   CrownFilled,
-  //SmileFilled,
+  SmileFilled,
   TabletFilled,
+  SettingFilled,
 } from "@ant-design/icons";
 
 export default {
@@ -19,12 +20,17 @@ export default {
         path: "/notes",
         name: "Notas",
         icon: <TabletFilled />,
-      } /* 
+      },
       {
         path: "/alerts",
         name: "Alertas",
         icon: <SmileFilled />,
-      }, */,
+      },
+      {
+        path: "/settings",
+        name: "Configuración",
+        icon: <SettingFilled />,
+      },
       /* {
         path: "/admin",
         name: "Admin",
