@@ -9,6 +9,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SettingsModule } from './settings/settings.module';
 import { Alert, Note, Platform, Transcription } from './entities';
 import { NotesModule } from './notes/notes.module';
+import { FirebaseAdminModule } from './firebase/firebase-admin.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { NotesModule } from './notes/notes.module';
       }),
       inject: [ConfigService],
     }),
+    FirebaseAdminModule,
     AudioModule,
     AlertsModule,
     NotesModule,

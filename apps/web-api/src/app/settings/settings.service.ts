@@ -4,6 +4,7 @@ import { DataSource, MongoRepository } from 'typeorm';
 import { ObjectId } from 'mongodb';
 import { Platform } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { FirebaseAdminService } from '../firebase/firebase-admin.service';
 
 @Injectable()
 export class SettingsService {
@@ -11,6 +12,7 @@ export class SettingsService {
 
   constructor(
     @InjectDataSource('monitoring') private readonly dataSource: DataSource,
+    private readonly firebaseAdmin: FirebaseAdminService,
   ) {
     this.platformRepo = this.dataSource.getMongoRepository(Platform);
   }
@@ -41,5 +43,48 @@ export class SettingsService {
     existing.media = dto.media ?? existing.media;
 
     return this.platformRepo.save(existing);
+  }
+
+  // ─── Users (Firebase Auth) ────────────────────────────────────────────────
+
+  async getUsers() {
+    const result = await this.firebaseAdmin.auth.listUsers(1000);
+    return result.users.map((u) => ({
+      uid: u.uid,
+      email: u.email,
+      displayName: u.displayName,
+      disabled: u.disabled,
+      role: (u.customClaims as Record<string, string> | undefined)?.role,
+    }));
+  }
+
+  async createUser(dto: { email: string; password: string; displayName?: string; role?: string }) {
+    const user = await this.firebaseAdmin.auth.createUser({
+      email: dto.email,
+      password: dto.password,
+      displayName: dto.displayName,
+    });
+    if (dto.role) {
+      await this.firebaseAdmin.auth.setCustomUserClaims(user.uid, { role: dto.role });
+    }
+    return { uid: user.uid, email: user.email, displayName: user.displayName, role: dto.role };
+  }
+
+  async updateUser(dto: { uid: string; displayName?: string; role?: string; password?: string; disabled?: boolean }) {
+    const updateData: Record<string, unknown> = {};
+    if (dto.displayName !== undefined) updateData.displayName = dto.displayName;
+    if (dto.password) updateData.password = dto.password;
+    if (dto.disabled !== undefined) updateData.disabled = dto.disabled;
+
+    await this.firebaseAdmin.auth.updateUser(dto.uid, updateData);
+    if (dto.role !== undefined) {
+      await this.firebaseAdmin.auth.setCustomUserClaims(dto.uid, { role: dto.role });
+    }
+    return { success: true };
+  }
+
+  async deleteUser(uid: string) {
+    await this.firebaseAdmin.auth.deleteUser(uid);
+    return { success: true };
   }
 }

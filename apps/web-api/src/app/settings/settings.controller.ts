@@ -6,6 +6,7 @@ import {
   HttpException,
   Get,
   Param,
+  Delete,
 } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { PlatformDto } from '@repo/shared';
@@ -51,6 +52,68 @@ export class SettingsController {
   async updatePlatform(@Body() dto: PlatformDto): Promise<Platform> {
     try {
       return await this.settingsService.updatePlatform(dto);
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // ─── Users ────────────────────────────────────────────────────────────────
+
+  @Get('users')
+  async getUsers() {
+    try {
+      return await this.settingsService.getUsers();
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('users/create')
+  async createUser(@Body() dto: { email: string; password: string; displayName?: string; role?: string }) {
+    try {
+      return await this.settingsService.createUser(dto);
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('users/update')
+  async updateUser(@Body() dto: { uid: string; displayName?: string; role?: string; password?: string; disabled?: boolean }) {
+    try {
+      return await this.settingsService.updateUser(dto);
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Delete('users/:uid')
+  async deleteUser(@Param('uid') uid: string) {
+    try {
+      return await this.settingsService.deleteUser(uid);
     } catch (error) {
       throw new HttpException(
         {
