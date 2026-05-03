@@ -1,0 +1,14 @@
+.loginContainer {
+  padding: 20px;
+}
+
+.loginContainer h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.loginContainer p {
+  font-size: 14px;
+  color: #6b7280;
+}

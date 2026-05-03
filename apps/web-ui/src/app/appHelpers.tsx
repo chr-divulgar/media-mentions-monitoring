@@ -13,6 +13,7 @@ import { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import SearchInput from "../components/SearchInput";
 import MenuCard from "../components/MenuCard";
+import { AuthUser } from "../context/AuthContext";
 
 export function headerTitleRender(
   logo: React.ReactNode,
@@ -94,23 +95,47 @@ export function getActionsRender(props: GlobalHeaderProps) {
   ];
 }
 
-export function getAvatarProps(): AvatarProps & {
+export interface AvatarConfig {
+  user: AuthUser | null;
+  onLogout: () => void;
+}
+
+export function getAvatarProps({
+  user,
+  onLogout,
+}: AvatarConfig): AvatarProps & {
   title: ReactNode;
   render: (props: AvatarProps, defaultDom: ReactNode) => ReactNode;
 } {
   return {
-    src: "https://gw.alipayobjects.com/zos/antfincdn/efFD%24IOql2/weixintupian_20170331104822.jpg",
+    src:
+      user?.photoURL ||
+      "https://gw.alipayobjects.com/zos/antfincdn/efFD%24IOql2/weixintupian_20170331104822.jpg",
     size: "small",
-    title: "Ecopetrol",
+    title: user?.displayName || user?.email || "User",
     render: (_props: AvatarProps, dom: ReactNode) => {
       return (
         <Dropdown
           menu={{
             items: [
               {
+                key: "profile",
+                label: `${user?.displayName || user?.email}`,
+                disabled: true,
+              },
+              {
+                key: "role",
+                label: `Role: ${user?.role || "user"}`,
+                disabled: true,
+              },
+              {
+                type: "divider",
+              },
+              {
                 key: "logout",
                 icon: <LogoutOutlined />,
-                label: "Salir",
+                label: "Logout",
+                onClick: onLogout,
               },
             ],
           }}
