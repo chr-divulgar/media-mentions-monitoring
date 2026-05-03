@@ -55,6 +55,7 @@ export class SettingsService {
       displayName: u.displayName,
       disabled: u.disabled,
       role: (u.customClaims as Record<string, string> | undefined)?.role,
+      phone: (u.customClaims as Record<string, string> | undefined)?.phone,
     }));
   }
 
@@ -63,22 +64,24 @@ export class SettingsService {
     password: string;
     displayName?: string;
     role?: string;
+    phone?: string;
   }) {
     const user = await this.firebaseAdmin.auth.createUser({
       email: dto.email,
       password: dto.password,
       displayName: dto.displayName,
     });
-    if (dto.role) {
-      await this.firebaseAdmin.auth.setCustomUserClaims(user.uid, {
-        role: dto.role,
-      });
-    }
+    const claims = {
+      role: dto.role ?? 'initial',
+      phone: dto.phone ?? '',
+    };
+    await this.firebaseAdmin.auth.setCustomUserClaims(user.uid, claims);
     return {
       uid: user.uid,
       email: user.email,
       displayName: user.displayName,
-      role: dto.role,
+      role: claims.role,
+      phone: claims.phone,
     };
   }
 
@@ -86,6 +89,7 @@ export class SettingsService {
     uid: string;
     displayName?: string;
     role?: string;
+    phone?: string;
     password?: string;
     disabled?: boolean;
   }) {
@@ -95,9 +99,14 @@ export class SettingsService {
     if (dto.disabled !== undefined) updateData.disabled = dto.disabled;
 
     await this.firebaseAdmin.auth.updateUser(dto.uid, updateData);
-    if (dto.role !== undefined) {
+
+    if (dto.role !== undefined || dto.phone !== undefined) {
+      const existing = await this.firebaseAdmin.auth.getUser(dto.uid);
+      const prevClaims = (existing.customClaims as Record<string, string>) ?? {};
       await this.firebaseAdmin.auth.setCustomUserClaims(dto.uid, {
-        role: dto.role,
+        ...prevClaims,
+        ...(dto.role === undefined ? {} : { role: dto.role }),
+        ...(dto.phone === undefined ? {} : { phone: dto.phone }),
       });
     }
     return { success: true };

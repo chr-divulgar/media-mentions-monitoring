@@ -88,6 +88,7 @@ export class SettingsController {
       password: string;
       displayName?: string;
       role?: string;
+      phone?: string;
     },
   ) {
     try {
@@ -110,6 +111,7 @@ export class SettingsController {
       uid: string;
       displayName?: string;
       role?: string;
+      phone?: string;
       password?: string;
       disabled?: boolean;
     },

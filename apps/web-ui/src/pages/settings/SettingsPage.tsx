@@ -13,6 +13,7 @@ import {
   Tabs,
   Tag,
   Popconfirm,
+  Alert,
 } from "antd";
 import {
   PlusOutlined,
@@ -28,7 +29,7 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const MEDIA_OPTIONS = ["radio", "TV", "Prensa", "Digital"];
-const ROLE_OPTIONS = ["admin", "editor", "viewer"];
+const ROLE_OPTIONS = ["admin", "user", "initial"];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ interface FirebaseUserDto {
   displayName?: string;
   password?: string;
   role?: string;
+  phone?: string;
   disabled?: boolean;
 }
 
@@ -116,7 +118,8 @@ const UserModal: React.FC<{
       form.setFieldsValue({
         email: initial?.email ?? "",
         displayName: initial?.displayName ?? "",
-        role: initial?.role ?? ROLE_OPTIONS[2],
+        role: initial?.role ?? "initial",
+        phone: initial?.phone ?? "",
         password: "",
       });
     }
@@ -158,6 +161,18 @@ const UserModal: React.FC<{
               </Option>
             ))}
           </Select>
+        </Form.Item>
+        <Form.Item
+          name="phone"
+          label="Teléfono (con indicativo de país)"
+          rules={[
+            {
+              pattern: /^\+?[1-9]\d{6,14}$/,
+              message: "Formato: +573001234567",
+            },
+          ]}
+        >
+          <Input placeholder="+573001234567" />
         </Form.Item>
         <Form.Item
           name="password"
@@ -326,14 +341,37 @@ const SettingsPage: React.FC = () => {
       render: (v: string) => v || <Text type="secondary">—</Text>,
     },
     {
+      title: "Teléfono",
+      dataIndex: "phone",
+      key: "phone",
+      render: (v: string) => v || <Text type="secondary">—</Text>,
+    },
+    {
       title: "Rol",
       dataIndex: "role",
       key: "role",
       width: 90,
       render: (role: string) => {
-        const color =
-          role === "admin" ? "red" : role === "editor" ? "blue" : "default";
-        return <Tag color={color}>{role ?? "—"}</Tag>;
+        const roleColorMap: Record<string, string> = {
+          admin: "red",
+          user: "blue",
+          initial: "orange",
+        };
+        const color = roleColorMap[role] ?? "default";
+        return (
+          <>
+            <Tag color={color}>{role ?? "—"}</Tag>
+            {role === "initial" && (
+              <Alert
+                message="Comuníquese con el administrador para activar su cuenta"
+                type="warning"
+                showIcon
+                banner
+                style={{ fontSize: 11, marginTop: 4 }}
+              />
+            )}
+          </>
+        );
       },
     },
     {
