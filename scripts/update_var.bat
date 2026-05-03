@@ -49,4 +49,73 @@ gh secret set VITE_API --body "%VITE_API_LOCAL%" --repo chr-divulgar/media-menti
 :: Dispatch the GitHub Actions workflow
 gh workflow run update-redirect.yml --repo chr-divulgar/media-mentions-monitoring
 
+:: -----------------------------------------------------------------------
+:: Update Firebase Authorized Domains with the new Cloudflare tunnel domain
+:: -----------------------------------------------------------------------
+echo Updating Firebase authorized domain...
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$SA_JSON = '%~dp0media-mentions-monitoring-837ab956098e.json';" ^
+  "$PROJECT_ID = 'media-mentions-monitoring';" ^
+  "$NEW_DOMAIN = '%EXTRACTED_URL%' -replace 'https?://','';" ^
+  "$sa = Get-Content $SA_JSON | ConvertFrom-Json;" ^
+  "$now = [int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds();" ^
+  "$header = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{\"alg\":\"RS256\",\"typ\":\"JWT\"}')) -replace '=+$','' -replace '\+','-' -replace '/','_';" ^
+  "$payloadJson = '{\"iss\":\"' + $sa.client_email + '\",\"scope\":\"https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/firebase https://www.googleapis.com/auth/identitytoolkit\",\"aud\":\"https://oauth2.googleapis.com/token\",\"exp\":' + ($now+3600) + ',\"iat\":' + $now + '}';" ^
+  "$payloadB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson)) -replace '=+$','' -replace '\+','-' -replace '/','_';" ^
+  "$signingInput = $header + '.' + $payloadB64;" ^
+  "$pkPem = $sa.private_key -replace '-----BEGIN PRIVATE KEY-----','' -replace '-----END PRIVATE KEY-----','' -replace '\n','' -replace '\r','';" ^
+  "$pkBytes = [Convert]::FromBase64String($pkPem);" ^
+  "$cngKey = [System.Security.Cryptography.CngKey]::Import($pkBytes, [System.Security.Cryptography.CngKeyBlobFormat]::Pkcs8PrivateBlob);" ^
+  "$rsa = New-Object System.Security.Cryptography.RSACng($cngKey);" ^
+  "$sig = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($signingInput), [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1);" ^
+  "$sigB64 = [Convert]::ToBase64String($sig) -replace '=+$','' -replace '\+','-' -replace '/','_';" ^
+  "$jwt = $signingInput + '.' + $sigB64;" ^
+  "$tokenResp = Invoke-RestMethod -Uri 'https://oauth2.googleapis.com/token' -Method POST -Body @{ grant_type='urn:ietf:params:oauth:grant-type:jwt-bearer'; assertion=$jwt } -ContentType 'application/x-www-form-urlencoded';" ^
+  "$token = $tokenResp.access_token;" ^
+  "try { $cfg = Invoke-RestMethod -Uri \"https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/config\" -Headers @{ Authorization=\"Bearer $token\" } -Method GET -ErrorAction Stop; $domains = @($cfg.authorizedDomains) } catch { Write-Host 'GET config failed, using default domains'; $domains = @('localhost', ($PROJECT_ID + '.firebaseapp.com'), ($PROJECT_ID + '.web.app')) };" ^
+  "$domains = @($domains | Where-Object { $_ -ne '' -and $_ -ne $null });" ^
+  "if ($domains -notcontains $NEW_DOMAIN) {" ^
+  "  $domains += $NEW_DOMAIN;" ^
+  "  $body = '{\"authorizedDomains\":[' + (($domains | ForEach-Object { '\"' + $_ + '\"' }) -join ',') + ']}';" ^
+  "  Write-Host 'PATCH body:' $body;" ^
+  "  try { Invoke-RestMethod -Uri \"https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/config?updateMask=authorizedDomains\" -Headers @{ Authorization=\"Bearer $token\"; 'Content-Type'='application/json' } -Method PATCH -Body $body | Out-Null; Write-Host 'Firebase domain updated:' $NEW_DOMAIN } catch { $errBody = $_.Exception.Response; if ($errBody) { $reader = New-Object System.IO.StreamReader($errBody.GetResponseStream()); Write-Host 'ERROR:' $reader.ReadToEnd() } else { Write-Host 'ERROR:' $_.Exception.Message } };" ^
+  "} else { Write-Host 'Domain already authorized:' $NEW_DOMAIN }"
+
+:: -----------------------------------------------------------------------
+:: Remove old trycloudflare.com domains from Firebase authorized domains
+:: keeping only the most recent one
+:: -----------------------------------------------------------------------
+echo Cleaning up old Firebase authorized domains...
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$SA_JSON = '%~dp0media-mentions-monitoring-837ab956098e.json';" ^
+  "$PROJECT_ID = 'media-mentions-monitoring';" ^
+  "$sa = Get-Content $SA_JSON | ConvertFrom-Json;" ^
+  "$now = [int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds();" ^
+  "$header = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{\"alg\":\"RS256\",\"typ\":\"JWT\"}')) -replace '=+$','' -replace '\+','-' -replace '/','_';" ^
+  "$payloadJson = '{\"iss\":\"' + $sa.client_email + '\",\"scope\":\"https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/firebase https://www.googleapis.com/auth/identitytoolkit\",\"aud\":\"https://oauth2.googleapis.com/token\",\"exp\":' + ($now+3600) + ',\"iat\":' + $now + '}';" ^
+  "$payloadB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson)) -replace '=+$','' -replace '\+','-' -replace '/','_';" ^
+  "$signingInput = $header + '.' + $payloadB64;" ^
+  "$pkPem = $sa.private_key -replace '-----BEGIN PRIVATE KEY-----','' -replace '-----END PRIVATE KEY-----','' -replace '\n','' -replace '\r','';" ^
+  "$pkBytes = [Convert]::FromBase64String($pkPem);" ^
+  "$cngKey = [System.Security.Cryptography.CngKey]::Import($pkBytes, [System.Security.Cryptography.CngKeyBlobFormat]::Pkcs8PrivateBlob);" ^
+  "$rsa = New-Object System.Security.Cryptography.RSACng($cngKey);" ^
+  "$sig = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($signingInput), [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1);" ^
+  "$sigB64 = [Convert]::ToBase64String($sig) -replace '=+$','' -replace '\+','-' -replace '/','_';" ^
+  "$jwt = $signingInput + '.' + $sigB64;" ^
+  "$tokenResp = Invoke-RestMethod -Uri 'https://oauth2.googleapis.com/token' -Method POST -Body @{ grant_type='urn:ietf:params:oauth:grant-type:jwt-bearer'; assertion=$jwt } -ContentType 'application/x-www-form-urlencoded';" ^
+  "$token = $tokenResp.access_token;" ^
+  "$cfg = Invoke-RestMethod -Uri \"https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/config\" -Headers @{ Authorization=\"Bearer $token\" } -Method GET;" ^
+  "$domains = @($cfg.authorizedDomains);" ^
+  "$cfDomains = @($domains | Where-Object { $_ -like '*.trycloudflare.com' });" ^
+  "Write-Host 'trycloudflare.com domains found:' ($cfDomains -join ', ');" ^
+  "if ($cfDomains.Count -le 1) { Write-Host 'Nothing to clean up.'; exit 0 };" ^
+  "$latest = $cfDomains | Select-Object -Last 1;" ^
+  "Write-Host 'Keeping:' $latest;" ^
+  "$cleaned = @($domains | Where-Object { $_ -notlike '*.trycloudflare.com' -or $_ -eq $latest });" ^
+  "$body = '{\"authorizedDomains\":[' + (($cleaned | ForEach-Object { '\"' + $_ + '\"' }) -join ',') + ']}';" ^
+  "Invoke-RestMethod -Uri \"https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/config?updateMask=authorizedDomains\" -Headers @{ Authorization=\"Bearer $token\"; 'Content-Type'='application/json' } -Method PATCH -Body $body | Out-Null;" ^
+  "Write-Host 'Removed' ($cfDomains.Count - 1) 'old domain(s). Current:' $latest"
+
 endlocal
