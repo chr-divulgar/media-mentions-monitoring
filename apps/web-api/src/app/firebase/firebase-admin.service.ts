@@ -28,4 +28,3 @@ export class FirebaseAdminService implements OnModuleInit {
     return admin.auth();
   }
 }
-

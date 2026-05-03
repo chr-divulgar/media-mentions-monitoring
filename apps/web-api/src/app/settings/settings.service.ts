@@ -58,19 +58,37 @@ export class SettingsService {
     }));
   }
 
-  async createUser(dto: { email: string; password: string; displayName?: string; role?: string }) {
+  async createUser(dto: {
+    email: string;
+    password: string;
+    displayName?: string;
+    role?: string;
+  }) {
     const user = await this.firebaseAdmin.auth.createUser({
       email: dto.email,
       password: dto.password,
       displayName: dto.displayName,
     });
     if (dto.role) {
-      await this.firebaseAdmin.auth.setCustomUserClaims(user.uid, { role: dto.role });
+      await this.firebaseAdmin.auth.setCustomUserClaims(user.uid, {
+        role: dto.role,
+      });
     }
-    return { uid: user.uid, email: user.email, displayName: user.displayName, role: dto.role };
+    return {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      role: dto.role,
+    };
   }
 
-  async updateUser(dto: { uid: string; displayName?: string; role?: string; password?: string; disabled?: boolean }) {
+  async updateUser(dto: {
+    uid: string;
+    displayName?: string;
+    role?: string;
+    password?: string;
+    disabled?: boolean;
+  }) {
     const updateData: Record<string, unknown> = {};
     if (dto.displayName !== undefined) updateData.displayName = dto.displayName;
     if (dto.password) updateData.password = dto.password;
@@ -78,7 +96,9 @@ export class SettingsService {
 
     await this.firebaseAdmin.auth.updateUser(dto.uid, updateData);
     if (dto.role !== undefined) {
-      await this.firebaseAdmin.auth.setCustomUserClaims(dto.uid, { role: dto.role });
+      await this.firebaseAdmin.auth.setCustomUserClaims(dto.uid, {
+        role: dto.role,
+      });
     }
     return { success: true };
   }

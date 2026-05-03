@@ -81,7 +81,15 @@ export class SettingsController {
   }
 
   @Post('users/create')
-  async createUser(@Body() dto: { email: string; password: string; displayName?: string; role?: string }) {
+  async createUser(
+    @Body()
+    dto: {
+      email: string;
+      password: string;
+      displayName?: string;
+      role?: string;
+    },
+  ) {
     try {
       return await this.settingsService.createUser(dto);
     } catch (error) {
@@ -96,7 +104,16 @@ export class SettingsController {
   }
 
   @Post('users/update')
-  async updateUser(@Body() dto: { uid: string; displayName?: string; role?: string; password?: string; disabled?: boolean }) {
+  async updateUser(
+    @Body()
+    dto: {
+      uid: string;
+      displayName?: string;
+      role?: string;
+      password?: string;
+      disabled?: boolean;
+    },
+  ) {
     try {
       return await this.settingsService.updateUser(dto);
     } catch (error) {
