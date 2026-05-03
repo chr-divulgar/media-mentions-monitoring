@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Media Mentions Monitoring</title>
+    <script>
+      // GitHub Pages SPA redirect trick
+      // Convierte rutas como /dashboard a /?/dashboard para que el index.html las maneje
+      var segmentCount = 1; // número de segmentos del subpath: /media-mentions-monitoring = 1
+      var location = window.location;
+      location.replace(
+        location.protocol +
+          "//" +
+          location.hostname +
+          (location.port ? ":" + location.port : "") +
+          location.pathname
+            .split("/")
+            .slice(0, 1 + segmentCount)
+            .join("/") +
+          "/?/" +
+          location.pathname
+            .slice(1)
+            .split("/")
+            .slice(segmentCount)
+            .join("/")
+            .replace(/&/g, "~and~") +
+          (location.search
+            ? "&" + location.search.slice(1).replace(/&/g, "~and~")
+            : "") +
+          location.hash,
+      );
+    </script>
+  </head>
+  <body></body>
+</html>

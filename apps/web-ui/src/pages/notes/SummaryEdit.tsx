@@ -15,7 +15,7 @@ import {
   GetSummaryDto,
   GetTranscriptionDto,
   PlatformDto,
-  Slot,
+  //Slot,
   SummaryDto,
   TranscriptionDto,
   transformText,
@@ -31,7 +31,7 @@ import {
 import api from "../../services/Agent";
 import Title from "antd/es/typography/Title";
 import { useNote } from "./NoteContext";
-import moment from "moment";
+//import moment from "moment";
 import WaveSurfer from "wavesurfer.js";
 import {
   DownloadOutlined,
@@ -70,14 +70,15 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
   const { selectedAlert } = useAlert();
   const { note, setNote } = useNote();
   const getSummaryDtoRef = useRef(new GetSummaryDto()); // Replace initialGetSummaryDtoValue with the initial value
-  const [programOptions, setProgramOptions] = useState<string[]>([]);
+  const [programOptions] = useState<string[]>([]);
+  //const [programOptions, setProgramOptions] = useState<string[]>([]);
 
-  const slotsRef = useRef<Slot[]>([]);
+  //const slotsRef = useRef<Slot[]>([]);
 
   const waveformUrl = useMemo(
     () =>
       `${import.meta.env.VITE_API_LOCAL}/audio/fetchByName/fragment_${selectedAlert?.id}?v=${Date.now()}`,
-    [selectedAlert]
+    [selectedAlert],
   );
 
   const getTranscriptionDto: GetTranscriptionDto = useMemo(
@@ -87,7 +88,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
             filename: `fragment_${selectedAlert.id}.wav`,
           }
         : new GetTranscriptionDto(),
-    [selectedAlert]
+    [selectedAlert],
   );
 
   // WaveSurfer state/refs
@@ -152,9 +153,8 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
       console.error("Download error:", error);
     }
   };
-
+  // data: platforms,
   const {
-    data: platforms,
     isLoading: isLoadingPlatforms,
     error: errorPlatforms,
   }: UseQueryResult<PlatformDto[]> = useQuery({
@@ -165,7 +165,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
         .then((res) => res.data),
   });
 
-  useEffect(() => {
+  /* useEffect(() => {
     slotsRef.current =
       platforms?.filter(
         (platform) => platform.name === selectedAlert?.platform
@@ -202,7 +202,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
 
     if (slotsRef.current.length === 0) return;
     setProgramOptions(slotsRef.current.map((slot) => slot.label ?? ""));
-  }, [form, platforms, selectedAlert?.platform]);
+  }, [form, platforms, selectedAlert?.platform]); */
 
   const {
     mutateAsync: generateTranscription,
@@ -229,7 +229,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
           words: selectedAlert.words,
         };
       },
-    }
+    },
   );
 
   // Second mutation
@@ -247,7 +247,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
     async () => {
       const response = await api.post(
         `/alerts/getSummary`,
-        getSummaryDtoRef.current
+        getSummaryDtoRef.current,
       );
       return response.data;
     },
@@ -261,7 +261,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
           summary: summaryData.summary,
         });
       },
-    }
+    },
   );
 
   useEffect(() => {
@@ -273,20 +273,20 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
     }
   }, [summaryData, form]);
 
-  const handleProgramChange = (value: string) => {
+  /* const handleProgramChange = (value: string) => {
     const slot = slotsRef.current.find((slot) => slot.label === value);
     setNote({
       ...note,
       audioLabel: slot?.audioLabel,
     });
     form.setFieldsValue({ audioLabel: slot?.audioLabel });
-  };
+  }; */
 
   const onFinishFailed: FormProps<FieldType>["onFinishFailed"] = (
-    errorInfo
+    errorInfo,
   ) => {
     message.error(
-      `Form submission failed. Please complete all required fields. ${errorInfo.errorFields.map((field) => field.name).join(", ")}`
+      `Form submission failed. Please complete all required fields. ${errorInfo.errorFields.map((field) => field.name).join(", ")}`,
     );
   };
 
@@ -301,7 +301,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
             dangerouslySetInnerHTML={{
               __html: transformText(
                 selectedAlert.text ?? "",
-                selectedAlert.words ?? []
+                selectedAlert.words ?? [],
               ),
             }}
           />
@@ -400,7 +400,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
                     value && value.length >= 2
                       ? Promise.resolve()
                       : Promise.reject(
-                          new Error("Debe tener al menos 2 números")
+                          new Error("Debe tener al menos 2 números"),
                         ),
                   message: "Debe tener al menos 2 números",
                 },
@@ -427,7 +427,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
                         ?.toLowerCase()
                         .includes(input.toLowerCase())
                     }
-                    onChange={handleProgramChange}
+                    /* onChange={handleProgramChange} */
                   >
                     {programOptions.map((option) => (
                       <Option key={option} value={option}>

@@ -13,3 +13,4 @@ public/dist
 audioFiles
 *.nx
 apps/web-api/public/*
+scripts/*.json
