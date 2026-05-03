@@ -27,4 +27,8 @@ export class FirebaseAdminService implements OnModuleInit {
   get auth() {
     return admin.auth();
   }
+
+  get firestore() {
+    return admin.firestore();
+  }
 }

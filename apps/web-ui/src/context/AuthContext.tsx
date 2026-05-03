@@ -15,7 +15,7 @@ export interface AuthUser {
   email: string | null;
   displayName: string | null;
   photoURL: string | null;
-  role: "admin" | "user";
+  role: "admin" | "user" | "initial";
 }
 
 interface AuthContextType {
@@ -44,7 +44,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         email: firebaseUser.email,
         displayName: firebaseUser.displayName,
         photoURL: firebaseUser.photoURL,
-        role: userData.role || "user",
+        role: userData.role || "initial",
       });
     } else {
       // Primer login: crear documento en Firestore con rol por defecto
@@ -52,7 +52,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         email: firebaseUser.email,
         name: firebaseUser.displayName || firebaseUser.email,
         photoURL: firebaseUser.photoURL || null,
-        role: "user",
+        role: "initial",
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
       });
@@ -61,7 +61,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
         email: firebaseUser.email,
         displayName: firebaseUser.displayName,
         photoURL: firebaseUser.photoURL,
-        role: "user",
+        role: "initial",
       });
     }
   };

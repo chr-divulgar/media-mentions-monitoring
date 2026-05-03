@@ -45,18 +45,36 @@ export class SettingsService {
     return this.platformRepo.save(existing);
   }
 
-  // ─── Users (Firebase Auth) ────────────────────────────────────────────────
+  // ─── Users (Firebase Auth + Firestore) ────────────────────────────────────────────
 
   async getUsers() {
     const result = await this.firebaseAdmin.auth.listUsers(1000);
-    return result.users.map((u) => ({
-      uid: u.uid,
-      email: u.email,
-      displayName: u.displayName,
-      disabled: u.disabled,
-      role: (u.customClaims as Record<string, string> | undefined)?.role,
-      phone: (u.customClaims as Record<string, string> | undefined)?.phone,
-    }));
+    const uids = result.users.map((u) => u.uid);
+
+    // Fetch Firestore docs for all users in batches of 10
+    const fs = this.firebaseAdmin.firestore;
+    const firestoreData = new Map<string, Record<string, unknown>>();
+    for (let i = 0; i < uids.length; i += 10) {
+      const batch = uids.slice(i, i + 10);
+      const snaps = await Promise.all(
+        batch.map((uid) => fs.collection('users').doc(uid).get()),
+      );
+      snaps.forEach((snap) => {
+        if (snap.exists) firestoreData.set(snap.id, snap.data() as Record<string, unknown>);
+      });
+    }
+
+    return result.users.map((u) => {
+      const doc = firestoreData.get(u.uid) ?? {};
+      return {
+        uid: u.uid,
+        email: u.email,
+        displayName: u.displayName,
+        disabled: u.disabled,
+        role: doc.role ?? 'initial',
+        phone: doc.phone ?? '',
+      };
+    });
   }
 
   async createUser(dto: {
@@ -71,17 +89,22 @@ export class SettingsService {
       password: dto.password,
       displayName: dto.displayName,
     });
-    const claims = {
-      role: dto.role ?? 'initial',
-      phone: dto.phone ?? '',
-    };
-    await this.firebaseAdmin.auth.setCustomUserClaims(user.uid, claims);
+    const role = dto.role ?? 'initial';
+    const phone = dto.phone ?? '';
+    await this.firebaseAdmin.firestore.collection('users').doc(user.uid).set({
+      email: dto.email,
+      name: dto.displayName ?? dto.email,
+      role,
+      phone,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
     return {
       uid: user.uid,
       email: user.email,
       displayName: user.displayName,
-      role: claims.role,
-      phone: claims.phone,
+      role,
+      phone,
     };
   }
 
@@ -93,27 +116,31 @@ export class SettingsService {
     password?: string;
     disabled?: boolean;
   }) {
-    const updateData: Record<string, unknown> = {};
-    if (dto.displayName !== undefined) updateData.displayName = dto.displayName;
-    if (dto.password) updateData.password = dto.password;
-    if (dto.disabled !== undefined) updateData.disabled = dto.disabled;
+    const authUpdate: Record<string, unknown> = {};
+    if (dto.displayName !== undefined) authUpdate.displayName = dto.displayName;
+    if (dto.password) authUpdate.password = dto.password;
+    if (dto.disabled !== undefined) authUpdate.disabled = dto.disabled;
 
-    await this.firebaseAdmin.auth.updateUser(dto.uid, updateData);
-
-    if (dto.role !== undefined || dto.phone !== undefined) {
-      const existing = await this.firebaseAdmin.auth.getUser(dto.uid);
-      const prevClaims = (existing.customClaims as Record<string, string>) ?? {};
-      await this.firebaseAdmin.auth.setCustomUserClaims(dto.uid, {
-        ...prevClaims,
-        ...(dto.role === undefined ? {} : { role: dto.role }),
-        ...(dto.phone === undefined ? {} : { phone: dto.phone }),
-      });
+    if (Object.keys(authUpdate).length > 0) {
+      await this.firebaseAdmin.auth.updateUser(dto.uid, authUpdate);
     }
+
+    const fsUpdate: Record<string, unknown> = { updatedAt: new Date() };
+    if (dto.displayName !== undefined) fsUpdate.name = dto.displayName;
+    if (dto.role !== undefined) fsUpdate.role = dto.role;
+    if (dto.phone !== undefined) fsUpdate.phone = dto.phone;
+
+    await this.firebaseAdmin.firestore
+      .collection('users')
+      .doc(dto.uid)
+      .set(fsUpdate, { merge: true });
+
     return { success: true };
   }
 
   async deleteUser(uid: string) {
     await this.firebaseAdmin.auth.deleteUser(uid);
+    await this.firebaseAdmin.firestore.collection('users').doc(uid).delete();
     return { success: true };
   }
 }
