@@ -11,28 +11,15 @@ export class FirebaseAdminService implements OnModuleInit {
   onModuleInit() {
     if (admin.apps.length > 0) return;
 
-    const serviceAccountPath = this.config.get<string>(
-      'FIREBASE_SERVICE_ACCOUNT_PATH',
-    );
-
-    if (serviceAccountPath) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const serviceAccount = require(serviceAccountPath);
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-      });
-    } else {
-      // Fallback: use environment variables
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId: this.config.get<string>('FIREBASE_PROJECT_ID'),
-          clientEmail: this.config.get<string>('FIREBASE_CLIENT_EMAIL'),
-          privateKey: this.config
-            .get<string>('FIREBASE_PRIVATE_KEY')
-            ?.replaceAll('\\n', '\n'),
-        }),
-      });
-    }
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: this.config.get<string>('FIREBASE_PROJECT_ID'),
+        clientEmail: this.config.get<string>('FIREBASE_CLIENT_EMAIL'),
+        privateKey: this.config
+          .get<string>('FIREBASE_PRIVATE_KEY')
+          ?.replaceAll('\\n', '\n'),
+      }),
+    });
 
     this.logger.log('Firebase Admin initialized');
   }
@@ -41,3 +28,4 @@ export class FirebaseAdminService implements OnModuleInit {
     return admin.auth();
   }
 }
+
