@@ -80,30 +80,6 @@ export class SettingsController {
     }
   }
 
-  @Post('users/create')
-  async createUser(
-    @Body()
-    dto: {
-      email: string;
-      password: string;
-      displayName?: string;
-      role?: string;
-      phone?: string;
-    },
-  ) {
-    try {
-      return await this.settingsService.createUser(dto);
-    } catch (error) {
-      throw new HttpException(
-        {
-          status: HttpStatus.INTERNAL_SERVER_ERROR,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
   @Post('users/update')
   async updateUser(
     @Body()

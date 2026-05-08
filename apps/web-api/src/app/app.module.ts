@@ -10,6 +10,7 @@ import { SettingsModule } from './settings/settings.module';
 import { Alert, Note, Platform, Transcription } from './entities';
 import { NotesModule } from './notes/notes.module';
 import { FirebaseAdminModule } from './firebase/firebase-admin.module';
+import { ClientsModule } from './clients/clients.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { FirebaseAdminModule } from './firebase/firebase-admin.module';
     AlertsModule,
     NotesModule,
     SettingsModule,
+    ClientsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

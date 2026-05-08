@@ -14,16 +14,24 @@ import {
   Tag,
   Popconfirm,
   Alert,
+  Row,
+  Col,
 } from "antd";
 import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
   UserOutlined,
+  MinusCircleOutlined,
 } from "@ant-design/icons";
 import { useQuery, useMutation, useQueryClient } from "react-query";
 import api from "../../services/Agent";
-import type { PlatformDto } from "@repo/shared";
+import type {
+  PlatformDto,
+  ClientDto,
+  MediaTypeDto,
+  WordDto,
+} from "@repo/shared";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -101,7 +109,7 @@ const PlatformModal: React.FC<{
   );
 };
 
-// ─── User form ────────────────────────────────────────────────────────────────
+// ─── User Modal ────────────────────────────────────────────────────────────────
 
 const UserModal: React.FC<{
   open: boolean;
@@ -188,6 +196,295 @@ const UserModal: React.FC<{
   );
 };
 
+// ─── Media Type Modal ─────────────────────────────────────────────────────────
+
+const MediaTypeModal: React.FC<{
+  open: boolean;
+  initial: MediaTypeDto | null;
+  onClose: () => void;
+  onSave: (dto: MediaTypeDto) => void;
+  loading: boolean;
+}> = ({ open, initial, onClose, onSave, loading }) => {
+  const [form] = Form.useForm();
+
+  React.useEffect(() => {
+    if (open) {
+      form.setFieldsValue({
+        name: initial?.name ?? "",
+        label: initial?.label ?? "",
+      });
+    }
+  }, [open, initial, form]);
+
+  const handleOk = async () => {
+    const values = await form.validateFields();
+    onSave({ ...(initial?.id ? { id: initial.id } : {}), ...values });
+  };
+
+  return (
+    <Modal
+      title={initial ? "Editar Medio" : "Nuevo Medio"}
+      open={open}
+      onOk={handleOk}
+      onCancel={onClose}
+      confirmLoading={loading}
+      okText="Guardar"
+      cancelText="Cancelar"
+      destroyOnHidden
+    >
+      <Form form={form} layout="vertical">
+        <Form.Item
+          name="name"
+          label="Clave interna"
+          rules={[
+            {
+              required: true,
+              pattern: /^[a-z]+$/,
+              message: "Solo letras minúsculas",
+            },
+          ]}
+        >
+          <Input placeholder="radio" />
+        </Form.Item>
+        <Form.Item name="label" label="Etiqueta" rules={[{ required: true }]}>
+          <Input placeholder="Radio" />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+};
+
+// ─── Word Adds Field (extracted to reduce nesting depth) ─────────────────────
+
+const WordAddsField: React.FC<{ wordName: number }> = ({ wordName }) => (
+  <Form.List name={[wordName, "adds"]}>
+    {(addFields, { add: addAdd, remove: removeAdd }) => (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {addFields.map(({ key: ak, name: an }) => (
+          <Row key={ak} gutter={8} align="middle">
+            <Col flex="1">
+              <Form.Item name={[an, "before"]} noStyle>
+                <Input placeholder="Antes" size="small" />
+              </Form.Item>
+            </Col>
+            <Col flex="1">
+              <Form.Item name={[an, "after"]} noStyle>
+                <Input placeholder="Después" size="small" />
+              </Form.Item>
+            </Col>
+            <Col>
+              <Button
+                size="small"
+                danger
+                icon={<MinusCircleOutlined />}
+                onClick={() => removeAdd(an)}
+              />
+            </Col>
+          </Row>
+        ))}
+        <Button
+          size="small"
+          type="dashed"
+          icon={<PlusOutlined />}
+          onClick={() => addAdd({ before: "", after: "" })}
+          style={{ alignSelf: "flex-start" }}
+        >
+          Agregar contexto
+        </Button>
+      </div>
+    )}
+  </Form.List>
+);
+
+// ─── Client Modal ─────────────────────────────────────────────────────────────
+
+const ClientModal: React.FC<{
+  open: boolean;
+  initial: ClientDto | null;
+  mediaTypes: MediaTypeDto[];
+  usersWithPhone: FirebaseUserDto[];
+  onClose: () => void;
+  onSave: (dto: ClientDto) => void;
+  loading: boolean;
+}> = ({
+  open,
+  initial,
+  mediaTypes,
+  usersWithPhone,
+  onClose,
+  onSave,
+  loading,
+}) => {
+  const [form] = Form.useForm();
+
+  React.useEffect(() => {
+    if (open) {
+      form.setFieldsValue({
+        name: initial?.name ?? "",
+        words: initial?.words?.length
+          ? initial.words
+          : [{ value: "", adds: [] }],
+        alerts: initial?.alerts ?? {},
+        notes: initial?.notes ?? {},
+      });
+    }
+  }, [open, initial, form]);
+
+  const handleOk = async () => {
+    const values = await form.validateFields();
+    const words: WordDto[] = (values.words ?? []).filter((w: WordDto) =>
+      w?.value?.trim(),
+    );
+    onSave({
+      ...(initial?.id ? { id: initial.id } : {}),
+      name: values.name,
+      words,
+      alerts: values.alerts ?? {},
+      notes: values.notes ?? {},
+    });
+  };
+
+  const userOptions = usersWithPhone.map((u) => ({
+    label: `${u.displayName || u.email} (${u.phone})`,
+    value: u.phone!,
+  }));
+
+  const contactSection = (
+    fieldName: "alerts" | "notes",
+    description: string,
+  ) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Alert
+        message={description}
+        type="info"
+        showIcon
+        style={{ fontSize: 12 }}
+      />
+      {mediaTypes.map((mt) => (
+        <Form.Item
+          key={mt.name}
+          name={[fieldName, mt.name!]}
+          label={mt.label}
+          style={{ marginBottom: 8 }}
+        >
+          <Select
+            mode="multiple"
+            placeholder="Seleccionar usuarios"
+            options={userOptions}
+            optionFilterProp="label"
+            allowClear
+          />
+        </Form.Item>
+      ))}
+    </div>
+  );
+
+  const modalTabs = [
+    {
+      key: "info",
+      label: "Información",
+      children: (
+        <Form.Item
+          name="name"
+          label="Nombre del cliente"
+          rules={[{ required: true }]}
+        >
+          <Input />
+        </Form.Item>
+      ),
+    },
+    {
+      key: "words",
+      label: "Palabras Clave",
+      children: (
+        <Form.List name="words">
+          {(fields, { add, remove }) => (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {fields.map(({ key, name }) => (
+                <Card
+                  key={key}
+                  size="small"
+                  style={{ background: "transparent" }}
+                  extra={
+                    <Button
+                      size="small"
+                      danger
+                      icon={<MinusCircleOutlined />}
+                      onClick={() => remove(name)}
+                    />
+                  }
+                  title={
+                    <Text style={{ fontSize: 12 }}>Palabra {name + 1}</Text>
+                  }
+                >
+                  <Form.Item
+                    name={[name, "value"]}
+                    label="Valor"
+                    rules={[
+                      { required: true, message: "Escribe la palabra clave" },
+                    ]}
+                    style={{ marginBottom: 8 }}
+                  >
+                    <Input placeholder="ej. ecopetrol" />
+                  </Form.Item>
+                  <Text
+                    style={{ fontSize: 12, display: "block", marginBottom: 4 }}
+                  >
+                    Contexto adicional (antes / después)
+                  </Text>
+                  <WordAddsField wordName={name} />
+                </Card>
+              ))}
+              <Button
+                type="dashed"
+                icon={<PlusOutlined />}
+                onClick={() => add({ value: "", adds: [] })}
+                block
+              >
+                Agregar palabra clave
+              </Button>
+            </div>
+          )}
+        </Form.List>
+      ),
+    },
+    {
+      key: "alerts",
+      label: "Alertas",
+      children: contactSection(
+        "alerts",
+        "Usuarios que recibirán alertas por cada medio.",
+      ),
+    },
+    {
+      key: "notes",
+      label: "Notas",
+      children: contactSection(
+        "notes",
+        "Usuarios que recibirán notas por cada medio.",
+      ),
+    },
+  ];
+
+  return (
+    <Modal
+      title={initial ? "Editar Cliente" : "Nuevo Cliente"}
+      open={open}
+      onOk={handleOk}
+      onCancel={onClose}
+      confirmLoading={loading}
+      okText="Guardar"
+      cancelText="Cancelar"
+      destroyOnHidden
+      width={640}
+    >
+      <Form form={form} layout="vertical">
+        <Tabs items={modalTabs} size="small" destroyInactiveTabPane={false} />
+      </Form>
+    </Modal>
+  );
+};
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const SettingsPage: React.FC = () => {
@@ -204,6 +501,18 @@ const SettingsPage: React.FC = () => {
   const [userModal, setUserModal] = useState<{
     open: boolean;
     data: FirebaseUserDto | null;
+  }>({ open: false, data: null });
+
+  // ── Clients state ─────────────────────────────────────
+  const [clientModal, setClientModal] = useState<{
+    open: boolean;
+    data: ClientDto | null;
+  }>({ open: false, data: null });
+
+  // ── Media type state ──────────────────────────────────
+  const [mediaModal, setMediaModal] = useState<{
+    open: boolean;
+    data: MediaTypeDto | null;
   }>({ open: false, data: null });
 
   // ── Queries ────────────────────────────────────────────
@@ -224,13 +533,32 @@ const SettingsPage: React.FC = () => {
     },
   );
 
+  const { data: clients = [], isLoading: loadingClients } = useQuery(
+    ["clients"],
+    async () => {
+      const res = await api.get("/clients");
+      return res.data as ClientDto[];
+    },
+  );
+
+  const { data: mediaTypes = [], isLoading: loadingMediaTypes } = useQuery(
+    ["media-types"],
+    async () => {
+      const res = await api.get("/clients/media/all");
+      return res.data as MediaTypeDto[];
+    },
+  );
+
+  const usersWithPhone = users.filter(
+    (u) => u.phone && /^\+?[1-9]\d{6,14}$/.test(u.phone),
+  );
+
   // ── Platform mutations ────────────────────────────────
 
   const savePlatform = useMutation(
     async (dto: PlatformDto) => {
-      if (dto.id) {
+      if (dto.id)
         return (await api.post("/settings/update-platform", dto)).data;
-      }
       return (await api.post("/settings/create-platform", dto)).data;
     },
     {
@@ -248,12 +576,8 @@ const SettingsPage: React.FC = () => {
   // ── User mutations ────────────────────────────────────
 
   const saveUser = useMutation(
-    async (dto: FirebaseUserDto) => {
-      if (dto.uid) {
-        return (await api.post("/settings/users/update", dto)).data;
-      }
-      return (await api.post("/settings/users/create", dto)).data;
-    },
+    async (dto: FirebaseUserDto) =>
+      (await api.post("/settings/users/update", dto)).data,
     {
       onSuccess: () => {
         message.success("Usuario guardado");
@@ -267,9 +591,7 @@ const SettingsPage: React.FC = () => {
   );
 
   const deleteUser = useMutation(
-    async (uid: string) => {
-      return (await api.delete(`/settings/users/${uid}`)).data;
-    },
+    async (uid: string) => (await api.delete(`/settings/users/${uid}`)).data,
     {
       onSuccess: () => {
         message.success("Usuario eliminado");
@@ -277,6 +599,70 @@ const SettingsPage: React.FC = () => {
       },
       onError: () => {
         message.error("Error al eliminar el usuario");
+      },
+    },
+  );
+
+  // ── Client mutations ──────────────────────────────────
+
+  const saveClient = useMutation(
+    async (dto: ClientDto) => {
+      if (dto.id) return (await api.put(`/clients/${dto.id}`, dto)).data;
+      return (await api.post("/clients", dto)).data;
+    },
+    {
+      onSuccess: () => {
+        message.success("Cliente guardado");
+        queryClient.invalidateQueries(["clients"]);
+        setClientModal({ open: false, data: null });
+      },
+      onError: () => {
+        message.error("Error al guardar el cliente");
+      },
+    },
+  );
+
+  const deleteClient = useMutation(
+    async (id: string) => (await api.delete(`/clients/${id}`)).data,
+    {
+      onSuccess: () => {
+        message.success("Cliente eliminado");
+        queryClient.invalidateQueries(["clients"]);
+      },
+      onError: () => {
+        message.error("Error al eliminar el cliente");
+      },
+    },
+  );
+
+  // ── Media type mutations ───────────────────────────────
+
+  const saveMediaType = useMutation(
+    async (dto: MediaTypeDto) => {
+      if (dto.id) return (await api.put(`/clients/media/${dto.id}`, dto)).data;
+      return (await api.post("/clients/media", dto)).data;
+    },
+    {
+      onSuccess: () => {
+        message.success("Medio guardado");
+        queryClient.invalidateQueries(["media-types"]);
+        setMediaModal({ open: false, data: null });
+      },
+      onError: () => {
+        message.error("Error al guardar el medio");
+      },
+    },
+  );
+
+  const deleteMediaType = useMutation(
+    async (id: string) => (await api.delete(`/clients/media/${id}`)).data,
+    {
+      onSuccess: () => {
+        message.success("Medio eliminado");
+        queryClient.invalidateQueries(["media-types"]);
+      },
+      onError: () => {
+        message.error("Error al eliminar el medio");
       },
     },
   );
@@ -359,10 +745,9 @@ const SettingsPage: React.FC = () => {
           user: "blue",
           initial: "orange",
         };
-        const color = roleColorMap[role] ?? "default";
         return (
           <>
-            <Tag color={color}>{role ?? "—"}</Tag>
+            <Tag color={roleColorMap[role] ?? "default"}>{role ?? "—"}</Tag>
             {role === "initial" && (
               <Alert
                 message="Comuníquese con el administrador para activar su cuenta"
@@ -420,6 +805,131 @@ const SettingsPage: React.FC = () => {
     },
   ];
 
+  // ── Client columns ────────────────────────────────────
+
+  const clientColumns = [
+    { title: "Nombre", dataIndex: "name", key: "name" },
+    {
+      title: "Palabras clave",
+      dataIndex: "words",
+      key: "words",
+      render: (words: WordDto[]) =>
+        words?.length ? (
+          <Space size={[4, 4]} wrap>
+            {words.slice(0, 5).map((w) => (
+              <Tag key={w.value}>{w.value}</Tag>
+            ))}
+            {words.length > 5 && <Tag>+{words.length - 5}</Tag>}
+          </Space>
+        ) : (
+          <Text type="secondary">—</Text>
+        ),
+    },
+    {
+      title: "Alertas",
+      key: "alerts",
+      render: (_: unknown, record: ClientDto) => {
+        const total = Object.values(record.alerts ?? {}).reduce(
+          (acc, arr) => acc + ((arr as string[])?.length ?? 0),
+          0,
+        );
+        return total ? (
+          <Tag color="blue">{total} contacto(s)</Tag>
+        ) : (
+          <Text type="secondary">—</Text>
+        );
+      },
+    },
+    {
+      title: "Notas",
+      key: "notes",
+      render: (_: unknown, record: ClientDto) => {
+        const total = Object.values(record.notes ?? {}).reduce(
+          (acc, arr) => acc + ((arr as string[])?.length ?? 0),
+          0,
+        );
+        return total ? (
+          <Tag color="purple">{total} contacto(s)</Tag>
+        ) : (
+          <Text type="secondary">—</Text>
+        );
+      },
+    },
+    {
+      title: "",
+      key: "actions",
+      width: 80,
+      render: (_: unknown, record: ClientDto) => (
+        <Space>
+          <Button
+            icon={<EditOutlined />}
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              setClientModal({ open: true, data: record });
+            }}
+          />
+          <Popconfirm
+            title="¿Eliminar cliente?"
+            okText="Sí"
+            cancelText="No"
+            onConfirm={() => record.id && deleteClient.mutate(record.id)}
+          >
+            <Button
+              icon={<DeleteOutlined />}
+              size="small"
+              danger
+              onClick={(e) => e.stopPropagation()}
+            />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  // ── Media type columns ────────────────────────────────
+
+  const mediaColumns = [
+    {
+      title: "Clave",
+      dataIndex: "name",
+      key: "name",
+      width: 120,
+      render: (v: string) => <Tag>{v}</Tag>,
+    },
+    { title: "Etiqueta", dataIndex: "label", key: "label" },
+    {
+      title: "",
+      key: "actions",
+      width: 80,
+      render: (_: unknown, record: MediaTypeDto) => (
+        <Space>
+          <Button
+            icon={<EditOutlined />}
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMediaModal({ open: true, data: record });
+            }}
+          />
+          <Popconfirm
+            title="¿Eliminar medio?"
+            okText="Sí"
+            cancelText="No"
+            onConfirm={() => record.id && deleteMediaType.mutate(record.id)}
+          >
+            <Button
+              icon={<DeleteOutlined />}
+              size="small"
+              danger
+              onClick={(e) => e.stopPropagation()}
+            />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
   // ── Tabs content ──────────────────────────────────────
 
   const tabItems = [
@@ -427,20 +937,7 @@ const SettingsPage: React.FC = () => {
       key: "users",
       label: "Usuarios",
       children: (
-        <Card
-          size="small"
-          extra={
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              size="small"
-              onClick={() => setUserModal({ open: true, data: null })}
-            >
-              Nuevo
-            </Button>
-          }
-          bordered={false}
-        >
+        <Card size="small" bordered={false}>
           <Table
             rowKey="uid"
             dataSource={users}
@@ -457,17 +954,59 @@ const SettingsPage: React.FC = () => {
       key: "clients",
       label: "Clientes",
       children: (
-        <Card size="small" bordered={false}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              height: 200,
-            }}
-          >
-            <Text type="secondary">Próximamente…</Text>
-          </div>
+        <Card
+          size="small"
+          bordered={false}
+          extra={
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              size="small"
+              onClick={() => setClientModal({ open: true, data: null })}
+            >
+              Nuevo
+            </Button>
+          }
+        >
+          <Table
+            rowKey="id"
+            dataSource={clients}
+            columns={clientColumns}
+            loading={loadingClients}
+            pagination={false}
+            size="small"
+            scroll={{ y: 400 }}
+          />
+        </Card>
+      ),
+    },
+    {
+      key: "media",
+      label: "Medios",
+      children: (
+        <Card
+          size="small"
+          bordered={false}
+          extra={
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              size="small"
+              onClick={() => setMediaModal({ open: true, data: null })}
+            >
+              Nuevo
+            </Button>
+          }
+        >
+          <Table
+            rowKey="id"
+            dataSource={mediaTypes}
+            columns={mediaColumns}
+            loading={loadingMediaTypes}
+            pagination={false}
+            size="small"
+            scroll={{ y: 400 }}
+          />
         </Card>
       ),
     },
@@ -540,6 +1079,22 @@ const SettingsPage: React.FC = () => {
         onClose={() => setUserModal({ open: false, data: null })}
         onSave={(dto) => saveUser.mutate(dto)}
         loading={saveUser.isLoading}
+      />
+      <ClientModal
+        open={clientModal.open}
+        initial={clientModal.data}
+        mediaTypes={mediaTypes}
+        usersWithPhone={usersWithPhone}
+        onClose={() => setClientModal({ open: false, data: null })}
+        onSave={(dto) => saveClient.mutate(dto)}
+        loading={saveClient.isLoading}
+      />
+      <MediaTypeModal
+        open={mediaModal.open}
+        initial={mediaModal.data}
+        onClose={() => setMediaModal({ open: false, data: null })}
+        onSave={(dto) => saveMediaType.mutate(dto)}
+        loading={saveMediaType.isLoading}
       />
     </div>
   );
