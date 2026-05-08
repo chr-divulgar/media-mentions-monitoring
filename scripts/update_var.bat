@@ -55,7 +55,7 @@ gh workflow run update-redirect.yml --repo chr-divulgar/media-mentions-monitorin
 echo Updating Firebase authorized domain...
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$SA_JSON = '%~dp0media-mentions-monitoring-837ab956098e.json';" ^
+  "$SA_JSON = '%~dp0media-mentions-monitoring-9ecb48f12fc4.json';" ^
   "$PROJECT_ID = 'media-mentions-monitoring';" ^
   "$NEW_DOMAIN = '%EXTRACTED_URL%' -replace 'https?://','';" ^
   "$sa = Get-Content $SA_JSON | ConvertFrom-Json;" ^
@@ -89,7 +89,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 echo Cleaning up old Firebase authorized domains...
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$SA_JSON = '%~dp0media-mentions-monitoring-837ab956098e.json';" ^
+  "$SA_JSON = '%~dp0media-mentions-monitoring-9ecb48f12fc4.json';" ^
   "$PROJECT_ID = 'media-mentions-monitoring';" ^
   "$sa = Get-Content $SA_JSON | ConvertFrom-Json;" ^
   "$now = [int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds();" ^

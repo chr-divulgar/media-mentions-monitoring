@@ -60,7 +60,8 @@ export class SettingsService {
         batch.map((uid) => fs.collection('users').doc(uid).get()),
       );
       snaps.forEach((snap) => {
-        if (snap.exists) firestoreData.set(snap.id, snap.data() as Record<string, unknown>);
+        if (snap.exists)
+          firestoreData.set(snap.id, snap.data() as Record<string, unknown>);
       });
     }
 
@@ -91,14 +92,17 @@ export class SettingsService {
     });
     const role = dto.role ?? 'initial';
     const phone = dto.phone ?? '';
-    await this.firebaseAdmin.firestore.collection('users').doc(user.uid).set({
-      email: dto.email,
-      name: dto.displayName ?? dto.email,
-      role,
-      phone,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+    await this.firebaseAdmin.firestore
+      .collection('users')
+      .doc(user.uid)
+      .set({
+        email: dto.email,
+        name: dto.displayName ?? dto.email,
+        role,
+        phone,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
     return {
       uid: user.uid,
       email: user.email,

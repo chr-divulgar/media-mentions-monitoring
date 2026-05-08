@@ -174,13 +174,15 @@ const UserModal: React.FC<{
         >
           <Input placeholder="+573001234567" />
         </Form.Item>
-        <Form.Item
-          name="password"
-          label={isEdit ? "Nueva contraseña (opcional)" : "Contraseña"}
-          rules={isEdit ? [] : [{ required: true, min: 6 }]}
-        >
-          <Input.Password />
-        </Form.Item>
+        {!isEdit && (
+          <Form.Item
+            name="password"
+            label="Contraseña"
+            rules={[{ required: true, min: 6 }]}
+          >
+            <Input.Password />
+          </Form.Item>
+        )}
       </Form>
     </Modal>
   );
