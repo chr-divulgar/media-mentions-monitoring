@@ -481,10 +481,10 @@ const PlatformModal: React.FC<{
         label: s.label ?? "",
         audioLabel: s.audioLabel ?? "",
         audience:
-          s.audience !== undefined && s.audience !== ""
+          s.audience !== undefined && s.audience !== null
             ? Number(s.audience)
             : 5000,
-        rate: s.rate !== undefined && s.rate !== "" ? Number(s.rate) : 105000,
+        rate: s.rate !== undefined && s.rate !== null ? Number(s.rate) : 105000,
       }),
     );
 
@@ -1197,6 +1197,20 @@ const SettingsPage: React.FC = () => {
       },
       onError: () => {
         message.error("Error al eliminar el medio");
+      },
+    },
+  );
+
+  const deletePlatform = useMutation(
+    async (id: string) =>
+      (await api.delete(`/settings/delete-platform/${id}`)).data,
+    {
+      onSuccess: () => {
+        message.success("Plataforma eliminada");
+        queryClient.invalidateQueries(["platforms", selectedMedia]);
+      },
+      onError: () => {
+        message.error("Error al eliminar la plataforma");
       },
     },
   );
