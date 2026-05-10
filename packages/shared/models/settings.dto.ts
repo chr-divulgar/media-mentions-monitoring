@@ -1,21 +1,17 @@
 export enum Day {
   Weekday = "weekday",
-  Sunday = "sunday",
   Saturday = "saturday",
+  Sunday = "sunday",
 }
 
 export class SlotDto {
-  readonly id?: string;
-  readonly platformId?: string;
-  readonly day?: Day;
-  readonly start?: string;
-  readonly end?: string;
-  readonly label?: string;
-  readonly audioLabel?: string;
-  readonly active?: boolean;
-  readonly priority?: number;
-  readonly tags?: string[];
-  readonly keywords?: string[];
+  readonly day!: Day;
+  readonly start!: string;
+  readonly end!: string;
+  readonly label!: string;
+  readonly audioLabel!: string;
+  readonly audience?: number;
+  readonly rate?: number;
 }
 
 export class PlatformDto {
@@ -23,4 +19,17 @@ export class PlatformDto {
   readonly name?: string;
   readonly url?: string;
   readonly media?: string;
+  readonly zone?: string;
+  readonly city?: string;
+  readonly slots?: SlotDto[];
+}
+
+export interface PlatformResponseDto {
+  id: string;
+  name: string;
+  url: string;
+  media: string;
+  zone: string;
+  city: string;
+  slots: SlotDto[];
 }
