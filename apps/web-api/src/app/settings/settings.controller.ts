@@ -9,17 +9,18 @@ import {
   Delete,
 } from '@nestjs/common';
 import { SettingsService } from './settings.service';
-import { PlatformDto } from '@repo/shared';
-import { Platform } from '../entities';
+import { PlatformDto, PlatformResponseDto } from '@repo/shared';
 
 @Controller('settings')
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}
 
-  // ─── Platforms ────────────────────────────────────────────────────────────
+  // ─── Platforms ────────────────────────────────────────────────────────────────
 
   @Get('get-platforms/:media')
-  async getPlatforms(@Param('media') media: string): Promise<Platform[]> {
+  async getPlatforms(
+    @Param('media') media: string,
+  ): Promise<PlatformResponseDto[]> {
     try {
       return await this.settingsService.getPlatforms(media);
     } catch (error) {
@@ -34,7 +35,7 @@ export class SettingsController {
   }
 
   @Post('create-platform')
-  async createPlatform(@Body() dto: PlatformDto): Promise<Platform> {
+  async createPlatform(@Body() dto: PlatformDto): Promise<PlatformResponseDto> {
     try {
       return await this.settingsService.createPlatform(dto);
     } catch (error) {
@@ -49,9 +50,24 @@ export class SettingsController {
   }
 
   @Post('update-platform')
-  async updatePlatform(@Body() dto: PlatformDto): Promise<Platform> {
+  async updatePlatform(@Body() dto: PlatformDto): Promise<PlatformResponseDto> {
     try {
       return await this.settingsService.updatePlatform(dto);
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Delete('delete-platform/:id')
+  async deletePlatform(@Param('id') id: string) {
+    try {
+      return await this.settingsService.deletePlatform(id);
     } catch (error) {
       throw new HttpException(
         {

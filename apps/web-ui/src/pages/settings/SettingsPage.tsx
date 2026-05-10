@@ -16,7 +16,10 @@ import {
   Alert,
   Row,
   Col,
+  Divider,
+  TimePicker,
 } from "antd";
+import dayjs from "dayjs";
 import {
   PlusOutlined,
   EditOutlined,
@@ -31,12 +34,12 @@ import type {
   ClientDto,
   MediaTypeDto,
   WordDto,
+  SlotDto,
 } from "@repo/shared";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const MEDIA_OPTIONS = ["radio", "TV", "Prensa", "Digital"];
 const ROLE_OPTIONS = ["admin", "user", "initial"];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -51,31 +54,541 @@ interface FirebaseUserDto {
   disabled?: boolean;
 }
 
+// ─── Slot generation helpers ────────────────────────────────────────────────
+
+function nameToDisplay(name: string): string {
+  // "CaracolBucaramanga" → "Caracol Bucaramanga"
+  return name.replace(/([A-Z])/g, " $1").trim();
+}
+
+function nameToAudio(name: string): string {
+  return nameToDisplay(name).toUpperCase().replace(/\s+/g, "_");
+}
+
+function generateDefaultSlots(name: string): SlotDto[] {
+  const display = nameToDisplay(name);
+  const audio = nameToAudio(name);
+  const def = { audience: 5000, rate: 105000 };
+  return [
+    {
+      day: "weekday" as SlotDto["day"],
+      start: "00:00",
+      end: "04:00",
+      label: `${display}: Noticias de la Madrugada:`,
+      audioLabel: `_${audio}_AM_`,
+      ...def,
+    },
+    {
+      day: "weekday" as SlotDto["day"],
+      start: "04:00",
+      end: "12:00",
+      label: `${display}: Noticias de la Ma\u00f1ana:`,
+      audioLabel: `_${audio}_AM_`,
+      ...def,
+    },
+    {
+      day: "weekday" as SlotDto["day"],
+      start: "12:00",
+      end: "13:00",
+      label: `${display}: Noticias del Medio D\u00eda:`,
+      audioLabel: `_${audio}_MD_`,
+      ...def,
+    },
+    {
+      day: "weekday" as SlotDto["day"],
+      start: "13:00",
+      end: "19:00",
+      label: `${display}: Noticias de la Tarde:`,
+      audioLabel: `_${audio}_TARDE_`,
+      ...def,
+    },
+    {
+      day: "weekday" as SlotDto["day"],
+      start: "19:00",
+      end: "23:59",
+      label: `${display}: Noticias de la Noche:`,
+      audioLabel: `_${audio}_NOCHE_`,
+      ...def,
+    },
+    {
+      day: "saturday" as SlotDto["day"],
+      start: "00:00",
+      end: "23:59",
+      label: `${display}: Fin de semana:`,
+      audioLabel: `_${audio}_FIN_DE_SEMANA_`,
+      ...def,
+    },
+    {
+      day: "sunday" as SlotDto["day"],
+      start: "00:00",
+      end: "23:59",
+      label: `${display}: Fin de semana:`,
+      audioLabel: `_${audio}_FIN_DE_SEMANA_`,
+      ...def,
+    },
+  ];
+}
+
+const ZONE_OPTIONS = [
+  "Internacional",
+  "Nacional",
+  "Otros Departamentos",
+  "Arauca Casanare",
+  "Meta",
+  "Magdalena Medio",
+  "Región Caribe",
+  "Región Sur",
+];
+
+// Cities are fetched dynamically from api-colombia.com
+const STATIC_CITY_OPTIONS = [
+  { value: "Internacional", label: "Internacional" },
+  { value: "Nacional", label: "Nacional" },
+];
+
 // ─── Platform form ────────────────────────────────────────────────────────────
+
+const DAY_OPTIONS = [
+  { value: "weekday", label: "Días de semana" },
+  { value: "saturday", label: "Sábado" },
+  { value: "sunday", label: "Domingo" },
+];
+
+const DAY_LABELS: Record<string, string> = {
+  weekday: "Días de semana",
+  saturday: "Sábado",
+  sunday: "Domingo",
+};
+
+function validateDayCoverage(slots: SlotDto[], day: string): string | null {
+  const daySlots = slots
+    .filter((s) => s.day === day)
+    .sort((a, b) => a.start.localeCompare(b.start));
+  if (!daySlots.length) return `Faltan franjas para ${DAY_LABELS[day]}`;
+  if (daySlots[0].start !== "00:00")
+    return `${DAY_LABELS[day]}: la primera franja debe iniciar en 00:00`;
+  for (let i = 0; i < daySlots.length - 1; i++) {
+    if (daySlots[i].end !== daySlots[i + 1].start)
+      return `${DAY_LABELS[day]}: hay un hueco entre ${daySlots[i].end} y ${daySlots[i + 1].start}`;
+  }
+  if (daySlots[daySlots.length - 1].end !== "23:59")
+    return `${DAY_LABELS[day]}: la última franja debe terminar en 23:59`;
+  return null;
+}
+
+const SlotsField: React.FC<{ platformName?: string }> = ({
+  platformName = "",
+}) => {
+  const form = Form.useFormInstance();
+  return (
+    <Form.List name="slots">
+      {(fields, { add, remove }) => (
+        <>
+          {DAY_OPTIONS.map(({ value: day, label: dayLabel }) => (
+            <Form.Item key={day} noStyle shouldUpdate>
+              {({ getFieldValue }) => {
+                const dayFields = fields.filter(
+                  ({ name }) => getFieldValue(["slots", name, "day"]) === day,
+                );
+
+                const getSlotValues = (name: number) => ({
+                  start: getFieldValue(["slots", name, "start"]) ?? "",
+                  end: getFieldValue(["slots", name, "end"]) ?? "",
+                  label: getFieldValue(["slots", name, "label"]) ?? "",
+                  audioLabel:
+                    getFieldValue(["slots", name, "audioLabel"]) ?? "",
+                  audience: getFieldValue(["slots", name, "audience"]) ?? 5000,
+                  rate: getFieldValue(["slots", name, "rate"]) ?? 105000,
+                });
+
+                const insertAfter = (i: number) => {
+                  const prev = getSlotValues(dayFields[i].name);
+                  const insertIndex = fields.indexOf(dayFields[i]) + 1;
+                  add(
+                    {
+                      day,
+                      start: prev.end,
+                      end: "",
+                      label: prev.label,
+                      audioLabel: prev.audioLabel,
+                      audience: prev.audience,
+                      rate: prev.rate,
+                    },
+                    insertIndex,
+                  );
+                };
+
+                const addLast = () => {
+                  if (dayFields.length > 0) {
+                    const prev = getSlotValues(
+                      dayFields[dayFields.length - 1].name,
+                    );
+                    add({
+                      day,
+                      start: prev.end,
+                      end: "",
+                      label: prev.label,
+                      audioLabel: prev.audioLabel,
+                      audience: prev.audience,
+                      rate: prev.rate,
+                    });
+                  } else {
+                    const defaults = generateDefaultSlots(platformName);
+                    const firstOfDay = defaults.find((s) => s.day === day);
+                    add({
+                      day,
+                      start: firstOfDay?.start ?? "00:00",
+                      end: firstOfDay?.end ?? "",
+                      label: firstOfDay?.label ?? "",
+                      audioLabel: firstOfDay?.audioLabel ?? "",
+                      audience: firstOfDay?.audience ?? 5000,
+                      rate: firstOfDay?.rate ?? 105000,
+                    });
+                  }
+                };
+
+                const headerStyle: React.CSSProperties = {
+                  display: "grid",
+                  gridTemplateColumns: "20px 72px 72px 1fr 1fr 80px 90px 32px",
+                  gap: 4,
+                  padding: "2px 4px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "#aaa",
+                  borderBottom: "1px solid #f0f0f0",
+                  marginBottom: 2,
+                };
+
+                const rowStyle: React.CSSProperties = {
+                  display: "grid",
+                  gridTemplateColumns: "20px 72px 72px 1fr 1fr 80px 90px 32px",
+                  gap: 4,
+                  padding: "2px 4px",
+                  alignItems: "center",
+                };
+
+                return (
+                  <div style={{ marginBottom: 16 }}>
+                    <Divider
+                      orientation="left"
+                      style={{ fontSize: 12, margin: "8px 0" }}
+                    >
+                      {dayLabel}
+                    </Divider>
+
+                    {dayFields.map(({ name }) => (
+                      <Form.Item
+                        key={`hidden-${name}`}
+                        name={[name, "day"]}
+                        noStyle
+                        hidden
+                      >
+                        <Input />
+                      </Form.Item>
+                    ))}
+
+                    {dayFields.length > 0 && (
+                      <div style={headerStyle}>
+                        <span />
+                        <span>Inicio</span>
+                        <span>Fin</span>
+                        <span>Etiqueta</span>
+                        <span>Audio Label</span>
+                        <span>Audiencia</span>
+                        <span>Tarifa</span>
+                        <span />
+                      </div>
+                    )}
+
+                    {dayFields.map(({ name }, i) => (
+                      <div key={name} style={rowStyle}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<PlusOutlined />}
+                          title="Insertar franja después"
+                          style={{ color: "#bbb", padding: 0, minWidth: 20 }}
+                          onClick={() => insertAfter(i)}
+                        />
+                        <Form.Item
+                          name={[name, "start"]}
+                          noStyle
+                          rules={[{ required: true, message: "HH:mm" }]}
+                          getValueProps={(v) => ({
+                            value: v ? dayjs(v, "HH:mm") : undefined,
+                          })}
+                          getValueFromEvent={(t) =>
+                            t ? t.format("HH:mm") : ""
+                          }
+                        >
+                          <TimePicker
+                            size="small"
+                            format="HH:mm"
+                            placeholder="00:00"
+                            allowClear={false}
+                            style={{ width: "100%" }}
+                          />
+                        </Form.Item>
+                        <Form.Item
+                          name={[name, "end"]}
+                          noStyle
+                          rules={[{ required: true, message: "HH:mm" }]}
+                          getValueProps={(v) => ({
+                            value: v ? dayjs(v, "HH:mm") : undefined,
+                          })}
+                          getValueFromEvent={(t) => {
+                            const val = t ? t.format("HH:mm") : "";
+                            if (i < dayFields.length - 1) {
+                              const nextName = dayFields[i + 1].name;
+                              form.setFieldValue(
+                                ["slots", nextName, "start"],
+                                val,
+                              );
+                            }
+                            return val;
+                          }}
+                        >
+                          <TimePicker
+                            size="small"
+                            format="HH:mm"
+                            placeholder="23:59"
+                            allowClear={false}
+                            style={{ width: "100%" }}
+                          />
+                        </Form.Item>
+                        <Form.Item
+                          name={[name, "label"]}
+                          noStyle
+                          rules={[{ required: true }]}
+                        >
+                          <Input size="small" />
+                        </Form.Item>
+                        <Form.Item
+                          name={[name, "audioLabel"]}
+                          noStyle
+                          rules={[{ required: true }]}
+                        >
+                          <Input size="small" />
+                        </Form.Item>
+                        <Form.Item name={[name, "audience"]} noStyle>
+                          <Input
+                            size="small"
+                            type="number"
+                            placeholder="5000"
+                          />
+                        </Form.Item>
+                        <Form.Item name={[name, "rate"]} noStyle>
+                          <Input
+                            size="small"
+                            type="number"
+                            placeholder="105000"
+                          />
+                        </Form.Item>
+                        <Button
+                          size="small"
+                          danger
+                          type="text"
+                          icon={<DeleteOutlined />}
+                          onClick={() => remove(name)}
+                        />
+                      </div>
+                    ))}
+
+                    {dayFields.length === 0 && (
+                      <Button
+                        type="dashed"
+                        size="small"
+                        icon={<PlusOutlined />}
+                        style={{ marginTop: 6 }}
+                        onClick={addLast}
+                      >
+                        Agregar franja
+                      </Button>
+                    )}
+                  </div>
+                );
+              }}
+            </Form.Item>
+          ))}
+        </>
+      )}
+    </Form.List>
+  );
+};
 
 const PlatformModal: React.FC<{
   open: boolean;
   initial: PlatformDto | null;
+  mediaTypes: MediaTypeDto[];
+  defaultMedia?: string;
+  cityOptions: { value: string; label: string }[];
   onClose: () => void;
   onSave: (dto: PlatformDto) => void;
   loading: boolean;
-}> = ({ open, initial, onClose, onSave, loading }) => {
+}> = ({
+  open,
+  initial,
+  mediaTypes,
+  defaultMedia,
+  cityOptions,
+  onClose,
+  onSave,
+  loading,
+}) => {
   const [form] = Form.useForm();
+  const watchedName: string = Form.useWatch("name", form) ?? "";
+  const watchedZone: string = Form.useWatch("zone", form) ?? "";
 
   React.useEffect(() => {
     if (open) {
       form.setFieldsValue({
         name: initial?.name ?? "",
         url: initial?.url ?? "",
-        media: initial?.media ?? MEDIA_OPTIONS[0],
+        media: initial?.media ?? defaultMedia ?? mediaTypes[0]?.name ?? "",
+        zone: initial?.zone ?? "Nacional",
+        city: initial?.city ?? "Nacional",
+        slots: initial?.slots ?? generateDefaultSlots(""),
       });
     }
-  }, [open, initial, form]);
+  }, [open, initial, form, mediaTypes, defaultMedia]);
+
+  // Sync city when zone is Nacional or Internacional
+  React.useEffect(() => {
+    if (!open || !watchedZone) return;
+    if (watchedZone === "Nacional" || watchedZone === "Internacional") {
+      form.setFieldValue("city", watchedZone);
+    }
+  }, [watchedZone, open, form]);
+
+  // Re-generate slot labels when name changes (only for new platforms)
+  const prevNameRef = React.useRef("");
+  React.useEffect(() => {
+    if (!open || initial) return;
+    if (watchedName === prevNameRef.current) return;
+    prevNameRef.current = watchedName;
+    form.setFieldValue("slots", generateDefaultSlots(watchedName));
+  }, [watchedName, open, initial, form]);
 
   const handleOk = async () => {
     const values = await form.validateFields();
-    onSave({ ...(initial?.id ? { id: initial.id } : {}), ...values });
+
+    // Normalize slots: ensure numeric fields are numbers and all fields present
+    const slots: SlotDto[] = (values.slots ?? []).map(
+      (s: SlotDto & { audience?: unknown; rate?: unknown }) => ({
+        day: s.day,
+        start: s.start,
+        end: s.end,
+        label: s.label ?? "",
+        audioLabel: s.audioLabel ?? "",
+        audience:
+          s.audience !== undefined && s.audience !== ""
+            ? Number(s.audience)
+            : 5000,
+        rate: s.rate !== undefined && s.rate !== "" ? Number(s.rate) : 105000,
+      }),
+    );
+
+    // Validate full coverage for each day
+    for (const { value: day } of DAY_OPTIONS) {
+      const err = validateDayCoverage(slots, day);
+      if (err) {
+        message.error(err);
+        return;
+      }
+    }
+
+    onSave({
+      ...(initial?.id ? { id: initial.id } : {}),
+      name: values.name,
+      url: values.url ?? "",
+      media: values.media,
+      zone: values.zone ?? "Nacional",
+      city: values.city ?? "Nacional",
+      slots,
+    });
   };
+
+  const platformTabs = [
+    {
+      key: "info",
+      label: "Información",
+      children: (
+        <>
+          <Form.Item name="name" label="Nombre" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="url" label="URL Stream">
+            <Input />
+          </Form.Item>
+          <Form.Item name="media" label="Medio" rules={[{ required: true }]}>
+            <Select>
+              {mediaTypes.map((mt) => (
+                <Option key={mt.name} value={mt.name!}>
+                  {mt.label}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item name="zone" label="Zona" rules={[{ required: true }]}>
+            <Select>
+              {ZONE_OPTIONS.map((z) => (
+                <Option key={z} value={z}>
+                  {z}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item name="city" label="Ciudad">
+            <Select
+              showSearch
+              filterOption={(input, option) => {
+                const norm = (s: string) =>
+                  s
+                    .normalize("NFD")
+                    .replace(/[\u0300-\u036f]/g, "")
+                    .toLowerCase();
+                const labelWords = norm((option?.label as string) ?? "").split(
+                  /\s+/,
+                );
+                const inputWords = norm(input.trim())
+                  .split(/\s+/)
+                  .filter(Boolean);
+                // Each input word must be a prefix of a word in the label (in order)
+                let li = 0;
+                for (const iw of inputWords) {
+                  while (
+                    li < labelWords.length &&
+                    !labelWords[li].startsWith(iw)
+                  )
+                    li++;
+                  if (li >= labelWords.length) return false;
+                  li++;
+                }
+                return inputWords.length > 0;
+              }}
+              options={cityOptions}
+              placeholder="Nacional"
+            />
+          </Form.Item>
+        </>
+      ),
+    },
+    {
+      key: "slots",
+      label: "Franjas",
+      children: (
+        <>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12, fontSize: 12 }}
+            message="Cada tipo de día debe cubrir de 00:00 a 23:59 sin huecos"
+          />
+          <SlotsField platformName={watchedName} />
+        </>
+      ),
+    },
+  ];
 
   return (
     <Modal
@@ -87,23 +600,14 @@ const PlatformModal: React.FC<{
       okText="Guardar"
       cancelText="Cancelar"
       destroyOnHidden
+      width={900}
     >
       <Form form={form} layout="vertical">
-        <Form.Item name="name" label="Nombre" rules={[{ required: true }]}>
-          <Input />
-        </Form.Item>
-        <Form.Item name="url" label="URL Stream">
-          <Input />
-        </Form.Item>
-        <Form.Item name="media" label="Medio" rules={[{ required: true }]}>
-          <Select>
-            {MEDIA_OPTIONS.map((m) => (
-              <Option key={m} value={m}>
-                {m}
-              </Option>
-            ))}
-          </Select>
-        </Form.Item>
+        <Tabs
+          items={platformTabs}
+          size="small"
+          destroyInactiveTabPane={false}
+        />
       </Form>
     </Modal>
   );
@@ -491,7 +995,7 @@ const SettingsPage: React.FC = () => {
   const queryClient = useQueryClient();
 
   // ── Platforms state ───────────────────────────────────
-  const [selectedMedia, setSelectedMedia] = useState<string>(MEDIA_OPTIONS[0]);
+  const [selectedMedia, setSelectedMedia] = useState<string>("");
   const [platformModal, setPlatformModal] = useState<{
     open: boolean;
     data: PlatformDto | null;
@@ -548,6 +1052,36 @@ const SettingsPage: React.FC = () => {
       return res.data as MediaTypeDto[];
     },
   );
+
+  const { data: colombiaCities = STATIC_CITY_OPTIONS } = useQuery(
+    ["colombia-cities"],
+    async () => {
+      const res = await fetch(
+        "https://api-colombia.com/api/v1/City?pageNumber=1&pageSize=2000",
+      );
+      if (!res.ok) throw new Error("Failed to fetch cities");
+      const json: { id: number; name: string }[] = await res.json();
+      const items = Array.isArray(json) ? json : [];
+      const sorted = [...items]
+        .filter((c) => c.name)
+        .sort((a, b) => a.name.localeCompare(b.name, "es"));
+      const unique = sorted.filter(
+        (c, i, arr) => i === 0 || c.name !== arr[i - 1].name,
+      );
+      return [
+        ...STATIC_CITY_OPTIONS,
+        ...unique.map((c) => ({ value: c.name, label: c.name })),
+      ];
+    },
+    { staleTime: Infinity, cacheTime: Infinity, retry: 2 },
+  );
+
+  // Set default selectedMedia once mediaTypes loads
+  React.useEffect(() => {
+    if (mediaTypes.length > 0 && !selectedMedia) {
+      setSelectedMedia(mediaTypes[0].name ?? "");
+    }
+  }, [mediaTypes, selectedMedia]);
 
   const usersWithPhone = users.filter(
     (u) => u.phone && /^\+?[1-9]\d{6,14}$/.test(u.phone),
@@ -672,6 +1206,8 @@ const SettingsPage: React.FC = () => {
   const platformColumns = [
     { title: "Nombre", dataIndex: "name", key: "name" },
     { title: "Medio", dataIndex: "media", key: "media", width: 80 },
+    { title: "Zona", dataIndex: "zone", key: "zone", width: 120 },
+    { title: "Ciudad", dataIndex: "city", key: "city", width: 100 },
     {
       title: "URL",
       dataIndex: "url",
@@ -692,23 +1228,44 @@ const SettingsPage: React.FC = () => {
         ),
     },
     {
+      title: "Franjas",
+      key: "slots",
+      width: 80,
+      render: (_: unknown, record: PlatformDto) => (
+        <Tag>{record.slots?.length ?? 0} franja(s)</Tag>
+      ),
+    },
+    {
       title: "",
       key: "actions",
-      width: 50,
+      width: 80,
       render: (_: unknown, record: PlatformDto) => (
-        <Button
-          icon={<EditOutlined />}
-          size="small"
-          onClick={(e) => {
-            e.stopPropagation();
-            setPlatformModal({ open: true, data: record });
-          }}
-        />
+        <Space>
+          <Button
+            icon={<EditOutlined />}
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPlatformModal({ open: true, data: record });
+            }}
+          />
+          <Popconfirm
+            title="¿Eliminar plataforma?"
+            okText="Sí"
+            cancelText="No"
+            onConfirm={() => record.id && deletePlatform.mutate(record.id)}
+          >
+            <Button
+              icon={<DeleteOutlined />}
+              size="small"
+              danger
+              onClick={(e) => e.stopPropagation()}
+            />
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
-
-  // ── User columns ──────────────────────────────────────
 
   const userColumns = [
     {
@@ -1027,9 +1584,9 @@ const SettingsPage: React.FC = () => {
                 style={{ width: 120 }}
                 size="small"
               >
-                {MEDIA_OPTIONS.map((m) => (
-                  <Option key={m} value={m}>
-                    {m}
+                {mediaTypes.map((mt) => (
+                  <Option key={mt.name} value={mt.name!}>
+                    {mt.label}
                   </Option>
                 ))}
               </Select>
@@ -1069,6 +1626,9 @@ const SettingsPage: React.FC = () => {
       <PlatformModal
         open={platformModal.open}
         initial={platformModal.data}
+        mediaTypes={mediaTypes}
+        defaultMedia={selectedMedia}
+        cityOptions={colombiaCities}
         onClose={() => setPlatformModal({ open: false, data: null })}
         onSave={(dto) => savePlatform.mutate(dto)}
         loading={savePlatform.isLoading}

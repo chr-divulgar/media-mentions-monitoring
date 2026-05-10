@@ -2,12 +2,12 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { FirebaseAdminService } from '../firebase/firebase-admin.service';
 import { ClientDto, MediaTypeDto } from '@repo/shared';
 
-const DEFAULT_MEDIA: Omit<MediaTypeDto, 'id'>[] = [
-  { name: 'internet', label: 'Internet' },
-  { name: 'radio', label: 'Radio' },
-  { name: 'tv', label: 'Televisión' },
-  { name: 'prensa', label: 'Prensa' },
-  { name: 'redes', label: 'Redes Sociales' },
+const DEFAULT_MEDIA: Array<Omit<MediaTypeDto, 'id'> & { order: number }> = [
+  { name: 'internet', label: 'Internet', order: 0 },
+  { name: 'radio', label: 'Radio', order: 1 },
+  { name: 'tv', label: 'Televisión', order: 2 },
+  { name: 'prensa', label: 'Prensa', order: 3 },
+  { name: 'redes', label: 'Redes Sociales', order: 4 },
 ];
 
 @Injectable()
@@ -71,7 +71,7 @@ export class ClientsService {
   // ─── Media Types ──────────────────────────────────────────────────────────
 
   async getMediaTypes(): Promise<MediaTypeDto[]> {
-    const snap = await this.mediaCol.orderBy('name').get();
+    const snap = await this.mediaCol.get();
     if (snap.empty) {
       // Seed defaults on first call
       const batch = this.firebaseAdmin.firestore.batch();
@@ -81,11 +81,27 @@ export class ClientsService {
       await batch.commit();
       return this.getMediaTypes();
     }
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as MediaTypeDto) }));
+    const docs = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as MediaTypeDto & { order?: number }),
+    }));
+    // Sort by order field if present, otherwise keep Firestore ID order (insertion order)
+    docs.sort((a, b) => {
+      const aOrd = (a as { order?: number }).order;
+      const bOrd = (b as { order?: number }).order;
+      if (aOrd !== undefined && bOrd !== undefined) return aOrd - bOrd;
+      if (aOrd !== undefined) return -1;
+      if (bOrd !== undefined) return 1;
+      return 0;
+    });
+    return docs;
   }
 
   async createMediaType(dto: MediaTypeDto): Promise<MediaTypeDto> {
-    const payload = { name: dto.name, label: dto.label };
+    const snap = await this.mediaCol.get();
+    const orders = snap.docs.map((d) => (d.data().order as number) ?? 0);
+    const maxOrder = orders.length > 0 ? Math.max(...orders) + 1 : 0;
+    const payload = { name: dto.name, label: dto.label, order: maxOrder };
     const ref = await this.mediaCol.add(payload);
     return { id: ref.id, ...payload };
   }

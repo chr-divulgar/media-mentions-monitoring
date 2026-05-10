@@ -1,48 +1,157 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PlatformDto } from '@repo/shared';
-import { DataSource, MongoRepository } from 'typeorm';
-import { ObjectId } from 'mongodb';
-import { Platform } from '../entities';
-import { InjectDataSource } from '@nestjs/typeorm';
+import { PlatformDto, SlotDto, Day, PlatformResponseDto } from '@repo/shared';
 import { FirebaseAdminService } from '../firebase/firebase-admin.service';
+
+const PLATFORMS_COLLECTION = 'platforms';
+
+function nameToDisplay(name: string): string {
+  // Split camelCase into words: "CaracolBucaramanga" → "Caracol Bucaramanga"
+  return name.replaceAll(/([A-Z])/g, ' $1').trim();
+}
+
+function nameToAudio(name: string): string {
+  return nameToDisplay(name).toUpperCase().replaceAll(/\s+/g, '_');
+}
+
+function generateDefaultSlots(name: string): SlotDto[] {
+  const display = nameToDisplay(name);
+  const audio = nameToAudio(name);
+  return [
+    {
+      day: Day.Weekday,
+      start: '00:00',
+      end: '04:00',
+      label: `${display}: Noticias de la Madrugada:`,
+      audioLabel: `_${audio}_AM_`,
+      audience: 5000,
+      rate: 105000,
+    },
+    {
+      day: Day.Weekday,
+      start: '04:00',
+      end: '12:00',
+      label: `${display}: Noticias de la Mañana:`,
+      audioLabel: `_${audio}_AM_`,
+      audience: 5000,
+      rate: 105000,
+    },
+    {
+      day: Day.Weekday,
+      start: '12:00',
+      end: '13:00',
+      label: `${display}: Noticias del Medio Día:`,
+      audioLabel: `_${audio}_MD_`,
+      audience: 5000,
+      rate: 105000,
+    },
+    {
+      day: Day.Weekday,
+      start: '13:00',
+      end: '19:00',
+      label: `${display}: Noticias de la Tarde:`,
+      audioLabel: `_${audio}_TARDE_`,
+      audience: 5000,
+      rate: 105000,
+    },
+    {
+      day: Day.Weekday,
+      start: '19:00',
+      end: '23:59',
+      label: `${display}: Noticias de la Noche:`,
+      audioLabel: `_${audio}_NOCHE_`,
+      audience: 5000,
+      rate: 105000,
+    },
+    {
+      day: Day.Saturday,
+      start: '00:00',
+      end: '23:59',
+      label: `${display}: Fin de semana:`,
+      audioLabel: `_${audio}_FIN_DE_SEMANA_`,
+      audience: 5000,
+      rate: 105000,
+    },
+    {
+      day: Day.Sunday,
+      start: '00:00',
+      end: '23:59',
+      label: `${display}: Fin de semana:`,
+      audioLabel: `_${audio}_FIN_DE_SEMANA_`,
+      audience: 5000,
+      rate: 105000,
+    },
+  ];
+}
+
+interface PlatformDoc {
+  id: string;
+  name: string;
+  url: string;
+  media: string;
+  zone: string;
+  city: string;
+  slots: SlotDto[];
+}
 
 @Injectable()
 export class SettingsService {
-  platformRepo: MongoRepository<Platform>;
+  constructor(private readonly firebaseAdmin: FirebaseAdminService) {}
 
-  constructor(
-    @InjectDataSource('monitoring') private readonly dataSource: DataSource,
-    private readonly firebaseAdmin: FirebaseAdminService,
-  ) {
-    this.platformRepo = this.dataSource.getMongoRepository(Platform);
+  private get db() {
+    return this.firebaseAdmin.firestore;
   }
 
   // ─── Platforms ────────────────────────────────────────────────────────────
 
-  async getPlatforms(media: string): Promise<Platform[]> {
-    return this.platformRepo.find({ where: { media } });
+  async getPlatforms(media: string): Promise<PlatformDoc[]> {
+    const snap = await this.db
+      .collection(PLATFORMS_COLLECTION)
+      .where('media', '==', media)
+      .get();
+    return snap.docs.map((doc) => ({
+      id: doc.id,
+      ...(doc.data() as Omit<PlatformDoc, 'id'>),
+    }));
   }
 
-  async createPlatform(dto: PlatformDto): Promise<Platform> {
-    const platform = this.platformRepo.create({
-      name: dto.name,
+  async createPlatform(dto: PlatformDto): Promise<PlatformDoc> {
+    const slots = dto.slots?.length
+      ? dto.slots
+      : generateDefaultSlots(dto.name ?? '');
+    const data = {
+      name: dto.name ?? '',
       url: dto.url ?? '',
-      media: dto.media,
-    });
-    return this.platformRepo.save(platform);
+      media: dto.media ?? '',
+      zone: dto.zone ?? 'Nacional',
+      city: dto.city ?? 'Nacional',
+      slots,
+    };
+    const ref = await this.db.collection(PLATFORMS_COLLECTION).add(data);
+    return { id: ref.id, ...data };
   }
 
-  async updatePlatform(dto: PlatformDto): Promise<Platform> {
-    const existing = await this.platformRepo.findOneBy({
-      _id: new ObjectId(dto.id),
-    });
-    if (!existing) throw new NotFoundException('Platform not found');
+  async updatePlatform(dto: PlatformDto): Promise<PlatformDoc> {
+    if (!dto.id) throw new NotFoundException('Platform id required');
+    const ref = this.db.collection(PLATFORMS_COLLECTION).doc(dto.id);
+    const snap = await ref.get();
+    if (!snap.exists) throw new NotFoundException('Platform not found');
 
-    existing.name = dto.name ?? existing.name;
-    existing.url = dto.url ?? existing.url;
-    existing.media = dto.media ?? existing.media;
+    const existing = snap.data() as Omit<PlatformDoc, 'id'>;
+    const updated = {
+      name: dto.name ?? existing.name,
+      url: dto.url ?? existing.url,
+      media: dto.media ?? existing.media,
+      zone: dto.zone ?? existing.zone ?? 'Nacional',
+      city: dto.city ?? existing.city ?? 'Nacional',
+      slots: dto.slots ?? existing.slots,
+    };
+    await ref.update(updated);
+    return { id: dto.id, ...updated };
+  }
 
-    return this.platformRepo.save(existing);
+  async deletePlatform(id: string): Promise<{ success: boolean }> {
+    await this.db.collection(PLATFORMS_COLLECTION).doc(id).delete();
+    return { success: true };
   }
 
   // ─── Users (Firebase Auth + Firestore) ────────────────────────────────────────────
