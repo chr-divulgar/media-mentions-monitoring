@@ -1,3 +1,11 @@
 packages:
   - "apps/*"
   - "packages/*"
+allowBuilds:
+  '@firebase/util': true
+  '@nestjs/core': true
+  '@swc/core': true
+  esbuild: true
+  ffmpeg-static: true
+  nx: true
+  protobufjs: true

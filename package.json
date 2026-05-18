@@ -24,8 +24,19 @@
     "prettier": "^3.2.5",
     "turbo": "^2.0.9"
   },
-  "packageManager": "pnpm@8.15.6",
+  "packageManager": "pnpm@11.1.2",
   "name": "with-vite",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@firebase/util",
+      "@nestjs/core",
+      "@swc/core",
+      "esbuild",
+      "ffmpeg-static",
+      "nx",
+      "protobufjs"
+    ]
+  },
   "dependencies": {
     "@fastify/compress": "7.0.3",
     "fastify": "4.29.1"
