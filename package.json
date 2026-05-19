@@ -27,6 +27,9 @@
   "packageManager": "pnpm@11.1.2",
   "name": "with-vite",
   "pnpm": {
+    "overrides": {
+      "fastify": "4.28.1"
+    },
     "onlyBuiltDependencies": [
       "@firebase/util",
       "@nestjs/core",
@@ -39,9 +42,6 @@
   },
   "dependencies": {
     "@fastify/compress": "7.0.3",
-    "fastify": "4.29.1"
-  },
-  "resolutions": {
-    "fastify": "4.29.1"
+    "fastify": "4.28.1"
   }
 }
