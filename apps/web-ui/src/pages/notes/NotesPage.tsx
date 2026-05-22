@@ -126,7 +126,7 @@ const NotesPage: React.FC = () => {
   };
 
   const columnMap: Record<string, string> = {
-    Feha: "date",
+    Fecha: "date",
     "TIPO DE MEDIO": "media",
     Medio: "mediaName",
     VARIABLES: "topic", // ← Sin espacio
@@ -135,7 +135,7 @@ const NotesPage: React.FC = () => {
     Origen: "origin",
     DEPARTAMENTO: "department",
     Zona: "zone",
-    Título: "title",
+    Titular: "title",
     RESUMEN: "summary",
     TARIFA: "rate",
     Sentimiento: "sentiment",
