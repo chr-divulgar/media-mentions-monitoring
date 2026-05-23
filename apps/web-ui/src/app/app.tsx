@@ -26,13 +26,16 @@ import SettingsPage from "../pages/settings/SettingsPage";
 import LoginPage from "../pages/auth/LoginPage";
 import PrivateRoute from "../components/PrivateRoute";
 import { useAuth } from "../context/AuthContext";
+import { useThemeMode } from "../context/ThemeContext";
 
 // Componente que usa hooks de router — debe estar DENTRO del <Router>
 function AppLayout() {
   const [pathname, setPathname] = useState("/dashboard");
   const { isAuthenticated, loading, user, logout } = useAuth();
+  const { themeMode, setThemeMode } = useThemeMode();
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
+  const isDarkMode = themeMode === "dark";
 
   // handler de logout definido aquí para que los hooks siempre se ejecuten en el mismo orden
   const handleLogout = async () => {
@@ -45,14 +48,18 @@ function AppLayout() {
     }
   };
 
-  const avatarProps = getAvatarProps({ user, onLogout: handleLogout });
+  const avatarProps = getAvatarProps({
+    user,
+    onLogout: handleLogout,
+    themeMode,
+    onThemeChange: setThemeMode,
+  });
 
   const settings: Partial<ProSettings> = {
     fixSiderbar: true,
     layout: "mix",
     splitMenus: false,
-    navTheme: "realDark",
-    colorPrimary: "#1677FF",
+    navTheme: isDarkMode ? "realDark" : "light",
     siderMenuType: "sub",
     fixedHeader: false,
   };
@@ -66,6 +73,7 @@ function AppLayout() {
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
+          background: isDarkMode ? "#030303" : "#f5f7fa",
         }}
       >
         <Spin size="large" />
@@ -104,9 +112,17 @@ function AppLayout() {
       {...filteredProps}
       location={{ pathname }}
       token={{
+        bgLayout: isDarkMode ? "#030303" : "#f5f7fa",
+        colorTextAppListIcon: isDarkMode ? "rgba(255,255,255,0.85)" : undefined,
         header: {
-          colorBgMenuItemSelected: "rgba(0,0,0,0.04)",
+          colorBgMenuItemSelected: isDarkMode
+            ? "rgba(255,255,255,0.12)"
+            : "rgba(0,0,0,0.04)",
         },
+      }}
+      contentStyle={{
+        background: isDarkMode ? "#030303" : "#f5f7fa",
+        transition: "background-color 0.25s ease",
       }}
       menu={{ collapsedShowGroupTitle: true }}
       avatarProps={avatarProps}

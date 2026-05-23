@@ -2,7 +2,9 @@ import {
   GithubFilled,
   InfoCircleFilled,
   LogoutOutlined,
+  MoonOutlined,
   QuestionCircleFilled,
+  SunOutlined,
 } from "@ant-design/icons";
 
 import type { MenuDataItem } from "@ant-design/pro-components";
@@ -14,6 +16,7 @@ import { Link } from "react-router-dom";
 import SearchInput from "../components/SearchInput";
 import MenuCard from "../components/MenuCard";
 import { AuthUser } from "../context/AuthContext";
+import { ThemeMode } from "../context/ThemeContext";
 
 export function headerTitleRender(
   logo: React.ReactNode,
@@ -98,11 +101,15 @@ export function getActionsRender(props: GlobalHeaderProps) {
 export interface AvatarConfig {
   user: AuthUser | null;
   onLogout: () => void;
+  themeMode: ThemeMode;
+  onThemeChange: (mode: ThemeMode) => void;
 }
 
 export function getAvatarProps({
   user,
   onLogout,
+  themeMode,
+  onThemeChange,
 }: AvatarConfig): AvatarProps & {
   title: ReactNode;
   render: (props: AvatarProps, defaultDom: ReactNode) => ReactNode;
@@ -127,6 +134,29 @@ export function getAvatarProps({
                 key: "role",
                 label: `Role: ${user?.role || "user"}`,
                 disabled: true,
+              },
+              {
+                type: "divider",
+              },
+              {
+                key: "theme-group",
+                label: "Tema",
+                children: [
+                  {
+                    key: "theme-dark",
+                    icon: <MoonOutlined />,
+                    label: "Oscuro",
+                    disabled: themeMode === "dark",
+                    onClick: () => onThemeChange("dark"),
+                  },
+                  {
+                    key: "theme-light",
+                    icon: <SunOutlined />,
+                    label: "Claro",
+                    disabled: themeMode === "light",
+                    onClick: () => onThemeChange("light"),
+                  },
+                ],
               },
               {
                 type: "divider",
