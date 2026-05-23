@@ -22,6 +22,10 @@ export class PlatformDto {
   readonly zone?: string;
   readonly city?: string;
   readonly slots?: SlotDto[];
+  /** Audiencia general (solo para medios no audiovisuales) */
+  readonly audience?: number;
+  /** Tarifa general (solo para medios no audiovisuales) */
+  readonly rate?: number;
 }
 
 export interface PlatformResponseDto {
@@ -32,4 +36,6 @@ export interface PlatformResponseDto {
   zone: string;
   city: string;
   slots: SlotDto[];
+  audience?: number;
+  rate?: number;
 }

@@ -438,6 +438,10 @@ const PlatformModal: React.FC<{
   const [form] = Form.useForm();
   const watchedName: string = Form.useWatch("name", form) ?? "";
   const watchedZone: string = Form.useWatch("zone", form) ?? "";
+  const watchedMedia: string = Form.useWatch("media", form) ?? "";
+  const isAudioVisual = ["radio", "tv", "television"].includes(
+    watchedMedia.toLowerCase(),
+  );
 
   React.useEffect(() => {
     if (open) {
@@ -448,6 +452,8 @@ const PlatformModal: React.FC<{
         zone: initial?.zone ?? "Nacional",
         city: initial?.city ?? "Nacional",
         slots: initial?.slots ?? generateDefaultSlots(""),
+        audience: initial?.audience ?? 5000,
+        rate: initial?.rate ?? 105000,
       });
     }
   }, [open, initial, form, mediaTypes, defaultMedia]);
@@ -472,123 +478,67 @@ const PlatformModal: React.FC<{
   const handleOk = async () => {
     const values = await form.validateFields();
 
-    // Normalize slots: ensure numeric fields are numbers and all fields present
-    const slots: SlotDto[] = (values.slots ?? []).map(
-      (s: SlotDto & { audience?: unknown; rate?: unknown }) => ({
-        day: s.day,
-        start: s.start,
-        end: s.end,
-        label: s.label ?? "",
-        audioLabel: s.audioLabel ?? "",
-        audience:
-          s.audience !== undefined && s.audience !== null
-            ? Number(s.audience)
-            : 5000,
-        rate: s.rate !== undefined && s.rate !== null ? Number(s.rate) : 105000,
-      }),
+    const currentMedia: string = values.media ?? "";
+    const currentIsAudioVisual = ["radio", "tv", "television"].includes(
+      currentMedia.toLowerCase(),
     );
 
-    // Validate full coverage for each day
-    for (const { value: day } of DAY_OPTIONS) {
-      const err = validateDayCoverage(slots, day);
-      if (err) {
-        message.error(err);
-        return;
+    if (currentIsAudioVisual) {
+      // Normalize slots: ensure numeric fields are numbers and all fields present
+      const slots: SlotDto[] = (values.slots ?? []).map(
+        (s: SlotDto & { audience?: unknown; rate?: unknown }) => ({
+          day: s.day,
+          start: s.start,
+          end: s.end,
+          label: s.label ?? "",
+          audioLabel: s.audioLabel ?? "",
+          audience:
+            s.audience !== undefined && s.audience !== null
+              ? Number(s.audience)
+              : 5000,
+          rate:
+            s.rate !== undefined && s.rate !== null ? Number(s.rate) : 105000,
+        }),
+      );
+
+      // Validate full coverage for each day
+      for (const { value: day } of DAY_OPTIONS) {
+        const err = validateDayCoverage(slots, day);
+        if (err) {
+          message.error(err);
+          return;
+        }
       }
+
+      onSave({
+        ...(initial?.id ? { id: initial.id } : {}),
+        name: values.name,
+        url: values.url ?? "",
+        media: values.media,
+        zone: values.zone ?? "Nacional",
+        city: values.city ?? "Nacional",
+        slots,
+      });
+    } else {
+      onSave({
+        ...(initial?.id ? { id: initial.id } : {}),
+        name: values.name,
+        url: values.url ?? "",
+        media: values.media,
+        zone: values.zone ?? "Nacional",
+        city: values.city ?? "Nacional",
+        slots: [],
+        audience:
+          values.audience !== undefined && values.audience !== null
+            ? Number(values.audience)
+            : 5000,
+        rate:
+          values.rate !== undefined && values.rate !== null
+            ? Number(values.rate)
+            : 105000,
+      });
     }
-
-    onSave({
-      ...(initial?.id ? { id: initial.id } : {}),
-      name: values.name,
-      url: values.url ?? "",
-      media: values.media,
-      zone: values.zone ?? "Nacional",
-      city: values.city ?? "Nacional",
-      slots,
-    });
   };
-
-  const platformTabs = [
-    {
-      key: "info",
-      label: "Información",
-      children: (
-        <>
-          <Form.Item name="name" label="Nombre" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="url" label="URL Stream">
-            <Input />
-          </Form.Item>
-          <Form.Item name="media" label="Medio" rules={[{ required: true }]}>
-            <Select>
-              {mediaTypes.map((mt) => (
-                <Option key={mt.name} value={mt.name!}>
-                  {mt.label}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item name="zone" label="Zona" rules={[{ required: true }]}>
-            <Select>
-              {ZONE_OPTIONS.map((z) => (
-                <Option key={z} value={z}>
-                  {z}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item name="city" label="Ciudad">
-            <Select
-              showSearch
-              filterOption={(input, option) => {
-                const norm = (s: string) =>
-                  s
-                    .normalize("NFD")
-                    .replace(/[\u0300-\u036f]/g, "")
-                    .toLowerCase();
-                const labelWords = norm((option?.label as string) ?? "").split(
-                  /\s+/,
-                );
-                const inputWords = norm(input.trim())
-                  .split(/\s+/)
-                  .filter(Boolean);
-                // Each input word must be a prefix of a word in the label (in order)
-                let li = 0;
-                for (const iw of inputWords) {
-                  while (
-                    li < labelWords.length &&
-                    !labelWords[li].startsWith(iw)
-                  )
-                    li++;
-                  if (li >= labelWords.length) return false;
-                  li++;
-                }
-                return inputWords.length > 0;
-              }}
-              options={cityOptions}
-              placeholder="Nacional"
-            />
-          </Form.Item>
-        </>
-      ),
-    },
-    {
-      key: "slots",
-      label: "Franjas",
-      children: (
-        <>
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 12, fontSize: 12 }}
-            message="Cada tipo de día debe cubrir de 00:00 a 23:59 sin huecos"
-          />
-          <SlotsField platformName={watchedName} />
-        </>
-      ),
-    },
-  ];
 
   return (
     <Modal
@@ -603,11 +553,121 @@ const PlatformModal: React.FC<{
       width={900}
     >
       <Form form={form} layout="vertical">
-        <Tabs
-          items={platformTabs}
-          size="small"
-          destroyInactiveTabPane={false}
-        />
+        <Row gutter={12}>
+          <Col span={12}>
+            <Form.Item name="name" label="Nombre" rules={[{ required: true }]}>
+              <Input />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="media" label="Medio" rules={[{ required: true }]}>
+              <Select>
+                {mediaTypes.map((mt) => (
+                  <Option key={mt.name} value={mt.name!}>
+                    {mt.label}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+          </Col>
+        </Row>
+        <Form.Item name="url" label="URL Stream">
+          <Input />
+        </Form.Item>
+        <Row gutter={12}>
+          <Col span={12}>
+            <Form.Item name="zone" label="Zona" rules={[{ required: true }]}>
+              <Select>
+                {ZONE_OPTIONS.map((z) => (
+                  <Option key={z} value={z}>
+                    {z}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="city" label="Ciudad">
+              <Select
+                showSearch
+                filterOption={(input, option) => {
+                  const norm = (s: string) =>
+                    s
+                      .normalize("NFD")
+                      .replace(/[\u0300-\u036f]/g, "")
+                      .toLowerCase();
+                  const labelWords = norm(
+                    (option?.label as string) ?? "",
+                  ).split(/\s+/);
+                  const inputWords = norm(input.trim())
+                    .split(/\s+/)
+                    .filter(Boolean);
+                  let li = 0;
+                  for (const iw of inputWords) {
+                    while (
+                      li < labelWords.length &&
+                      !labelWords[li].startsWith(iw)
+                    )
+                      li++;
+                    if (li >= labelWords.length) return false;
+                    li++;
+                  }
+                  return inputWords.length > 0;
+                }}
+                options={cityOptions}
+                placeholder="Nacional"
+              />
+            </Form.Item>
+          </Col>
+        </Row>
+        {isAudioVisual ? (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12, fontSize: 12 }}
+              message="Cada tipo de día debe cubrir de 00:00 a 23:59 sin huecos"
+            />
+            <SlotsField platformName={watchedName} />
+          </>
+        ) : (
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item
+                name="audience"
+                label="Audiencia"
+                rules={[
+                  { required: true, message: "Ingresa la audiencia" },
+                  {
+                    type: "number",
+                    min: 0,
+                    message: "Debe ser un número positivo",
+                    transform: Number,
+                  },
+                ]}
+              >
+                <Input type="number" min={0} placeholder="5000" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="rate"
+                label="Tarifa"
+                rules={[
+                  { required: true, message: "Ingresa la tarifa" },
+                  {
+                    type: "number",
+                    min: 0,
+                    message: "Debe ser un número positivo",
+                    transform: Number,
+                  },
+                ]}
+              >
+                <Input type="number" min={0} placeholder="105000" />
+              </Form.Item>
+            </Col>
+          </Row>
+        )}
       </Form>
     </Modal>
   );

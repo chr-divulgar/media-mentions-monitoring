@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PlatformDto, SlotDto, Day, PlatformResponseDto } from '@repo/shared';
+import { PlatformDto, SlotDto, Day } from '@repo/shared';
 import { FirebaseAdminService } from '../firebase/firebase-admin.service';
 
 const PLATFORMS_COLLECTION = 'platforms';
@@ -91,6 +91,8 @@ interface PlatformDoc {
   zone: string;
   city: string;
   slots: SlotDto[];
+  audience?: number;
+  rate?: number;
 }
 
 @Injectable()
@@ -118,13 +120,15 @@ export class SettingsService {
     const slots = dto.slots?.length
       ? dto.slots
       : generateDefaultSlots(dto.name ?? '');
-    const data = {
+    const data: Omit<PlatformDoc, 'id'> = {
       name: dto.name ?? '',
       url: dto.url ?? '',
       media: dto.media ?? '',
       zone: dto.zone ?? 'Nacional',
       city: dto.city ?? 'Nacional',
       slots,
+      ...(dto.audience == null ? {} : { audience: Number(dto.audience) }),
+      ...(dto.rate == null ? {} : { rate: Number(dto.rate) }),
     };
     const ref = await this.db.collection(PLATFORMS_COLLECTION).add(data);
     return { id: ref.id, ...data };
@@ -137,13 +141,15 @@ export class SettingsService {
     if (!snap.exists) throw new NotFoundException('Platform not found');
 
     const existing = snap.data() as Omit<PlatformDoc, 'id'>;
-    const updated = {
+    const updated: Omit<PlatformDoc, 'id'> = {
       name: dto.name ?? existing.name,
       url: dto.url ?? existing.url,
       media: dto.media ?? existing.media,
       zone: dto.zone ?? existing.zone ?? 'Nacional',
       city: dto.city ?? existing.city ?? 'Nacional',
       slots: dto.slots ?? existing.slots,
+      audience: dto.audience == null ? existing.audience : Number(dto.audience),
+      rate: dto.rate == null ? existing.rate : Number(dto.rate),
     };
     await ref.update(updated);
     return { id: dto.id, ...updated };
