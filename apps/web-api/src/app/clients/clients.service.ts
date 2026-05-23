@@ -39,6 +39,7 @@ export class ClientsService {
     const payload = {
       name: dto.name,
       words: dto.words ?? [],
+      topics: dto.topics ?? [],
       alerts: dto.alerts ?? {},
       notes: dto.notes ?? {},
     };
@@ -55,6 +56,7 @@ export class ClientsService {
     const payload: Record<string, unknown> = {};
     if (dto.name !== undefined) payload['name'] = dto.name;
     if (dto.words !== undefined) payload['words'] = dto.words;
+    if (dto.topics !== undefined) payload['topics'] = dto.topics;
     if (dto.alerts !== undefined) payload['alerts'] = dto.alerts;
     if (dto.notes !== undefined) payload['notes'] = dto.notes;
 

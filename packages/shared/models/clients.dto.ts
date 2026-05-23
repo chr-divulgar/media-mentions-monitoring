@@ -8,10 +8,28 @@ export class WordDto {
   readonly adds!: WordAddDto[];
 }
 
+export class TopicItemDto {
+  readonly id?: string;
+  readonly name!: string;
+  readonly subtopics?: SubtopicItemDto[];
+}
+
+export class SubtopicItemDto {
+  readonly id?: string;
+  readonly name!: string;
+  readonly subsubtopics?: SubsubtopicItemDto[];
+}
+
+export class SubsubtopicItemDto {
+  readonly id?: string;
+  readonly name!: string;
+}
+
 export class ClientDto {
   readonly id?: string;
   readonly name!: string;
   readonly words?: WordDto[];
+  readonly topics?: TopicItemDto[];
   /** mediaName → array of user phone numbers */
   readonly alerts?: Record<string, string[]>;
   /** mediaName → array of user phone numbers */

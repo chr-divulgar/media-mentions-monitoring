@@ -821,30 +821,35 @@ const ClientModal: React.FC<{
 }) => {
   const [form] = Form.useForm();
 
-  React.useEffect(() => {
-    if (open) {
-      form.setFieldsValue({
-        name: initial?.name ?? "",
-        words: initial?.words?.length
-          ? initial.words
-          : [{ value: "", adds: [] }],
-        alerts: initial?.alerts ?? {},
-        notes: initial?.notes ?? {},
-      });
-    }
-  }, [open, initial, form]);
+  // Con destroyOnHidden el form se remonta en cada apertura;
+  // initialValues se lee durante el montaje, antes de que los Form.List
+  // registren sus campos, evitando la carrera de setFieldsValue.
+  const formInitialValues = React.useMemo(
+    () => ({
+      name: initial?.name ?? "",
+      words: initial?.words?.length ? initial.words : [{ value: "", adds: [] }],
+      topics: initial?.topics ?? [],
+      alerts: initial?.alerts ?? {},
+      notes: initial?.notes ?? {},
+    }),
+    [open, initial],
+  );
 
   const handleOk = async () => {
     const values = await form.validateFields();
-    const words: WordDto[] = (values.words ?? []).filter((w: WordDto) =>
-      w?.value?.trim(),
+    const words: WordDto[] = (values.words ?? initial?.words ?? []).filter(
+      (w: WordDto) => w?.value?.trim(),
+    );
+    const topics = (values.topics ?? initial?.topics ?? []).filter((t: any) =>
+      t?.name?.trim(),
     );
     onSave({
       ...(initial?.id ? { id: initial.id } : {}),
-      name: values.name,
+      name: values.name ?? initial?.name ?? "",
       words,
-      alerts: values.alerts ?? {},
-      notes: values.notes ?? {},
+      topics,
+      alerts: values.alerts ?? initial?.alerts ?? {},
+      notes: values.notes ?? initial?.notes ?? {},
     });
   };
 
@@ -953,6 +958,240 @@ const ClientModal: React.FC<{
       ),
     },
     {
+      key: "topics",
+      label: "Temas",
+      children: (
+        <>
+          <style>
+            {`
+              .topic-add-line {
+                position: relative;
+                height: 0;
+                margin-top: 10px;
+                margin-bottom: 10px;
+              }
+              .topic-add-btn {
+                position: absolute;
+                left: 50%;
+                top: 0;
+                transform: translate(-50%, -50%);
+                opacity: 1;
+                font-size: 18px;
+                line-height: 1;
+                padding: 0 !important;
+                height: auto !important;
+                background: transparent;
+              }
+            `}
+          </style>
+          <Form.List name="topics">
+            {(topicFields, { add: addTopic, remove: removeTopic }) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {topicFields.map(({ key: topicKey, name: topicName }) => (
+                  <div key={topicKey}>
+                    {/* Nivel 1 – nombre del tema FUERA del Form.List de subtopics */}
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        alignItems: "center",
+                        marginBottom: 4,
+                      }}
+                    >
+                      <Form.Item
+                        name={[topicName, "name"]}
+                        rules={[{ required: true, message: "" }]}
+                        style={{ marginBottom: 0, flex: 1 }}
+                      >
+                        <Input placeholder="Tema" style={{ fontWeight: 600 }} />
+                      </Form.Item>
+                      <Button
+                        size="small"
+                        danger
+                        icon={<MinusCircleOutlined />}
+                        onClick={() => removeTopic(topicName)}
+                        title="Eliminar tema"
+                      />
+                    </div>
+
+                    {/* Form.List de subtopics */}
+                    <Form.List name={[topicName, "subtopics"]}>
+                      {(subtopicFields, { remove: removeSubtopic }) => (
+                        <div
+                          style={{
+                            marginLeft: 20,
+                            paddingLeft: 12,
+                            borderLeft: "2px solid #e0e0e0",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                          }}
+                        >
+                          {subtopicFields.map(
+                            ({ key: subtopicKey, name: subtopicName }) => (
+                              <div key={subtopicKey}>
+                                {/* Nivel 2 – nombre del subtema FUERA del Form.List de subsubtopics */}
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    gap: 6,
+                                    alignItems: "center",
+                                    marginBottom: 4,
+                                  }}
+                                >
+                                  <Form.Item
+                                    name={[subtopicName, "name"]}
+                                    rules={[{ required: true, message: "" }]}
+                                    style={{ marginBottom: 0, flex: 1 }}
+                                  >
+                                    <Input placeholder="Subtema" />
+                                  </Form.Item>
+                                  <Button
+                                    size="small"
+                                    danger
+                                    icon={<MinusCircleOutlined />}
+                                    onClick={() => removeSubtopic(subtopicName)}
+                                    title="Eliminar subtema"
+                                  />
+                                </div>
+
+                                {/* Form.List de subsubtopics */}
+                                <Form.List
+                                  name={[subtopicName, "subsubtopics"]}
+                                >
+                                  {(
+                                    subsubtopicFields,
+                                    { remove: removeSubsubtopic },
+                                  ) => (
+                                    <div
+                                      style={{
+                                        marginLeft: 20,
+                                        paddingLeft: 12,
+                                        borderLeft: "2px solid #ebebeb",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 4,
+                                      }}
+                                    >
+                                      {subsubtopicFields.map(
+                                        ({ key: subKey, name: subName }) => (
+                                          <div
+                                            key={subKey}
+                                            style={{
+                                              display: "flex",
+                                              gap: 6,
+                                              alignItems: "center",
+                                            }}
+                                          >
+                                            <Form.Item
+                                              name={[subName, "name"]}
+                                              rules={[
+                                                { required: true, message: "" },
+                                              ]}
+                                              style={{
+                                                marginBottom: 0,
+                                                flex: 1,
+                                              }}
+                                            >
+                                              <Input
+                                                placeholder="Subsubtema"
+                                                size="small"
+                                              />
+                                            </Form.Item>
+                                            <Button
+                                              size="small"
+                                              danger
+                                              icon={<MinusCircleOutlined />}
+                                              onClick={() =>
+                                                removeSubsubtopic(subName)
+                                              }
+                                              title="Eliminar subsubtema"
+                                            />
+                                          </div>
+                                        ),
+                                      )}
+                                    </div>
+                                  )}
+                                </Form.List>
+                                <div className="topic-add-line">
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    icon={<PlusOutlined />}
+                                    onClick={() => {
+                                      const current =
+                                        (form.getFieldValue([
+                                          "topics",
+                                          topicName,
+                                          "subtopics",
+                                          subtopicName,
+                                          "subsubtopics",
+                                        ]) as Array<{ name?: string }>) ?? [];
+                                      form.setFieldValue(
+                                        [
+                                          "topics",
+                                          topicName,
+                                          "subtopics",
+                                          subtopicName,
+                                          "subsubtopics",
+                                        ],
+                                        [...current, { name: "" }],
+                                      );
+                                    }}
+                                    className="topic-add-btn"
+                                    style={{ padding: 0, height: "auto" }}
+                                    title="Agregar subsubtema"
+                                  />
+                                </div>
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      )}
+                    </Form.List>
+                    <div className="topic-add-line">
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<PlusOutlined />}
+                        onClick={() => {
+                          const current =
+                            (form.getFieldValue([
+                              "topics",
+                              topicName,
+                              "subtopics",
+                            ]) as Array<{
+                              name?: string;
+                              subsubtopics?: Array<{ name?: string }>;
+                            }>) ?? [];
+                          form.setFieldValue(
+                            ["topics", topicName, "subtopics"],
+                            [...current, { name: "", subsubtopics: [] }],
+                          );
+                        }}
+                        className="topic-add-btn"
+                        style={{ padding: 0, height: "auto" }}
+                        title="Agregar subtema"
+                      />
+                    </div>
+                  </div>
+                ))}
+                <Button
+                  type="dashed"
+                  icon={<PlusOutlined />}
+                  onClick={() => addTopic({ name: "", subtopics: [] })}
+                  block
+                  style={{ marginTop: 8 }}
+                >
+                  + Agregar tema
+                </Button>
+              </div>
+            )}
+          </Form.List>
+        </>
+      ),
+    },
+    {
       key: "alerts",
       label: "Alertas",
       children: contactSection(
@@ -960,6 +1199,7 @@ const ClientModal: React.FC<{
         "Usuarios que recibirán alertas por cada medio.",
       ),
     },
+
     {
       key: "notes",
       label: "Notas",
@@ -982,7 +1222,7 @@ const ClientModal: React.FC<{
       destroyOnHidden
       width={640}
     >
-      <Form form={form} layout="vertical">
+      <Form form={form} layout="vertical" initialValues={formInitialValues}>
         <Tabs items={modalTabs} size="small" destroyInactiveTabPane={false} />
       </Form>
     </Modal>
@@ -1141,12 +1381,20 @@ const SettingsPage: React.FC = () => {
 
   const saveClient = useMutation(
     async (dto: ClientDto) => {
-      if (dto.id) return (await api.put(`/clients/${dto.id}`, dto)).data;
-      return (await api.post("/clients", dto)).data;
+      if (dto.id)
+        return (await api.put(`/clients/${dto.id}`, dto)).data as ClientDto;
+      return (await api.post("/clients", dto)).data as ClientDto;
     },
     {
-      onSuccess: () => {
+      onSuccess: (saved: ClientDto, dto: ClientDto) => {
         message.success("Cliente guardado");
+        // Actualizar caché directamente para evitar estado vacío durante el refetch
+        queryClient.setQueryData<ClientDto[]>(["clients"], (prev = []) => {
+          if (dto.id) {
+            return prev.map((c) => (c.id === dto.id ? saved : c));
+          }
+          return [...prev, saved];
+        });
         queryClient.invalidateQueries(["clients"]);
         setClientModal({ open: false, data: null });
       },

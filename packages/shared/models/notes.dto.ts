@@ -18,13 +18,14 @@ export class NoteDto {
   readonly subtopic?: string;
   readonly subsubtopic?: string;
   readonly origin?: string;
-  readonly department?: string;
   readonly zone?: string;
+  readonly city?: string;
   readonly rate?: string;
   readonly sentiment?: string;
   readonly value?: string;
   readonly audience?: string;
   readonly link?: string;
   readonly source?: string;
+  readonly attachment?: string;
   message?: string;
 }

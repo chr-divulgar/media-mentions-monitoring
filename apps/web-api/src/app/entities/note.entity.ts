@@ -79,4 +79,7 @@ export class Note {
 
   @Column()
   source!: string;
+
+  @Column()
+  attachment!: string;
 }
