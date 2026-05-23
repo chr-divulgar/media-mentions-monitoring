@@ -142,7 +142,6 @@ const NotesPage: React.FC = () => {
     VALOR: "value",
     Audiencia: "audience",
     LINK: "link",
-    FUENTE: "source",
   };
 
   const handleModalOk = async () => {

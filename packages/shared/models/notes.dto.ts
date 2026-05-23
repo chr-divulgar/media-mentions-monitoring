@@ -7,7 +7,6 @@ export class NoteDto {
   readonly program?: string;
   readonly media?: string;
   readonly mediaName?: string;
-  readonly platform?: string;
   readonly clientName?: string;
   readonly startTime?: string;
   readonly duration?: number;
@@ -25,7 +24,6 @@ export class NoteDto {
   readonly value?: string;
   readonly audience?: string;
   readonly link?: string;
-  readonly source?: string;
   readonly attachment?: string;
   message?: string;
 }

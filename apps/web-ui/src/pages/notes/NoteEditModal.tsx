@@ -22,8 +22,6 @@ import {
   LikeOutlined,
   FileTextOutlined,
   LinkOutlined,
-  GlobalOutlined,
-  AppstoreOutlined,
   EnvironmentOutlined,
   DollarOutlined,
   BarChartOutlined,
@@ -702,40 +700,29 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                             form.setFieldValue("attachment", undefined);
                           }}
                         >
-                          <p className="ant-upload-drag-icon">
-                            <InboxOutlined />
-                          </p>
-                          <p className="ant-upload-text">
-                            Arrastra el archivo aquí o haz click para cargar
-                          </p>
-                          <p className="ant-upload-hint">
-                            {selectedAttachment
-                              ? `Archivo cargado: ${selectedAttachment}`
-                              : "No hay archivo seleccionado"}
-                          </p>
+                          <div className={styles.uploadInlineContent}>
+                            <span className={styles.uploadInlineIcon}>
+                              <InboxOutlined />
+                            </span>
+                            <span className={styles.uploadInlineTextGroup}>
+                              <span className={styles.uploadInlineText}>
+                                Arrastra el archivo aquí o haz click para cargar
+                              </span>
+                              <span className={styles.uploadInlineHint}>
+                                {selectedAttachment
+                                  ? `Archivo cargado: ${selectedAttachment}`
+                                  : "No hay archivo seleccionado"}
+                              </span>
+                            </span>
+                          </div>
                         </Upload.Dragger>
                       </Form.Item>
                       <Form.Item
                         name="link"
                         label={renderFieldLabel(<LinkOutlined />, "Link")}
-                      >
-                        <Input placeholder="https://..." />
-                      </Form.Item>
-                      <Form.Item
-                        name="source"
-                        label={renderFieldLabel(<GlobalOutlined />, "Fuente")}
-                      >
-                        <Input placeholder="Fuente o referencia" />
-                      </Form.Item>
-                      <Form.Item
-                        name="platform"
-                        label={renderFieldLabel(
-                          <AppstoreOutlined />,
-                          "Plataforma",
-                        )}
                         className={styles.fullSpan}
                       >
-                        <Input placeholder="Canal, portal o plataforma" />
+                        <Input placeholder="https://..." />
                       </Form.Item>
                     </div>
                   ),
