@@ -1,0 +1,623 @@
+.noteModalWrap {
+  font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.noteModalWrap :global(.ant-modal) {
+  padding-bottom: 0;
+}
+
+.noteModalWrap :global(.ant-modal-content) {
+  background: #141414;
+  color: #f8fafc;
+  border: 1px solid #303030;
+  border-radius: 16px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.noteModalWrap :global(.ant-modal-header) {
+  background: transparent;
+  border-bottom: 1px solid #303030;
+  padding: 24px 24px 16px;
+  margin-bottom: 0;
+}
+
+.noteModalWrap :global(.ant-modal-body) {
+  padding: 20px 24px 12px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+
+.noteModalWrap :global(.ant-modal-footer) {
+  background: #141414;
+  border-top: 1px solid #303030;
+  padding: 16px 24px 24px;
+  margin-top: 0;
+}
+
+.noteModalWrap :global(.ant-modal-close) {
+  color: #cbd5e1;
+}
+
+.modalTitleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modalEyebrow {
+  color: #1677ff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.modalTitle {
+  color: #f8fafc;
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.modalSubtitle {
+  color: #94a3b8;
+  font-size: 0.95rem;
+}
+
+.darkForm {
+  color: #e2e8f0;
+}
+
+.darkForm :global(.ant-form-item) {
+  margin-bottom: 18px;
+}
+
+.darkForm :global(.ant-form-item-label > label) {
+  color: #cbd5e1;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.darkForm :global(.ant-form-item-required::before) {
+  color: #f87171 !important;
+}
+
+.darkForm :global(.ant-input),
+.darkForm :global(.ant-input-affix-wrapper),
+.darkForm :global(.ant-picker),
+.darkForm :global(.ant-select-selector),
+.darkForm :global(.ant-input-disabled),
+.darkForm :global(.ant-input-textarea textarea) {
+  background: #1f1f1f !important;
+  border: 1px solid #3a3a3a !important;
+  color: #f8fafc !important;
+  border-radius: 10px !important;
+  box-shadow: none;
+}
+
+.darkForm :global(.ant-input),
+.darkForm :global(.ant-input-affix-wrapper),
+.darkForm :global(.ant-picker),
+.darkForm :global(.ant-select-selector) {
+  min-height: 46px;
+}
+
+.darkForm :global(.ant-input::placeholder),
+.darkForm :global(.ant-input-textarea textarea::placeholder),
+.darkForm :global(.ant-select-selection-placeholder),
+.darkForm :global(.ant-picker-input > input::placeholder) {
+  color: rgba(255, 255, 255, 0.35) !important;
+}
+
+.darkForm :global(.ant-input:hover),
+.darkForm :global(.ant-input-affix-wrapper:hover),
+.darkForm :global(.ant-picker:hover),
+.darkForm :global(.ant-select:hover .ant-select-selector) {
+  border-color: #4096ff !important;
+}
+
+.darkForm :global(.ant-input:focus),
+.darkForm :global(.ant-input-affix-wrapper-focused),
+.darkForm :global(.ant-picker-focused),
+.darkForm :global(.ant-select-focused .ant-select-selector) {
+  border-color: #1677ff !important;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.25) !important;
+}
+
+.darkForm :global(.ant-form-item-has-error .ant-input),
+.darkForm :global(.ant-form-item-has-error .ant-input-affix-wrapper),
+.darkForm :global(.ant-form-item-has-error .ant-picker),
+.darkForm :global(.ant-form-item-has-error .ant-select-selector) {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12) !important;
+}
+
+.darkForm :global(.ant-form-item-explain-error) {
+  color: #fda4af;
+  font-size: 0.82rem;
+  margin-top: 6px;
+}
+
+.darkForm :global(.ant-radio-group) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.darkForm :global(.ant-radio-button-wrapper) {
+  background: #1f1f1f;
+  color: #cbd5e1;
+  border-color: #3a3a3a;
+  border-radius: 12px !important;
+  height: 42px;
+  line-height: 40px;
+  padding-inline: 16px;
+  box-shadow: none;
+}
+
+.darkForm :global(.ant-radio-button-wrapper:not(:first-child)::before) {
+  display: none;
+}
+
+.darkForm
+  :global(
+    .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled)
+  ) {
+  background: #0958d9;
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.sectionsLayout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.sectionStack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.fullWidthStack {
+  grid-column: 1 / -1;
+}
+
+.sectionCollapse {
+  background: #1a1a1a;
+  border: 1px solid #303030;
+  border-radius: 14px !important;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.sectionCollapse :global(.ant-collapse-item) {
+  border-bottom: none !important;
+}
+
+.sectionCollapse :global(.ant-collapse-header) {
+  align-items: center !important;
+  padding: 18px 20px !important;
+  background: #1f1f1f;
+}
+
+.sectionCollapse :global(.ant-collapse-content) {
+  background: transparent;
+  border-top: 1px solid #303030;
+}
+
+.sectionCollapse :global(.ant-collapse-content-box) {
+  padding: 18px 20px 6px !important;
+}
+
+.sectionTitleWrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sectionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  color: #ffffff;
+  background: #0958d9;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.sectionTitleWrap > span:last-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionTitle {
+  color: #f8fafc;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.sectionDescription {
+  color: #94a3b8;
+  font-size: 0.82rem;
+  margin-top: 2px;
+}
+
+.sectionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.fullSpan {
+  grid-column: 1 / -1;
+}
+
+.fieldLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fieldLabelIcon {
+  color: #69b1ff;
+  font-size: 0.92rem;
+}
+
+.radioGroup {
+  width: 100%;
+}
+
+.attachmentDragger {
+  min-height: 132px;
+}
+
+.attachmentDragger :global(.ant-upload) {
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-radius: 14px !important;
+}
+
+.attachmentDragger :global(.ant-upload-drag-icon) {
+  margin-bottom: 8px !important;
+}
+
+.attachmentDragger :global(.ant-upload-hint) {
+  margin-top: 8px;
+  word-break: break-word;
+}
+
+.attachmentBox {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px dashed #3a3a3a;
+  background: #1f1f1f;
+}
+
+.uploadButton {
+  min-height: 44px;
+  border-radius: 12px;
+  border-color: #3a3a3a;
+  background: #1f1f1f;
+  color: #ffffff;
+}
+
+.uploadButton:hover,
+.uploadButton:focus {
+  color: #ffffff !important;
+  border-color: #4096ff !important;
+  background: #0958d9 !important;
+}
+
+.attachmentMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachmentMetaLabel {
+  color: #94a3b8;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.attachmentName {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  min-height: 48px;
+  border-radius: 14px;
+  background: #141414;
+  color: #e2e8f0;
+  border: 1px solid #303030;
+  word-break: break-word;
+}
+
+.modalFooterBar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.cancelButton,
+.saveButton {
+  min-width: 132px;
+  min-height: 46px;
+  border-radius: 14px;
+  font-weight: 600;
+}
+
+.cancelButton {
+  background: #1f1f1f;
+  border-color: #3a3a3a;
+  color: #e2e8f0;
+}
+
+.cancelButton:hover,
+.cancelButton:focus {
+  color: #fff !important;
+  border-color: #4096ff !important;
+  background: #262626 !important;
+}
+
+.saveButton {
+  background: #1677ff !important;
+  border: 1px solid #1677ff !important;
+  box-shadow: none;
+}
+
+.saveButton:hover,
+.saveButton:focus {
+  filter: brightness(1.06);
+}
+
+:global([data-theme="light"]) .noteModalWrap :global(.ant-modal-content) {
+  background: #ffffff;
+  color: rgba(0, 0, 0, 0.88);
+  border: 1px solid #f0f0f0;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+}
+
+:global([data-theme="light"]) .noteModalWrap :global(.ant-modal-header) {
+  border-bottom-color: #f0f0f0;
+}
+
+:global([data-theme="light"]) .noteModalWrap :global(.ant-modal-footer) {
+  background: #ffffff;
+  border-top-color: #f0f0f0;
+}
+
+:global([data-theme="light"]) .noteModalWrap :global(.ant-modal-close) {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+:global([data-theme="light"]) .modalEyebrow {
+  color: #1677ff;
+}
+
+:global([data-theme="light"]) .modalTitle,
+:global([data-theme="light"]) .darkForm,
+:global([data-theme="light"]) .darkForm :global(.ant-form-item-label > label),
+:global([data-theme="light"]) .sectionTitle,
+:global([data-theme="light"]) .attachmentName {
+  color: rgba(0, 0, 0, 0.88);
+}
+
+:global([data-theme="light"]) .modalSubtitle,
+:global([data-theme="light"]) .sectionDescription,
+:global([data-theme="light"]) .attachmentMetaLabel {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+:global([data-theme="light"]) .darkForm :global(.ant-input),
+:global([data-theme="light"]) .darkForm :global(.ant-input-affix-wrapper),
+:global([data-theme="light"]) .darkForm :global(.ant-picker),
+:global([data-theme="light"]) .darkForm :global(.ant-select-selector),
+:global([data-theme="light"]) .darkForm :global(.ant-input-disabled),
+:global([data-theme="light"]) .darkForm :global(.ant-input-textarea textarea) {
+  background: #ffffff !important;
+  border: 1px solid #d9d9d9 !important;
+  color: rgba(0, 0, 0, 0.88) !important;
+  box-shadow: none;
+}
+
+:global([data-theme="light"]) .darkForm :global(.ant-input::placeholder),
+:global([data-theme="light"])
+  .darkForm
+  :global(.ant-input-textarea textarea::placeholder),
+:global([data-theme="light"])
+  .darkForm
+  :global(.ant-select-selection-placeholder),
+:global([data-theme="light"])
+  .darkForm
+  :global(.ant-picker-input > input::placeholder) {
+  color: rgba(0, 0, 0, 0.25) !important;
+}
+
+:global([data-theme="light"]) .darkForm :global(.ant-input:hover),
+:global([data-theme="light"]) .darkForm :global(.ant-input-affix-wrapper:hover),
+:global([data-theme="light"]) .darkForm :global(.ant-picker:hover),
+:global([data-theme="light"])
+  .darkForm
+  :global(.ant-select:hover .ant-select-selector) {
+  border-color: #4096ff !important;
+}
+
+:global([data-theme="light"]) .darkForm :global(.ant-input:focus),
+:global([data-theme="light"])
+  .darkForm
+  :global(.ant-input-affix-wrapper-focused),
+:global([data-theme="light"]) .darkForm :global(.ant-picker-focused),
+:global([data-theme="light"])
+  .darkForm
+  :global(.ant-select-focused .ant-select-selector) {
+  border-color: #1677ff !important;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.2) !important;
+}
+
+:global([data-theme="light"]) .darkForm :global(.ant-form-item-explain-error) {
+  color: #ff4d4f;
+}
+
+:global([data-theme="light"]) .darkForm :global(.ant-radio-button-wrapper) {
+  background: #ffffff;
+  color: rgba(0, 0, 0, 0.88);
+  border-color: #d9d9d9;
+}
+
+:global([data-theme="light"])
+  .darkForm
+  :global(
+    .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled)
+  ) {
+  background: #e6f4ff;
+  border-color: #0958d9;
+  color: #0958d9;
+}
+
+:global([data-theme="light"]) .sectionCollapse {
+  background: #ffffff;
+  border-color: #f0f0f0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+:global([data-theme="light"]) .sectionCollapse :global(.ant-collapse-header) {
+  background: #fafafa;
+}
+
+:global([data-theme="light"]) .sectionCollapse :global(.ant-collapse-content) {
+  border-top-color: #f5f5f5;
+}
+
+:global([data-theme="light"]) .sectionIcon {
+  color: #0958d9;
+  background: #e6f4ff;
+  box-shadow: none;
+}
+
+:global([data-theme="light"]) .fieldLabelIcon {
+  color: #1677ff;
+}
+
+:global([data-theme="light"]) .attachmentDragger :global(.ant-upload) {
+  background: #ffffff;
+  border-color: #91caff;
+}
+
+:global([data-theme="light"]) .attachmentBox {
+  border-color: #91caff;
+  background: #fafcff;
+}
+
+:global([data-theme="light"]) .uploadButton {
+  border-color: #91caff;
+  background: #ffffff;
+  color: #0958d9;
+}
+
+:global([data-theme="light"]) .uploadButton:hover,
+:global([data-theme="light"]) .uploadButton:focus {
+  color: #0958d9 !important;
+  border-color: #4096ff !important;
+  background: #e6f4ff !important;
+}
+
+:global([data-theme="light"]) .attachmentName {
+  background: #ffffff;
+  border-color: #f0f0f0;
+}
+
+:global([data-theme="light"]) .cancelButton {
+  background: #ffffff;
+  border-color: #d9d9d9;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+:global([data-theme="light"]) .cancelButton:hover,
+:global([data-theme="light"]) .cancelButton:focus {
+  color: #0958d9 !important;
+  border-color: #4096ff !important;
+  background: #ffffff !important;
+}
+
+:global([data-theme="light"]) .saveButton {
+  background: #1677ff !important;
+  border: 1px solid #1677ff !important;
+  box-shadow: none;
+}
+
+@media (max-width: 1024px) {
+  .sectionsLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .fullWidthStack {
+    grid-column: auto;
+  }
+
+  .sectionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .fullSpan {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .noteModalWrap :global(.ant-modal) {
+    max-width: calc(100vw - 12px);
+    margin: 6px auto;
+  }
+
+  .noteModalWrap :global(.ant-modal-header) {
+    padding: 18px 18px 12px;
+  }
+
+  .noteModalWrap :global(.ant-modal-body) {
+    padding: 14px 18px 6px;
+    max-height: calc(100vh - 170px);
+  }
+
+  .noteModalWrap :global(.ant-modal-footer) {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    padding: 12px 18px 18px;
+    backdrop-filter: blur(14px);
+  }
+
+  .modalFooterBar {
+    flex-direction: column-reverse;
+  }
+
+  .cancelButton,
+  .saveButton,
+  .uploadButton {
+    width: 100%;
+  }
+
+  .modalTitle {
+    font-size: 1.2rem;
+  }
+
+  .sectionCollapse :global(.ant-collapse-header) {
+    padding: 16px !important;
+  }
+
+  .sectionCollapse :global(.ant-collapse-content-box) {
+    padding: 14px 16px 4px !important;
+  }
+}
