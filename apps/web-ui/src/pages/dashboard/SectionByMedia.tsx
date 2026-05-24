@@ -212,10 +212,10 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
                   lineHeight: 1,
                 }}
               >
-                {group.media +
-                  " " +
+                {(group.media == "Televisión" ? "TV" : group.media) +
+                  "-" +
                   group.items.reduce((sum, item) => sum + item.totalNotes, 0) +
-                  " not."}
+                  " Not."}
               </div>
 
               <div
