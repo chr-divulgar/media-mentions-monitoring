@@ -4,6 +4,7 @@ import {
   Form,
   Input,
   DatePicker,
+  TimePicker,
   Select,
   Radio,
   Upload,
@@ -69,6 +70,20 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
 }) => {
   const [form] = Form.useForm();
   const selectedMedia = Form.useWatch("media", form) as string | undefined;
+  const selectedDate = Form.useWatch("date", form) as dayjs.Dayjs | undefined;
+  const selectedStartTime = Form.useWatch("startTime", form) as
+    | dayjs.Dayjs
+    | undefined;
+  const selectedProgram = Form.useWatch("program", form) as string | undefined;
+  const selectedIndex = Form.useWatch("index", form) as string | undefined;
+  const selectedRate = Form.useWatch("rate", form) as
+    | string
+    | number
+    | undefined;
+  const selectedDuration = Form.useWatch("duration", form) as
+    | string
+    | number
+    | undefined;
   const selectedAttachment = Form.useWatch("attachment", form) as
     | string
     | undefined;
@@ -108,6 +123,27 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
       return res.data as ClientWithTopics[];
     },
     { staleTime: 5 * 60 * 1000 },
+  );
+
+  const selectedDateText = React.useMemo(() => {
+    if (!selectedDate?.isValid()) return undefined;
+    return selectedDate.format("YYYY-MM-DD");
+  }, [selectedDate]);
+
+  const { data: notesByDate = [] } = useQuery<NoteDto[]>(
+    ["notes-by-date-media", selectedDateText, selectedMedia],
+    async () => {
+      if (!selectedDateText) return [];
+      const res = await api.post("/notes/list", {
+        startDate: selectedDateText,
+        endDate: selectedDateText,
+      });
+      return (res.data ?? []) as NoteDto[];
+    },
+    {
+      enabled: !!selectedDateText && !!selectedMedia,
+      staleTime: 30 * 1000,
+    },
   );
 
   const selectedClient = React.useMemo(
@@ -162,6 +198,33 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
   const disableSubsubtopic =
     !selectedSubtopicName || subsubtopicOptions.length === 0;
 
+  const toMinutes = React.useCallback((value?: string): number => {
+    if (!value || !/^\d{2}:\d{2}$/.test(value)) return -1;
+    const [hoursText, minutesText] = value.split(":");
+    const hours = Number(hoursText);
+    const minutes = Number(minutesText);
+    if (
+      Number.isNaN(hours) ||
+      Number.isNaN(minutes) ||
+      hours < 0 ||
+      hours > 23 ||
+      minutes < 0 ||
+      minutes > 59
+    ) {
+      return -1;
+    }
+    return hours * 60 + minutes;
+  }, []);
+
+  const toPositiveNumber = React.useCallback(
+    (value: unknown): number | null => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) return null;
+      return numeric;
+    },
+    [],
+  );
+
   const normalizeMedia = React.useCallback((value?: string) => {
     return (value ?? "")
       .toLowerCase()
@@ -197,6 +260,195 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
     [getExpectedExtension],
   );
 
+  const isRadioOrTelevision = React.useMemo(() => {
+    const normalized = normalizeMedia(selectedMedia);
+    return (
+      normalized.includes("radio") ||
+      normalized.includes("television") ||
+      normalized.includes("tv")
+    );
+  }, [selectedMedia, normalizeMedia]);
+
+  const selectedPlatform = React.useMemo(
+    () => platforms.find((platform) => platform.name === selectedMediaName),
+    [platforms, selectedMediaName],
+  );
+
+  const selectedDayType = React.useMemo(() => {
+    if (!selectedDate?.isValid()) return undefined;
+    const dayNumber = selectedDate.day();
+    if (dayNumber === 0) return "sunday";
+    if (dayNumber === 6) return "saturday";
+    return "weekday";
+  }, [selectedDate]);
+
+  const selectedStartTimeText = React.useMemo(() => {
+    if (!selectedStartTime) return undefined;
+    return selectedStartTime.format("HH:mm");
+  }, [selectedStartTime]);
+
+  const attachmentExtension = React.useMemo(() => {
+    const fallback = getExpectedExtension(selectedMedia);
+    if (!selectedAttachment) return fallback;
+    const extensionMatch = /\.([a-zA-Z0-9]+)$/.exec(selectedAttachment);
+    return extensionMatch?.[1]?.toLowerCase() ?? fallback;
+  }, [selectedAttachment, selectedMedia, getExpectedExtension]);
+
+  const daySlots = React.useMemo(() => {
+    if (!selectedPlatform || !selectedDayType) return [];
+    return [...(selectedPlatform.slots ?? [])]
+      .filter((slot) => slot.day === selectedDayType)
+      .sort((a, b) => a.start.localeCompare(b.start));
+  }, [selectedPlatform, selectedDayType]);
+
+  const closestSlotIndex = React.useMemo(() => {
+    if (!daySlots.length || !selectedStartTimeText) return -1;
+
+    const currentMinutes = toMinutes(selectedStartTimeText);
+    if (currentMinutes < 0) return -1;
+
+    let bestIndex = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    daySlots.forEach((slot, index) => {
+      const start = toMinutes(slot.start);
+      const end = toMinutes(slot.end);
+      if (start < 0 || end < 0) return;
+
+      const isWithin =
+        end === 1439
+          ? currentMinutes >= start && currentMinutes <= end
+          : currentMinutes >= start && currentMinutes < end;
+
+      const distance = isWithin
+        ? 0
+        : Math.min(
+            Math.abs(currentMinutes - start),
+            Math.abs(currentMinutes - end),
+          );
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+
+    return bestIndex;
+  }, [daySlots, selectedStartTimeText, toMinutes]);
+
+  const programOptions = React.useMemo(() => {
+    if (closestSlotIndex < 0 || !daySlots.length) return [];
+
+    const candidateIndexes = [
+      closestSlotIndex - 1,
+      closestSlotIndex,
+      closestSlotIndex + 1,
+    ].filter((index) => index >= 0 && index < daySlots.length);
+
+    return candidateIndexes.map((index) => {
+      const slot = daySlots[index];
+      const slotLabel = `${slot.start} - ${slot.end} - (${slot.label ?? ""})`;
+      return {
+        value: slotLabel,
+        label: slotLabel,
+        slot,
+      };
+    });
+  }, [closestSlotIndex, daySlots]);
+
+  const programSlotMap = React.useMemo(
+    () => new Map(programOptions.map((item) => [item.value, item.slot])),
+    [programOptions],
+  );
+
+  const closestProgramValue = React.useMemo(() => {
+    if (!programOptions.length) return undefined;
+    const middleIndex = Math.min(1, programOptions.length - 1);
+    return programOptions[middleIndex]?.value;
+  }, [programOptions]);
+
+  const hasProgramContext =
+    !!selectedDayType && !!selectedStartTimeText && programOptions.length > 0;
+
+  const effectiveProgramValue = React.useMemo(() => {
+    if (!hasProgramContext) return undefined;
+    const optionExists = programOptions.some(
+      (option) => option.value === selectedProgram,
+    );
+    if (optionExists) return selectedProgram;
+    return closestProgramValue ?? programOptions[0]?.value;
+  }, [hasProgramContext, programOptions, selectedProgram, closestProgramValue]);
+
+  const selectedProgramSlot = React.useMemo(() => {
+    if (!effectiveProgramValue) return undefined;
+    return programSlotMap.get(effectiveProgramValue);
+  }, [programSlotMap, effectiveProgramValue]);
+
+  const composedAudioLabel = React.useMemo(() => {
+    const resolvedIndex =
+      selectedIndex && selectedIndex.trim().length > 0 ? selectedIndex : "##";
+    if (!selectedProgramSlot?.audioLabel) return undefined;
+    return `NOTA_${resolvedIndex}${selectedProgramSlot.audioLabel}.${attachmentExtension}`;
+  }, [selectedIndex, selectedProgramSlot, attachmentExtension]);
+
+  const canSelectTime =
+    !!selectedMedia && !!selectedDate && selectedDate.isValid();
+
+  const getFileDurationInSeconds = React.useCallback(
+    (file: File, media?: string): Promise<number | undefined> => {
+      const expectedExtension = getExpectedExtension(media);
+      if (expectedExtension !== "mp3" && expectedExtension !== "mp4") {
+        return Promise.resolve(undefined);
+      }
+
+      return new Promise((resolve) => {
+        const objectUrl = URL.createObjectURL(file);
+        const element = document.createElement(
+          expectedExtension === "mp4" ? "video" : "audio",
+        );
+
+        element.preload = "metadata";
+        element.onloadedmetadata = () => {
+          const duration = Number(element.duration);
+          URL.revokeObjectURL(objectUrl);
+          if (!Number.isFinite(duration) || duration <= 0) {
+            resolve(undefined);
+            return;
+          }
+          resolve(Math.max(1, Math.round(duration)));
+        };
+
+        element.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(undefined);
+        };
+
+        element.src = objectUrl;
+      });
+    },
+    [getExpectedExtension],
+  );
+
+  const nextIndex = React.useMemo(() => {
+    if (!selectedDateText || !selectedMedia) return undefined;
+
+    const normalizedSelectedMedia = normalizeMedia(selectedMedia);
+    const maxIndex = notesByDate
+      .filter(
+        (current) =>
+          current.date === selectedDateText &&
+          normalizeMedia(current.media) === normalizedSelectedMedia &&
+          current.id !== note?.id,
+      )
+      .reduce((acc, current) => {
+        const match = /\d+/.exec(current.index ?? "");
+        const parsed = Number(match?.[0] ?? 0);
+        return Number.isFinite(parsed) && parsed > acc ? parsed : acc;
+      }, 0);
+
+    return String(maxIndex + 1).padStart(2, "0");
+  }, [selectedDateText, selectedMedia, notesByDate, normalizeMedia, note?.id]);
+
   const renderFieldLabel = React.useCallback(
     (icon: React.ReactNode, text: string) => (
       <span className={styles.fieldLabel}>
@@ -222,15 +474,25 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
 
   React.useEffect(() => {
     if (note) {
+      let startTimeValue: dayjs.Dayjs | undefined;
+      if (note.startTime) {
+        const normalizedStartTime = /^\d{2}:\d{2}$/.test(note.startTime)
+          ? `2000-01-01T${note.startTime}:00`
+          : note.startTime;
+        startTimeValue = dayjs(normalizedStartTime);
+      }
+
       form.setFieldsValue({
         ...note,
         date: note.date ? dayjs(note.date) : dayjs(),
+        startTime: startTimeValue,
         origin: note.origin ?? "Directa",
         sentiment: note.sentiment ?? "Neutra",
       });
     } else {
       form.setFieldsValue({
         date: dayjs(),
+        media: "radio",
         origin: "Directa",
         sentiment: "Neutra",
       });
@@ -240,6 +502,15 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
   React.useEffect(() => {
     if (!selectedMedia) {
       form.setFieldValue("mediaName", undefined);
+      form.setFieldsValue({
+        startTime: undefined,
+        audioLabel: undefined,
+        rate: undefined,
+        audience: undefined,
+        value: undefined,
+        duration: undefined,
+        index: undefined,
+      });
       return;
     }
 
@@ -273,15 +544,121 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
       return;
     }
 
-    const selectedPlatform = platforms.find(
-      (platform) => platform.name === selectedMediaName,
-    );
-
     form.setFieldsValue({
       zone: selectedPlatform?.zone ?? undefined,
       city: selectedPlatform?.city ?? undefined,
     });
-  }, [selectedMediaName, platforms, form]);
+  }, [selectedMediaName, selectedPlatform, form]);
+
+  React.useEffect(() => {
+    if (!selectedPlatform) {
+      form.setFieldsValue({
+        program: undefined,
+        audioLabel: undefined,
+        rate: undefined,
+        audience: undefined,
+        value: undefined,
+        duration: undefined,
+      });
+      return;
+    }
+
+    if (!isRadioOrTelevision) {
+      form.setFieldsValue({
+        audioLabel: undefined,
+        rate:
+          selectedPlatform.rate == null
+            ? undefined
+            : String(selectedPlatform.rate),
+        audience:
+          selectedPlatform.audience == null
+            ? undefined
+            : String(selectedPlatform.audience),
+        value: undefined,
+        duration: undefined,
+      });
+    }
+  }, [selectedPlatform, isRadioOrTelevision, form]);
+
+  React.useEffect(() => {
+    if (!isRadioOrTelevision || !selectedPlatform) {
+      return;
+    }
+
+    if (!hasProgramContext) {
+      form.setFieldsValue({
+        program: undefined,
+        audioLabel: undefined,
+        rate: undefined,
+        audience: undefined,
+        value: undefined,
+      });
+      return;
+    }
+
+    if (effectiveProgramValue && effectiveProgramValue !== selectedProgram) {
+      form.setFieldValue("program", effectiveProgramValue);
+    }
+
+    form.setFieldsValue({
+      audioLabel: composedAudioLabel,
+      rate:
+        selectedProgramSlot?.rate == null
+          ? undefined
+          : String(selectedProgramSlot.rate),
+      audience:
+        selectedProgramSlot?.audience == null
+          ? undefined
+          : String(selectedProgramSlot.audience),
+    });
+  }, [
+    isRadioOrTelevision,
+    selectedPlatform,
+    hasProgramContext,
+    selectedProgram,
+    effectiveProgramValue,
+    composedAudioLabel,
+    selectedProgramSlot,
+    form,
+  ]);
+
+  React.useEffect(() => {
+    if (!isRadioOrTelevision) {
+      return;
+    }
+
+    const rateNumber = toPositiveNumber(selectedRate);
+    const durationNumber = toPositiveNumber(selectedDuration);
+    if (rateNumber == null || durationNumber == null) {
+      form.setFieldValue("value", undefined);
+      return;
+    }
+
+    const computedValue = (rateNumber * durationNumber) / 30;
+    form.setFieldValue("value", String(computedValue));
+  }, [
+    isRadioOrTelevision,
+    selectedRate,
+    selectedDuration,
+    toPositiveNumber,
+    form,
+  ]);
+
+  React.useEffect(() => {
+    if (!isRadioOrTelevision) {
+      form.setFieldValue("index", undefined);
+      return;
+    }
+
+    if (!nextIndex) return;
+
+    const isEditing = !!note?.id;
+    if (isEditing && selectedIndex) {
+      return;
+    }
+
+    form.setFieldValue("index", nextIndex);
+  }, [isRadioOrTelevision, nextIndex, note?.id, selectedIndex, form]);
 
   React.useEffect(() => {
     if (!clients.length) {
@@ -356,9 +733,19 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
 
   const handleOk = () => {
     form.validateFields().then((values) => {
+      const normalizedMedia = normalizeMedia(values.media);
+      const currentIsRadioOrTelevision =
+        normalizedMedia.includes("radio") ||
+        normalizedMedia.includes("television") ||
+        normalizedMedia.includes("tv");
+
       const formatted = {
         ...values,
         date: values.date ? values.date.format("YYYY-MM-DD") : undefined,
+        startTime: values.startTime
+          ? values.startTime.format("HH:mm")
+          : undefined,
+        audioLabel: currentIsRadioOrTelevision ? values.audioLabel : undefined,
       };
       onSave({ ...note, ...formatted });
     });
@@ -421,24 +808,6 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                   children: (
                     <div className={styles.sectionGrid}>
                       <Form.Item
-                        name="date"
-                        label={renderFieldLabel(<CalendarOutlined />, "Fecha")}
-                        tooltip={REQUIRED_FIELD_TOOLTIP}
-                        rules={[
-                          {
-                            required: true,
-                            message: "El campo Fecha es obligatorio",
-                          },
-                        ]}
-                      >
-                        <DatePicker
-                          style={{ width: "100%" }}
-                          format="DD/MM/YYYY"
-                          placeholder="Seleccionar fecha"
-                          allowClear={false}
-                        />
-                      </Form.Item>
-                      <Form.Item
                         name="clientName"
                         label={renderFieldLabel(<TeamOutlined />, "Cliente")}
                       >
@@ -476,6 +845,14 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                             form.setFieldsValue({
                               mediaName: undefined,
                               attachment: undefined,
+                              startTime: undefined,
+                              program: undefined,
+                              audioLabel: undefined,
+                              rate: undefined,
+                              audience: undefined,
+                              value: undefined,
+                              duration: undefined,
+                              index: undefined,
                             })
                           }
                           options={mediaTypes.map((mt) => ({
@@ -484,6 +861,61 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                           }))}
                         />
                       </Form.Item>
+                      <Form.Item
+                        name="date"
+                        label={renderFieldLabel(<CalendarOutlined />, "Fecha")}
+                        tooltip={REQUIRED_FIELD_TOOLTIP}
+                        rules={[
+                          {
+                            required: true,
+                            message: "El campo Fecha es obligatorio",
+                          },
+                        ]}
+                      >
+                        <DatePicker
+                          style={{ width: "100%" }}
+                          format="DD/MM/YYYY"
+                          placeholder="Seleccionar fecha"
+                          allowClear={false}
+                        />
+                      </Form.Item>
+
+                      <Form.Item
+                        name="startTime"
+                        label={renderFieldLabel(
+                          <CalendarOutlined />,
+                          "Hora y minutos",
+                        )}
+                        tooltip={
+                          canSelectTime
+                            ? undefined
+                            : "Selecciona primero medio y fecha"
+                        }
+                        rules={[
+                          {
+                            required: true,
+                            message: "Selecciona la hora de publicación",
+                          },
+                        ]}
+                      >
+                        <TimePicker
+                          style={{ width: "100%" }}
+                          format="HH:mm"
+                          minuteStep={1}
+                          placeholder="Seleccionar hora"
+                          allowClear
+                          disabled={!canSelectTime || !isRadioOrTelevision}
+                          showNow={false}
+                          needConfirm={false}
+                          onChange={(time) => {
+                            form.setFieldsValue({ startTime: time });
+                          }}
+                          onCalendarChange={(time) => {
+                            form.setFieldsValue({ startTime: time });
+                          }}
+                        />
+                      </Form.Item>
+
                       <Form.Item
                         name="mediaName"
                         label={renderFieldLabel(
@@ -528,6 +960,15 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                         )}
                       >
                         <Input disabled placeholder="Ciudad" />
+                      </Form.Item>
+                      <Form.Item
+                        name="value"
+                        label={renderFieldLabel(<DollarOutlined />, "Valor")}
+                      >
+                        <Input
+                          placeholder="Valor estimado"
+                          disabled={isRadioOrTelevision}
+                        />
                       </Form.Item>
                     </div>
                   ),
@@ -683,7 +1124,7 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                           maxCount={1}
                           accept={getAcceptByMedia(selectedMedia)}
                           showUploadList={false}
-                          beforeUpload={(file) => {
+                          beforeUpload={async (file) => {
                             if (
                               !isAttachmentAllowed(file.name, selectedMedia)
                             ) {
@@ -693,11 +1134,27 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                               return Upload.LIST_IGNORE;
                             }
 
+                            if (isRadioOrTelevision) {
+                              const seconds = await getFileDurationInSeconds(
+                                file,
+                                selectedMedia,
+                              );
+                              form.setFieldValue("duration", seconds);
+                              if (!seconds) {
+                                message.warning(
+                                  "No se pudo calcular la duración del archivo.",
+                                );
+                              }
+                            }
+
                             form.setFieldValue("attachment", file.name);
                             return false;
                           }}
                           onRemove={() => {
-                            form.setFieldValue("attachment", undefined);
+                            form.setFieldsValue({
+                              attachment: undefined,
+                              duration: undefined,
+                            });
                           }}
                         >
                           <div className={styles.uploadInlineContent}>
@@ -717,43 +1174,91 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                           </div>
                         </Upload.Dragger>
                       </Form.Item>
+                      {isRadioOrTelevision && (
+                        <>
+                          <Form.Item
+                            name="duration"
+                            label={renderFieldLabel(
+                              <PlayCircleOutlined />,
+                              "Segundos",
+                            )}
+                          >
+                            <Input
+                              disabled
+                              placeholder="Duración en segundos"
+                            />
+                          </Form.Item>
+                          <Form.Item
+                            name="index"
+                            label={renderFieldLabel(
+                              <FileTextOutlined />,
+                              "NOTA ##",
+                            )}
+                            rules={[
+                              {
+                                required: true,
+                                message: "No se pudo calcular el consecutivo",
+                              },
+                            ]}
+                          >
+                            <Input disabled placeholder="01" />
+                          </Form.Item>
+                        </>
+                      )}
                       <Form.Item
-                        name="link"
-                        label={renderFieldLabel(<LinkOutlined />, "Link")}
+                        name="program"
+                        label={renderFieldLabel(
+                          <PlayCircleOutlined />,
+                          "Programa",
+                        )}
                         className={styles.fullSpan}
+                        rules={
+                          isRadioOrTelevision
+                            ? [
+                                {
+                                  required: true,
+                                  message: "Selecciona una franja",
+                                },
+                              ]
+                            : undefined
+                        }
                       >
-                        <Input placeholder="https://..." />
+                        {isRadioOrTelevision ? (
+                          <Select
+                            placeholder="Selecciona franja"
+                            options={programOptions.map((option) => ({
+                              value: option.value,
+                              label: option.label,
+                            }))}
+                            disabled={!programOptions.length}
+                          />
+                        ) : (
+                          <Input placeholder="Nombre del programa" />
+                        )}
                       </Form.Item>
-                    </div>
-                  ),
-                },
-              ]}
-            />
-
-            <Collapse
-              className={styles.sectionCollapse}
-              defaultActiveKey={["metrics"]}
-              items={[
-                {
-                  key: "metrics",
-                  label: renderSectionLabel(
-                    <EnvironmentOutlined />,
-                    "Métricas",
-                    "Variables de valoración.",
-                  ),
-                  children: (
-                    <div className={styles.sectionGrid}>
-                      <Form.Item
-                        name="value"
-                        label={renderFieldLabel(<DollarOutlined />, "Valor")}
-                      >
-                        <Input placeholder="Valor estimado" />
-                      </Form.Item>
+                      {isRadioOrTelevision && (
+                        <Form.Item
+                          name="audioLabel"
+                          label={renderFieldLabel(
+                            <FileTextOutlined />,
+                            "Audio label",
+                          )}
+                          className={styles.fullSpan}
+                        >
+                          <Input
+                            disabled
+                            placeholder="NOTA_##_AUDIO_LABEL.ext"
+                          />
+                        </Form.Item>
+                      )}
                       <Form.Item
                         name="rate"
                         label={renderFieldLabel(<DollarOutlined />, "Tarifa")}
                       >
-                        <Input placeholder="Tarifa" />
+                        <Input
+                          placeholder="Tarifa"
+                          disabled={isRadioOrTelevision}
+                        />
                       </Form.Item>
                       <Form.Item
                         name="audience"
@@ -762,16 +1267,17 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                           "Audiencia",
                         )}
                       >
-                        <Input placeholder="Audiencia alcanzada" />
+                        <Input
+                          placeholder="Audiencia alcanzada"
+                          disabled={isRadioOrTelevision}
+                        />
                       </Form.Item>
                       <Form.Item
-                        name="program"
-                        label={renderFieldLabel(
-                          <PlayCircleOutlined />,
-                          "Programa",
-                        )}
+                        name="link"
+                        label={renderFieldLabel(<LinkOutlined />, "Link")}
+                        className={styles.fullSpan}
                       >
-                        <Input placeholder="Nombre del programa" />
+                        <Input placeholder="https://..." />
                       </Form.Item>
                     </div>
                   ),

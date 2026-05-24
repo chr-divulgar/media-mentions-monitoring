@@ -144,6 +144,60 @@ const NotesPage: React.FC = () => {
     LINK: "link",
   };
 
+  const normalizeWithSingleSeparator = (
+    value: string,
+    separator: "," | ".",
+  ): string => {
+    const parts = value.split(separator);
+    if (parts.length === 2 && parts[1].length <= 2) {
+      return value.replace(separator, ".");
+    }
+    return value.split(separator).join("");
+  };
+
+  const normalizeNumericText = (text: string): string => {
+    const compact = text.replace(/\s+/g, "");
+    const hasComma = compact.includes(",");
+    const hasDot = compact.includes(".");
+
+    if (hasComma && hasDot) {
+      const lastComma = compact.lastIndexOf(",");
+      const lastDot = compact.lastIndexOf(".");
+      const decimalSep = lastComma > lastDot ? "," : ".";
+      const thousandSep = decimalSep === "," ? "." : ",";
+      return compact.split(thousandSep).join("").replace(decimalSep, ".");
+    }
+
+    if (hasComma) {
+      return normalizeWithSingleSeparator(compact, ",");
+    }
+
+    if (hasDot) {
+      return normalizeWithSingleSeparator(compact, ".");
+    }
+
+    return compact;
+  };
+
+  const toTruncatedInteger = (
+    input: string | number | null | undefined,
+  ): string | number | null | undefined => {
+    if (input === null || input === undefined || input === "") return input;
+
+    if (typeof input === "number") {
+      return Math.trunc(input);
+    }
+
+    const text = input.trim();
+    if (!text) return text;
+
+    const normalized = normalizeNumericText(text);
+
+    const numeric = Number(normalized);
+    if (!Number.isFinite(numeric)) return input;
+    return Math.trunc(numeric);
+  };
+
   const handleModalOk = async () => {
     if (!workbookRef.current) return;
     setLoading(true);
@@ -191,6 +245,10 @@ const NotesPage: React.FC = () => {
             if (cell && cell.l && cell.l.Target) {
               value = cell.l.Target;
             }
+          }
+
+          if (key === "rate" || key === "audience") {
+            value = toTruncatedInteger(value);
           }
 
           note[key] = value;
