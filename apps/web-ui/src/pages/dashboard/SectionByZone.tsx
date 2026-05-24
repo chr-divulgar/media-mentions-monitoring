@@ -19,23 +19,25 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
   dateRange,
   sectionByZone: { tableByZone },
 }) => {
-  const barData = tableByZone.flatMap((row) => [
-    {
-      zone: toTitleCase(row.zone),
-      sentiment: NoteSentiment.NEGATIVO,
-      value: Number(row[NoteSentiment.NEGATIVO]),
-    },
-    {
-      zone: toTitleCase(row.zone),
-      sentiment: NoteSentiment.NEUTRO,
-      value: Number(row[NoteSentiment.NEUTRO]),
-    },
-    {
-      zone: toTitleCase(row.zone),
-      sentiment: NoteSentiment.POSITIVO,
-      value: Number(row[NoteSentiment.POSITIVO]),
-    },
-  ]);
+  const barData = tableByZone
+    .filter((row) => row.zone?.toLowerCase() !== "internacional")
+    .flatMap((row) => [
+      {
+        zone: toTitleCase(row.zone),
+        sentiment: NoteSentiment.NEGATIVO,
+        value: Number(row[NoteSentiment.NEGATIVO]),
+      },
+      {
+        zone: toTitleCase(row.zone),
+        sentiment: NoteSentiment.NEUTRO,
+        value: Number(row[NoteSentiment.NEUTRO]),
+      },
+      {
+        zone: toTitleCase(row.zone),
+        sentiment: NoteSentiment.POSITIVO,
+        value: Number(row[NoteSentiment.POSITIVO]),
+      },
+    ]);
 
   const areaData = tableByZone.map((row) => ({
     zone: toTitleCase(row.zone),
@@ -83,23 +85,11 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
         encode: { x: "zone", y: "audience" },
         scale: { y: { key: "right" } },
         style: {
-          fill: "#1890ff",
-          fillOpacity: 0.1,
+          fill: "#bfbfbf",
           stroke: "transparent",
           lineWidth: 0,
         },
-        axis: {
-          y: { title: "Audiencia", position: "right" },
-        },
-        labels: [
-          {
-            text: "audience",
-            fill: "#1890ff",
-            fontSize: 11,
-            dy: -6,
-            dx: 6,
-          },
-        ],
+
         legend: false,
         tooltip: (datum: { zone: string; audience: number }) => ({
           name: "Audiencia",
@@ -130,9 +120,7 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
             dy: -12,
           },
         ],
-        axis: {
-          y: { title: "Publicaciones", position: "left" },
-        },
+
         legend: { color: { title: false } },
       },
     ],

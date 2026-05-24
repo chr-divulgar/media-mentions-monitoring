@@ -67,7 +67,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
   const sentimentColorMap: Record<string, string> = {
     negativa: "#ff4d4f",
     neutra: "#8c8c8c",
-    positiva: "#52c41a",
+    positiva: "#00b050",
   };
   const getSentimentTextColor = (column: string) =>
     sentimentColorMap[column.toLowerCase()];
@@ -113,7 +113,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
           <span
             style={{
               color: "#fff",
-              fontSize: 36,
+              fontSize: 24,
               fontWeight: 700,
               lineHeight: 1,
             }}
@@ -238,7 +238,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
             padding: "8px 6px",
           }}
         >
-          <div style={{ marginTop: 6, lineHeight: 1.25 }}>
+          <div style={{ fontWeight: "bold", marginTop: 6, lineHeight: 1.25 }}>
             Publicaciones Indirectas
           </div>
           <div style={{ fontSize: 24, fontWeight: "bold", lineHeight: 1 }}>
@@ -272,7 +272,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                fontSize: 16,
+                fontSize: 12,
                 lineHeight: 1,
                 color: "#4d4d4d",
               }}

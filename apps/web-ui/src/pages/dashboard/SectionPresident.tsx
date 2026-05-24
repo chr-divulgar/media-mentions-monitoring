@@ -4,11 +4,11 @@ import { NoteSentiment, NoteSentimentColor } from "@repo/shared";
 import { DASHBOARD_THEME } from "./DashboardTheme";
 import type { SectionPresidentProps } from "./types";
 
-const COLOR_TOTAL_NACIONAL = "#1890ff";
-const COLOR_TOTAL_LOCAL = "#faad14";
+const COLOR_TOTAL_NACIONAL = "#084dbc";
+const COLOR_TOTAL_LOCAL = "#ffc000";
 
-const SERIES_TOTAL_NACIONAL = "Total Nacional";
-const SERIES_TOTAL_LOCAL = "Total Local";
+const SERIES_TOTAL_NACIONAL = "Total Nacionales";
+const SERIES_TOTAL_LOCAL = "Total Regionales";
 
 const colorDomain = [
   NoteSentiment.NEGATIVO,

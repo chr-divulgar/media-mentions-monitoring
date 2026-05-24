@@ -73,8 +73,7 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
         encode: { x: "topic", y: "audience" },
         scale: { y: { key: "right" } },
         style: {
-          fill: "#1890ff",
-          fillOpacity: 0.1,
+          fill: "#bfbfbf",
           stroke: "transparent",
           lineWidth: 0,
         },
@@ -86,16 +85,11 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
             text: (datum: { topic: string; audience: number }) => {
               return Number(datum.audience).toLocaleString("es-CO");
             },
-            fill: "#1890ff",
+
             fontSize: 12,
             dx: 20,
             textAlign: "left",
             textBaseline: "bottom",
-            background: {
-              fill: "#fff",
-              stroke: "#1890ff",
-              radius: 4,
-            },
           },
         ],
         legend: { color: { title: false } },

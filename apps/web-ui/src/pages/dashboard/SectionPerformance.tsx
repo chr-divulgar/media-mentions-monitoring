@@ -42,12 +42,19 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
   performanceData,
 }) => {
   const { resultsByPeriod } = performanceData;
+  const chartPeriods = React.useMemo(
+    () => [...resultsByPeriod].reverse(),
+    [resultsByPeriod],
+  );
   const tablesByPeriod =
     performanceData.tablesByPeriod ?? performanceData.tablesPeriod ?? [];
+  const displayedTables = [...tablesByPeriod].slice(0, 3).reverse();
+  const gridColumns = 2;
+  const gridRows = Math.max(1, Math.ceil(displayedTables.length / gridColumns));
   const ymax = Math.max(
     ...resultsByPeriod.map((p) => p.tableData?.[0]?.totalNotes ?? 0),
   );
-  const barData = resultsByPeriod.flatMap((periodItem) => {
+  const barData = chartPeriods.flatMap((periodItem) => {
     const row = Array.isArray(periodItem.tableData)
       ? periodItem.tableData[0]
       : periodItem.tableData;
@@ -128,7 +135,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
       },
       {
         type: "line" as const,
-        data: resultsByPeriod.map((periodItem) => ({
+        data: chartPeriods.map((periodItem) => ({
           range: formatDateRange(periodItem.startDate, periodItem.endDate),
           value: periodItem.tableData?.[0]?.totalNotes ?? 0,
         })),
@@ -205,9 +212,11 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
+          gridTemplateRows: `repeat(${gridRows}, auto)`,
+          gridAutoFlow: "column",
         }}
       >
-        {tablesByPeriod.map((periodTable, index) => {
+        {displayedTables.map((periodTable, index) => {
           const rangeLabel = formatDateRange(
             periodTable.startDate,
             periodTable.endDate,

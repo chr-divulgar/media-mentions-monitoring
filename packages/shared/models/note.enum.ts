@@ -12,5 +12,5 @@ export enum NoteSentiment {
 export enum NoteSentimentColor {
   NEGATIVO = "#ff4d4f",
   NEUTRO = "#8c8c8c",
-  POSITIVO = "#52c41a",
+  POSITIVO = "#00b050",
 }

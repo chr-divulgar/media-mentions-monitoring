@@ -18,6 +18,14 @@ const colorRange = [
 
 const MAX_ITEMS_PER_MEDIA = 6;
 const FIXED_CHART_HEIGHT = 200;
+const MEDIA_ORDER = ["television", "radio", "prensa", "internet"];
+
+const normalizeMediaKey = (value: string) =>
+  value
+    .toLocaleLowerCase("es-CO")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 
 const toTitleCase = (value: string) =>
   value
@@ -36,13 +44,29 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
 }) => {
   if (!tableByMedia || tableByMedia.length === 0) return null;
 
+  const orderedTableByMedia = [...tableByMedia]
+    .filter((group) => {
+      const key = normalizeMediaKey(group.media ?? "");
+      return key !== "redes sociales" && key !== "redes";
+    })
+    .sort((a, b) => {
+      const indexA = MEDIA_ORDER.indexOf(normalizeMediaKey(a.media ?? ""));
+      const indexB = MEDIA_ORDER.indexOf(normalizeMediaKey(b.media ?? ""));
+
+      const rankA = indexA === -1 ? Number.MAX_SAFE_INTEGER : indexA;
+      const rankB = indexB === -1 ? Number.MAX_SAFE_INTEGER : indexB;
+      return rankA - rankB;
+    });
+
+  if (orderedTableByMedia.length === 0) return null;
+
   const sectionWidth = Number(DASHBOARD_THEME.sectionContainer.width) || 960;
   const sectionPadding = 24 * 2;
   const chartGap = 16;
-  const totalGaps = Math.max(tableByMedia.length - 1, 0) * chartGap;
+  const totalGaps = Math.max(orderedTableByMedia.length - 1, 0) * chartGap;
   const chartWidth = Math.max(
     120,
-    (sectionWidth - sectionPadding - totalGaps) / tableByMedia.length,
+    (sectionWidth - sectionPadding - totalGaps) / orderedTableByMedia.length,
   );
 
   return (
@@ -109,7 +133,7 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
           alignContent: "flex-start",
         }}
       >
-        {tableByMedia.map((group) => {
+        {orderedTableByMedia.map((group) => {
           const topItems = group.items.slice(0, MAX_ITEMS_PER_MEDIA);
 
           const barData = topItems.flatMap((item) => [
@@ -188,17 +212,10 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
                   lineHeight: 1,
                 }}
               >
-                {group.media}
-              </div>
-              <div
-                style={{
-                  ...DASHBOARD_THEME.titleStyle,
-                  fontSize: 24,
-                  lineHeight: 1,
-                }}
-              >
-                {group.items.reduce((sum, item) => sum + item.totalNotes, 0) +
-                  " notas"}
+                {group.media +
+                  " " +
+                  group.items.reduce((sum, item) => sum + item.totalNotes, 0) +
+                  " not."}
               </div>
 
               <div
