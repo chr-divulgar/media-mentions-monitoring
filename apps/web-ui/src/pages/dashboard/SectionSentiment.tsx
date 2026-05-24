@@ -78,7 +78,7 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
           lineWidth: 0,
         },
         axis: {
-          y: { title: "Audiencia", position: "right" },
+          y: { position: "right" },
         },
         labels: [
           {
@@ -162,7 +162,7 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
           },
         ],
         axis: {
-          y: { title: "Menciones", position: "left" },
+          y: { position: "left" },
         },
         legend: { color: { title: false } },
       },
@@ -246,6 +246,7 @@ const SectionSentiment: React.FC<SectionSentimentProps> = ({
               borderCollapse: "collapse",
               color: "#4d4d4d",
               lineHeight: 1,
+              fontSize: 12,
             }}
           >
             <thead>

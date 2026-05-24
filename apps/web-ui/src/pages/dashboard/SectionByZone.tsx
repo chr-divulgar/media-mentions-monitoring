@@ -39,10 +39,12 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
       },
     ]);
 
-  const areaData = tableByZone.map((row) => ({
-    zone: toTitleCase(row.zone),
-    audience: Number(row.audience ?? 0),
-  }));
+  const areaData = tableByZone
+    .filter((row) => row.zone?.toLowerCase() !== "internacional")
+    .map((row) => ({
+      zone: toTitleCase(row.zone),
+      audience: Number(row.audience ?? 0),
+    }));
 
   const totalPublicaciones = tableByZone.reduce(
     (acc, row) => acc + Number(row.totalNotes ?? 0),
@@ -89,7 +91,9 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
           stroke: "transparent",
           lineWidth: 0,
         },
-
+        axis: {
+          y: { position: "right" },
+        },
         legend: false,
         tooltip: (datum: { zone: string; audience: number }) => ({
           name: "Audiencia",
