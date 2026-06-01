@@ -63,6 +63,17 @@ async function bootstrap() {
   const globalPrefix = '';
   app.setGlobalPrefix(globalPrefix);
   const port = configService.get<number>('BACK_PORT') || 3000;
+  app.getHttpAdapter().getInstance().addHook(
+    'onSend',
+    async (_request: unknown, reply: { getHeader: (h: string) => unknown; header: (h: string, v: string) => void }, payload: unknown) => {
+      const ct = reply.getHeader('content-type');
+      if (ct && String(ct).startsWith('text/html')) {
+        reply.header('Cross-Origin-Opener-Policy', 'unsafe-none');
+      }
+      return payload;
+    },
+  );
+
   await app.listen(port, '0.0.0.0');
 
   Logger.log(

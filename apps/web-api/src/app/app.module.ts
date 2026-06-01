@@ -11,6 +11,7 @@ import { Alert, Note, Platform, Transcription } from './entities';
 import { NotesModule } from './notes/notes.module';
 import { FirebaseAdminModule } from './firebase/firebase-admin.module';
 import { ClientsModule } from './clients/clients.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ClientsModule } from './clients/clients.module';
       inject: [ConfigService],
     }),
     FirebaseAdminModule,
+    AuthModule,
     AudioModule,
     AlertsModule,
     NotesModule,

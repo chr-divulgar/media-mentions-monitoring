@@ -27,6 +27,9 @@ export default defineConfig(() => {
     server: {
       port,
       host: "localhost",
+      headers: {
+        "Cross-Origin-Opener-Policy": "unsafe-none",
+      },
     },
     preview: {
       port,

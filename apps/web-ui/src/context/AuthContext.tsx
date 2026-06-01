@@ -7,8 +7,7 @@ import React, {
   useMemo,
 } from "react";
 import { User as FirebaseUser } from "firebase/auth";
-import { auth, db } from "../config/firebase";
-import { doc, getDoc, setDoc, Timestamp } from "firebase/firestore";
+import { auth } from "../config/firebase";
 
 export interface AuthUser {
   uid: string;
@@ -34,36 +33,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [loading, setLoading] = useState(true);
 
   const resolveUser = async (firebaseUser: FirebaseUser) => {
-    const userDocRef = doc(db, "users", firebaseUser.uid);
-    const userDocSnap = await getDoc(userDocRef);
-
-    if (userDocSnap.exists()) {
-      const userData = userDocSnap.data();
-      setUser({
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        displayName: firebaseUser.displayName,
-        photoURL: firebaseUser.photoURL,
-        role: userData.role || "initial",
-      });
-    } else {
-      // Primer login: crear documento en Firestore con rol por defecto
-      await setDoc(userDocRef, {
-        email: firebaseUser.email,
-        name: firebaseUser.displayName || firebaseUser.email,
-        photoURL: firebaseUser.photoURL || null,
-        role: "initial",
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-      });
-      setUser({
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        displayName: firebaseUser.displayName,
-        photoURL: firebaseUser.photoURL,
-        role: "initial",
-      });
-    }
+    const idToken = await firebaseUser.getIdToken();
+    const apiBase = import.meta.env.VITE_API_LOCAL ?? "";
+    const response = await fetch(`${apiBase}/auth/profile`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!response.ok) throw new Error("Failed to fetch user profile");
+    const { role } = await response.json();
+    setUser({
+      uid: firebaseUser.uid,
+      email: firebaseUser.email,
+      displayName: firebaseUser.displayName,
+      photoURL: firebaseUser.photoURL,
+      role: role ?? "initial",
+    });
   };
 
   useEffect(() => {
@@ -77,7 +60,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           }
         } catch (error) {
           console.error("Error fetching user role:", error);
-          setUser(null);
+          setUser(
+            firebaseUser
+              ? {
+                  uid: firebaseUser.uid,
+                  email: firebaseUser.email,
+                  displayName: firebaseUser.displayName,
+                  photoURL: firebaseUser.photoURL,
+                  role: "initial",
+                }
+              : null,
+          );
         } finally {
           setLoading(false);
         }
