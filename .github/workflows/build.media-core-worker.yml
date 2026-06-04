@@ -1,0 +1,41 @@
+name: Build media-core-worker
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'apps/media-core-worker/**'
+      - 'docs/requirements-tracking/**'
+      - '.github/workflows/build.media-core-worker.yml'
+  pull_request:
+    paths:
+      - 'apps/media-core-worker/**'
+      - 'docs/requirements-tracking/**'
+      - '.github/workflows/build.media-core-worker.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        working-directory: apps/media-core-worker
+        run: dotnet restore MediaOpsCore.sln
+
+      - name: Build
+        working-directory: apps/media-core-worker
+        run: dotnet build MediaOpsCore.sln -c Release --no-restore
+
+      - name: Test
+        working-directory: apps/media-core-worker
+        run: dotnet test MediaOpsCore.sln -c Release --no-build

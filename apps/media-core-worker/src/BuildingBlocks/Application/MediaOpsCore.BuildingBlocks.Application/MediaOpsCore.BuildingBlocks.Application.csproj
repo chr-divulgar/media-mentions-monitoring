@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MediaOpsCore.BuildingBlocks.Application</AssemblyName>
+    <RootNamespace>MediaOpsCore.BuildingBlocks.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Domain\MediaOpsCore.BuildingBlocks.Domain\MediaOpsCore.BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+</Project>

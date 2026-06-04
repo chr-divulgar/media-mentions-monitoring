@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MediaOpsCore.Modules.Segmentation.Application</AssemblyName>
+    <RootNamespace>MediaOpsCore.Modules.Segmentation.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Segmentation.Domain\Segmentation.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Application\MediaOpsCore.BuildingBlocks.Application\MediaOpsCore.BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

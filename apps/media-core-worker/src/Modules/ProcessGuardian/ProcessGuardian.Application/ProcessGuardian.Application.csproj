@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MediaOpsCore.Modules.ProcessGuardian.Application</AssemblyName>
+    <RootNamespace>MediaOpsCore.Modules.ProcessGuardian.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessGuardian.Domain\ProcessGuardian.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Application\MediaOpsCore.BuildingBlocks.Application\MediaOpsCore.BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

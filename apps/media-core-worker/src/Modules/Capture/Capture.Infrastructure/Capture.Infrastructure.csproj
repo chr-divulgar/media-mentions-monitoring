@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MediaOpsCore.Modules.Capture.Infrastructure</AssemblyName>
+    <RootNamespace>MediaOpsCore.Modules.Capture.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Capture.Application\Capture.Application.csproj" />
+    <ProjectReference Include="..\Capture.Domain\Capture.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Infrastructure\MediaOpsCore.BuildingBlocks.Infrastructure\MediaOpsCore.BuildingBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

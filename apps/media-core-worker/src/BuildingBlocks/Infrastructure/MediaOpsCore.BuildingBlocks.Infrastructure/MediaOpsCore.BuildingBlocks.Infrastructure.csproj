@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MediaOpsCore.BuildingBlocks.Infrastructure</AssemblyName>
+    <RootNamespace>MediaOpsCore.BuildingBlocks.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Application\MediaOpsCore.BuildingBlocks.Application\MediaOpsCore.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\Domain\MediaOpsCore.BuildingBlocks.Domain\MediaOpsCore.BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+</Project>

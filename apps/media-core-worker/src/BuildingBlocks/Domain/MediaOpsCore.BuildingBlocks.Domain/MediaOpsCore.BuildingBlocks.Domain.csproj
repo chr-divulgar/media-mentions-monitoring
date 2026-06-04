@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MediaOpsCore.BuildingBlocks.Domain</AssemblyName>
+    <RootNamespace>MediaOpsCore.BuildingBlocks.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>
