@@ -21,4 +21,8 @@ public sealed class OperationsWorkerOptions
     public TimeSpan CaptureCommandTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
     public int SegmentDurationSeconds { get; set; } = 30;
+
+    public TimeSpan ProcessGuardianTimeout { get; set; } = TimeSpan.FromMinutes(30);
+
+    public TimeSpan ProcessGuardianRestartCommandTimeout { get; set; } = TimeSpan.FromSeconds(20);
 }

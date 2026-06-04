@@ -6,5 +6,7 @@ public interface IOperationalMetrics
 
     void RecordSegmentationRun(int segmentsGenerated, double pipelineLagSeconds);
 
+    void RecordProcessGuardianRun(int processOrphanCount, int reconciliationActions);
+
     void RecordCriticalError(string operationName);
 }

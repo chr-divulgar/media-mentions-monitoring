@@ -10,6 +10,8 @@ public sealed class MeterOperationalMetrics : IOperationalMetrics, IDisposable
     private readonly Counter<int> captureSuccesses;
     private readonly Counter<int> captureFailures;
     private readonly Counter<int> segmentsGenerated;
+    private readonly Counter<int> processOrphanCount;
+    private readonly Counter<int> reconciliationActions;
     private readonly Counter<int> criticalErrors;
     private readonly Histogram<double> pipelineLagSeconds;
 
@@ -19,6 +21,8 @@ public sealed class MeterOperationalMetrics : IOperationalMetrics, IDisposable
         captureSuccesses = meter.CreateCounter<int>("capture_success_count");
         captureFailures = meter.CreateCounter<int>("capture_failure_count");
         segmentsGenerated = meter.CreateCounter<int>("segment_generation_count");
+        processOrphanCount = meter.CreateCounter<int>("process_orphan_count");
+        reconciliationActions = meter.CreateCounter<int>("reconciliation_actions");
         criticalErrors = meter.CreateCounter<int>("critical_error_count");
         pipelineLagSeconds = meter.CreateHistogram<double>("pipeline_lag_seconds");
     }
@@ -34,6 +38,12 @@ public sealed class MeterOperationalMetrics : IOperationalMetrics, IDisposable
     {
         this.segmentsGenerated.Add(segmentsGenerated);
         this.pipelineLagSeconds.Record(pipelineLagSeconds);
+    }
+
+    public void RecordProcessGuardianRun(int processOrphanCount, int reconciliationActions)
+    {
+        this.processOrphanCount.Add(processOrphanCount);
+        this.reconciliationActions.Add(reconciliationActions);
     }
 
     public void RecordCriticalError(string operationName)

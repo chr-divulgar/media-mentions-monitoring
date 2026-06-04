@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 
 using MediaOpsCore.BuildingBlocks.Application;
 using MediaOpsCore.Modules.Capture.Application;
+using MediaOpsCore.Modules.ProcessGuardian.Application;
 using MediaOpsCore.Modules.Segmentation.Application;
 using MediaOpsCore.Workers.Operations;
 
@@ -16,6 +17,8 @@ builder.Services.AddSingleton<IProcessRunner, LocalSystemProcessRunner>();
 builder.Services.AddSingleton<IOperationalMetrics, MeterOperationalMetrics>();
 builder.Services.AddSingleton<ICaptureSourceProvider, StaticCaptureSourceProvider>();
 builder.Services.AddSingleton<ISegmentCursorRepository, InMemorySegmentCursorRepository>();
+builder.Services.AddSingleton<IProcessStateRepository, InMemoryProcessStateRepository>();
+builder.Services.AddSingleton<IProcessInspector, LocalProcessInspector>();
 builder.Services.AddSingleton(new ContinuousCaptureOptions
 {
 	ToolExecutable = options.CaptureToolExecutable,
@@ -27,8 +30,16 @@ builder.Services.AddSingleton(new IncrementalSegmentationOptions
 	TenantId = options.TenantId,
 	SegmentDurationSeconds = options.SegmentDurationSeconds
 });
+builder.Services.AddSingleton(new ProcessGuardianOptions
+{
+	RestartTimeout = options.ProcessGuardianTimeout,
+	RestartCommandTimeout = options.ProcessGuardianRestartCommandTimeout
+});
 builder.Services.AddSingleton<IContinuousCaptureUseCase, ContinuousCaptureUseCase>();
 builder.Services.AddSingleton<IIncrementalSegmentationUseCase, IncrementalSegmentationUseCase>();
+builder.Services.AddSingleton<IProcessMonitorUseCase, ProcessMonitorUseCase>();
+builder.Services.AddSingleton<IReconcileInactiveUseCase, ReconcileInactiveUseCase>();
+builder.Services.AddSingleton<IChunkProcessMonitorUseCase, ChunkProcessMonitorUseCase>();
 builder.Services.AddHostedService<OperationsWorker>();
 
 var host = builder.Build();
