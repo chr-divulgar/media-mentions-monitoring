@@ -25,4 +25,20 @@ public sealed class OperationsWorkerOptions
     public TimeSpan ProcessGuardianTimeout { get; set; } = TimeSpan.FromMinutes(30);
 
     public TimeSpan ProcessGuardianRestartCommandTimeout { get; set; } = TimeSpan.FromSeconds(20);
+
+    public bool EnableStageDatabaseMirror { get; set; }
+
+    public string StageDatabaseBaseUrl { get; set; } = string.Empty;
+
+    public string StageDatabaseRootPath { get; set; } = "monitoringArtifacts";
+
+    public string? StageDatabaseAuthToken { get; set; }
+
+    public string StageFilesystemRootPath { get; set; } = "stage-evidence";
+
+    public bool EnableShadowMode { get; set; } = true;
+
+    public string LegacySnapshotFilePath { get; set; } = "stage/legacy-snapshot.json";
+
+    public double ShadowParityMinimumPercent { get; set; } = 95;
 }
