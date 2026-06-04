@@ -7,6 +7,7 @@ namespace MediaOpsCore.Workers.Operations;
 public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 {
     private readonly OperationsWorkerOptions options;
+    private readonly string ingestionScopeId;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -14,11 +15,12 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         PropertyNameCaseInsensitive = true
     };
 
-    private sealed record CaptureSourceFileItem(string SourceId, string TenantId, string Platform, string Media, string StreamUrl);
+    private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl);
 
     public StaticCaptureSourceProvider(OperationsWorkerOptions options)
     {
         this.options = options;
+        ingestionScopeId = string.IsNullOrWhiteSpace(options.IngestionScopeId) ? "global-ingestion" : options.IngestionScopeId;
     }
 
     public Task<IReadOnlyList<CaptureSource>> ListActiveSourcesAsync(CancellationToken cancellationToken = default)
@@ -38,7 +40,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
             if (items is not null && items.Count > 0)
             {
                 return items
-                    .Select(item => new CaptureSource(item.SourceId, item.TenantId, item.Platform, item.Media, item.StreamUrl))
+                    .Select(item => new CaptureSource(item.SourceId, ingestionScopeId, item.Platform, item.Media, item.StreamUrl))
                     .ToArray();
             }
         }
@@ -47,7 +49,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         {
             new CaptureSource(
                 options.CaptureSourceId,
-                options.TenantId,
+                ingestionScopeId,
                 options.CapturePlatform,
                 options.CaptureMedia,
                 options.CaptureStreamUrl)

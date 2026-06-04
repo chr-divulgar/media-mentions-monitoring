@@ -15,7 +15,7 @@ public sealed class ContinuousCaptureUseCaseTests
         var useCase = new ContinuousCaptureUseCase(
             new StaticCaptureSourceProvider(new OperationsWorkerOptions
             {
-                TenantId = "tenant-a",
+                IngestionScopeId = "global-ingestion",
                 CaptureSourceId = "source-a",
                 CapturePlatform = "radio",
                 CaptureMedia = "news",
@@ -31,7 +31,7 @@ public sealed class ContinuousCaptureUseCaseTests
             });
 
         var result = await useCase.ExecuteAsync();
-        var artifacts = await repository.ListByTenantAsync("tenant-a");
+    var artifacts = await repository.ListByTenantAsync("global-ingestion");
 
         Assert.Equal(1, result.Attempts);
         Assert.Equal(1, result.Succeeded);
