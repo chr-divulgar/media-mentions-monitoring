@@ -9,7 +9,7 @@ using MediaOpsCore.Workers.Operations;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-var options = new OperationsWorkerOptions();
+var options = OperationsWorkerOptionsLoader.Load();
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
