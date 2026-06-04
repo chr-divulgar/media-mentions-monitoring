@@ -6,6 +6,7 @@
       "dotnetRunMessages": true,
       "launchBrowser": false,
       "applicationUrl": "http://localhost:5000",
+      "workingDirectory": "C:\\Users\\juanb\\Documents\\chr-divulgar\\media-mentions-monitoring\\apps\\media-core-worker",
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development"
       }
@@ -15,6 +16,7 @@
       "dotnetRunMessages": true,
       "launchBrowser": false,
       "applicationUrl": "http://localhost:5000",
+      "workingDirectory": "C:\\Users\\juanb\\Documents\\chr-divulgar\\media-mentions-monitoring\\apps\\media-core-worker",
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Release"
       }
