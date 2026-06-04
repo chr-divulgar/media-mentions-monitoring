@@ -48,11 +48,15 @@ public sealed class OperationsWorkerOptions
 
     public int CanaryPlatformMinPercent { get; set; } = 10;
 
-    public int CanaryPlatformMaxPercent { get; set; } = 20;
+    public int CanaryPlatformMaxPercent { get; set; } = 100;
 
     public int CanaryIncreaseStepPercent { get; set; } = 5;
 
     public int CanaryDecreaseStepPercent { get; set; } = 5;
+
+    public string CanaryPromotionMilestones { get; set; } = "20,50,100";
+
+    public int CanaryStableCyclesForPromotion { get; set; } = 3;
 
     public string? CanaryPlatformAllowList { get; set; }
 
