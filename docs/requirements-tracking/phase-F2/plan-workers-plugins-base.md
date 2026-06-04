@@ -8,7 +8,7 @@ Fecha de propuesta: 2026-06-03
    - Contratos `IIngestionPluginResolver`, `IPluginProfileProvider`, `PluginExecutionPlan`, `PluginProfile`, `IngestionMode`.
    - Provider inicial `JsonPluginProfileProvider`.
    - Resolver `MediaPlatformIngestionPluginResolver` con prioridad `media+platform` y fallback `media`.
-   - Fallback legacy opcional para no romper operacion actual (`EnableLegacyCaptureProfileFallback`).
+   - Sin fallback legacy: fuentes sin perfil de plugin quedan fuera de ejecucion.
 2. Etapa 2 base implementada en codigo:
    - `ContinuousIngestionWorker` y `DiscreteIngestionWorker` como hosted services separados.
    - `ContinuousIngestionOrchestrator` y `DiscreteIngestionOrchestrator`.
@@ -23,6 +23,10 @@ Fecha de propuesta: 2026-06-03
    - Architecture tests: 4/4 OK.
 5. Pendiente de este plan:
    - Etapa 4 (plugins discretos funcionales web/social/pdf y scheduler operativo).
+6. Politica de evidencia operativa vigente:
+   - Persistencia local por defecto en ruta de archivos (`stageFilesystemRootPath`).
+   - Si existe al menos un adapter de DB configurado y el upsert es exitoso, la evidencia local se elimina para evitar crecimiento indefinido.
+   - Si no hay DB configurada o falla la persistencia en DB, la evidencia local se conserva como respaldo operativo.
 
 ## Requirement IDs impactados
 
@@ -118,6 +122,7 @@ Evidencia minima:
 
 1. Unit tests de orquestacion por worker.
 2. Pruebas de humo en stage para ambos workers en la misma maquina.
+3. Verificacion de ciclo de evidencia: local solo como buffer y limpieza tras confirmacion de persistencia en DB.
 
 ## Etapa 3 - Migracion de radio y TV al worker continuo
 
