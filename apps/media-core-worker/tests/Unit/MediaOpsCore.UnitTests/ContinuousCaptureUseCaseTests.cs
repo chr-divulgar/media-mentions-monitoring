@@ -15,7 +15,6 @@ public sealed class ContinuousCaptureUseCaseTests
         var useCase = new ContinuousCaptureUseCase(
             new StaticCaptureSourceProvider(new OperationsWorkerOptions
             {
-                IngestionScopeId = "global-ingestion",
                 CaptureSourceId = "source-a",
                 CapturePlatform = "radio",
                 CaptureMedia = "news",

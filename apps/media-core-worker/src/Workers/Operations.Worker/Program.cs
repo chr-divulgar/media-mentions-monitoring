@@ -32,7 +32,6 @@ builder.Services.AddSingleton(new ContinuousCaptureOptions
 });
 builder.Services.AddSingleton(new IncrementalSegmentationOptions
 {
-	TenantId = options.IngestionScopeId,
 	SegmentDurationSeconds = options.SegmentDurationSeconds
 });
 builder.Services.AddSingleton(new ProcessGuardianOptions
@@ -42,7 +41,6 @@ builder.Services.AddSingleton(new ProcessGuardianOptions
 });
 builder.Services.AddSingleton(new FunctionalParityOptions
 {
-	TenantId = options.IngestionScopeId,
 	MinimumParityPercent = options.ShadowParityMinimumPercent
 });
 builder.Services.AddSingleton<IContinuousCaptureUseCase, ContinuousCaptureUseCase>();

@@ -10,9 +10,9 @@ public sealed class FunctionalParityUseCaseTests
     public async Task ExecuteAsync_should_compare_by_collection_and_compute_overall_parity()
     {
         var repository = new InMemoryMonitoringArtifactRepository();
-        await repository.UpsertAsync(new MonitoringArtifact("capture-1", "tenant-a", "source-1", "capture", "{}", new DateTimeOffset(2026, 6, 3, 11, 0, 0, TimeSpan.Zero)));
-        await repository.UpsertAsync(new MonitoringArtifact("capture-2", "tenant-a", "source-1", "capture", "{}", new DateTimeOffset(2026, 6, 3, 11, 1, 0, TimeSpan.Zero)));
-        await repository.UpsertAsync(new MonitoringArtifact("segment-1", "tenant-a", "source-1", "segment", "{}", new DateTimeOffset(2026, 6, 3, 11, 2, 0, TimeSpan.Zero)));
+        await repository.UpsertAsync(new MonitoringArtifact("capture-1", "global-ingestion", "source-1", "capture", "{}", new DateTimeOffset(2026, 6, 3, 11, 0, 0, TimeSpan.Zero)));
+        await repository.UpsertAsync(new MonitoringArtifact("capture-2", "global-ingestion", "source-1", "capture", "{}", new DateTimeOffset(2026, 6, 3, 11, 1, 0, TimeSpan.Zero)));
+        await repository.UpsertAsync(new MonitoringArtifact("segment-1", "global-ingestion", "source-1", "segment", "{}", new DateTimeOffset(2026, 6, 3, 11, 2, 0, TimeSpan.Zero)));
 
         var legacyProvider = new StaticLegacySnapshotProvider(new[]
         {
@@ -25,7 +25,6 @@ public sealed class FunctionalParityUseCaseTests
             legacyProvider,
             new FunctionalParityOptions
             {
-                TenantId = "tenant-a",
                 MinimumParityPercent = 70
             },
             utcNow: () => new DateTimeOffset(2026, 6, 3, 11, 3, 0, TimeSpan.Zero));

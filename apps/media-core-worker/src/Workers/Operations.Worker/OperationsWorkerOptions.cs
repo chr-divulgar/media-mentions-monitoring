@@ -4,10 +4,6 @@ public sealed class OperationsWorkerOptions
 {
     public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(30);
 
-    public string IngestionScopeId { get; set; } = "global-ingestion";
-
-    public string TenantId { get; set; } = "default";
-
     public string CaptureSourceId { get; set; } = "source-default";
 
     public string CapturePlatform { get; set; } = "radio";

@@ -2,6 +2,8 @@ namespace MediaOpsCore.BuildingBlocks.Application;
 
 public sealed class FunctionalParityUseCase : IFunctionalParityUseCase
 {
+    private const string GlobalIngestionScopeId = "global-ingestion";
+
     private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
     private readonly ILegacySnapshotProvider legacySnapshotProvider;
     private readonly FunctionalParityOptions options;
@@ -21,12 +23,7 @@ public sealed class FunctionalParityUseCase : IFunctionalParityUseCase
 
     public async Task<FunctionalParityReport> ExecuteAsync(CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(options.TenantId))
-        {
-            throw new InvalidOperationException("TenantId cannot be empty.");
-        }
-
-        var currentArtifacts = await monitoringArtifactRepository.ListByTenantAsync(options.TenantId, cancellationToken).ConfigureAwait(false);
+        var currentArtifacts = await monitoringArtifactRepository.ListByTenantAsync(GlobalIngestionScopeId, cancellationToken).ConfigureAwait(false);
         var legacySnapshots = await legacySnapshotProvider.GetCollectionSnapshotsAsync(cancellationToken).ConfigureAwait(false);
 
         var currentByCollection = currentArtifacts

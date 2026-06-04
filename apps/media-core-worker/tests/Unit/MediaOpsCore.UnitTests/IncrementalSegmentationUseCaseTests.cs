@@ -15,7 +15,7 @@ public sealed class IncrementalSegmentationUseCaseTests
 
         await repository.UpsertAsync(new MonitoringArtifact(
             "capture-1",
-            "tenant-a",
+            "global-ingestion",
             "source-a",
             "capture",
             "{}",
@@ -23,14 +23,14 @@ public sealed class IncrementalSegmentationUseCaseTests
 
         await repository.UpsertAsync(new MonitoringArtifact(
             "capture-2",
-            "tenant-a",
+            "global-ingestion",
             "source-a",
             "capture",
             "{}",
             new DateTimeOffset(2026, 6, 3, 11, 5, 0, TimeSpan.Zero)));
 
         await cursorRepository.SaveLastProcessedAtAsync(
-            "tenant-a",
+            "global-ingestion",
             new DateTimeOffset(2026, 6, 3, 11, 0, 0, TimeSpan.Zero));
 
         var useCase = new IncrementalSegmentationUseCase(
@@ -38,13 +38,12 @@ public sealed class IncrementalSegmentationUseCaseTests
             cursorRepository,
             new IncrementalSegmentationOptions
             {
-                TenantId = "tenant-a",
                 SegmentDurationSeconds = 30
             },
             utcNow: () => new DateTimeOffset(2026, 6, 3, 11, 6, 0, TimeSpan.Zero));
 
         var result = await useCase.ExecuteAsync();
-        var artifacts = await repository.ListByTenantAsync("tenant-a");
+        var artifacts = await repository.ListByTenantAsync("global-ingestion");
 
         Assert.Equal(2, result.CapturesScanned);
         Assert.Equal(1, result.SegmentsGenerated);

@@ -6,6 +6,8 @@ namespace MediaOpsCore.Modules.Segmentation.Application;
 
 public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUseCase
 {
+    private const string GlobalIngestionScopeId = "global-ingestion";
+
     private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
     private readonly ISegmentCursorRepository segmentCursorRepository;
     private readonly IncrementalSegmentationOptions options;
@@ -25,13 +27,8 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
 
     public async Task<IncrementalSegmentationResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(options.TenantId))
-        {
-            throw new InvalidOperationException("TenantId cannot be empty.");
-        }
-
-        var lastProcessedAt = await segmentCursorRepository.GetLastProcessedAtAsync(options.TenantId, cancellationToken).ConfigureAwait(false);
-        var artifacts = await monitoringArtifactRepository.ListByTenantAsync(options.TenantId, cancellationToken).ConfigureAwait(false);
+        var lastProcessedAt = await segmentCursorRepository.GetLastProcessedAtAsync(GlobalIngestionScopeId, cancellationToken).ConfigureAwait(false);
+        var artifacts = await monitoringArtifactRepository.ListByTenantAsync(GlobalIngestionScopeId, cancellationToken).ConfigureAwait(false);
 
         var captureArtifacts = artifacts
             .Where(artifact => string.Equals(artifact.Kind, "capture", StringComparison.Ordinal))
@@ -70,7 +67,7 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
         if (newestProcessedCapture is not null)
         {
             await segmentCursorRepository
-                .SaveLastProcessedAtAsync(options.TenantId, newestProcessedCapture.Value, cancellationToken)
+                .SaveLastProcessedAtAsync(GlobalIngestionScopeId, newestProcessedCapture.Value, cancellationToken)
                 .ConfigureAwait(false);
         }
 
