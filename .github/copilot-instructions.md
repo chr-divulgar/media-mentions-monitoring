@@ -41,6 +41,17 @@ After changing anything in `packages/shared`, rebuild it first:
 pnpm --filter @repo/shared build
 ```
 
+## Graphify Policy (Mandatory)
+
+After finishing any code changes in this repository, always refresh the project graph before closing the task.
+
+Required behavior:
+
+- Run `/graphify` after code edits are complete.
+- Do not finalize the task until the graph refresh succeeds.
+- If the refresh fails, report the failure and reason in the final status.
+- Confirm `graphify-out/graph.json` and `graphify-out/manifest.json` were updated when those files exist in this repository.
+
 ---
 
 ## Architecture

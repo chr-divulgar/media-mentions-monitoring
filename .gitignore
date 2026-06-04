@@ -21,3 +21,4 @@ audioFiles
 *.nx
 apps/web-api/public/*
 scripts/*.json
+/graphify-out
