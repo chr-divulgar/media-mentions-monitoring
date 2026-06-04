@@ -34,6 +34,14 @@
 - Worker cycle updated to execute parity checks and emit timestamped parity evidence files.
 - Unit tests added for functional parity computation and legacy snapshot loading.
 
+## Week 7 evidence
+
+- Canary source selection implemented for 10-20% platform subsets.
+- Canary tuning policy implemented to increase/decrease rollout percentage based on parity threshold outcomes.
+- Worker cycle updated to persist canary tuning evidence each shadow/canary cycle.
+- Unit tests added for canary source filtering and tuning decisions.
+- Operational runbook and rollback documentation added for canary execution.
+
 ## Week 1 evidence
 
 - `.NET 10` solution scaffold created at `apps/media-core-worker/MediaOpsCore.sln`.
@@ -59,6 +67,8 @@ Weeks 3-4 extend `RQ-001` with the first unified capture and segmentation orches
 Week 5 extends `RQ-007` by implementing continuity controls over external process lifecycle (supervision, reconciliation, orphan control), and supports operational resilience needed for SLA evidence.
 
 Week 6 reinforces `RQ-004` and `RQ-007` by adding stage persistence/evidence outputs and explicit parity comparison workflows required before canary cutover.
+
+Week 7 extends `RQ-007` by introducing controlled canary rollout and operational rollback criteria linked to parity thresholds.
 
 ## Open ambiguities
 
@@ -86,3 +96,7 @@ The ProcessGuardian helper scope is now represented in explicit application use 
 ## Week 6 conclusion
 
 Stage integration and shadow parity comparison are now available in the worker path, with per-collection evidence artifacts written to filesystem. Sustained shadow operation and canary execution remain pending.
+
+## Week 7 conclusion
+
+Canary controls and tuning rules are now integrated in the worker execution path with explicit operational evidence. The next step is extended canary windows and progression to larger traffic percentages under SLO gates.

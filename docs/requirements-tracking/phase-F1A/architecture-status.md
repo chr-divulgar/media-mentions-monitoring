@@ -26,6 +26,10 @@ Week 6 introduces stage-oriented adapters for database mirroring and filesystem 
 
 Shadow execution now emits parity artifacts by collection into stage evidence paths while preserving module boundaries through ports (`ILegacySnapshotProvider`, `IEvidenceFileStore`, `IFunctionalParityUseCase`).
 
+Week 7 adds canary controls at source selection level with configurable 10-20% platform rollout, and introduces a tuning component that adjusts canary percentage according to parity outcomes.
+
+The worker persists canary tuning evidence alongside shadow parity artifacts to support operational decisions and rollback criteria.
+
 ## Decisions recorded
 
 - Use `.NET 10` SDK-style projects with nullable reference types and implicit usings enabled.
@@ -35,4 +39,4 @@ Shadow execution now emits parity artifacts by collection into stage evidence pa
 
 ## Next architectural step
 
-Run sustained shadow windows and prepare canary rollout controls with operational runbook and rollback steps.
+Scale canary window duration and prepare 50% progression criteria with explicit SLO gates and rollback automation hooks.
