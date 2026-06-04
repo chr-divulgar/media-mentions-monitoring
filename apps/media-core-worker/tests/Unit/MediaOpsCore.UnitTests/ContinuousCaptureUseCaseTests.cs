@@ -2,6 +2,7 @@ using MediaOpsCore.BuildingBlocks.Application;
 using MediaOpsCore.BuildingBlocks.Domain;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Workers.Operations;
+using System.Text.Json;
 using Xunit;
 
 namespace MediaOpsCore.UnitTests;
@@ -11,32 +12,61 @@ public sealed class ContinuousCaptureUseCaseTests
     [Fact]
     public async Task ExecuteAsync_should_persist_capture_artifacts_when_process_succeeds()
     {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                sourceId = "source-a",
+                platform = "radio",
+                media = "news",
+                streamUrl = "https://example.com/live"
+            }
+        }));
+
         var repository = new InMemoryMonitoringArtifactRepository();
-        var useCase = new ContinuousCaptureUseCase(
-            new StaticCaptureSourceProvider(new OperationsWorkerOptions
-            {
-                CaptureSourceId = "source-a",
-                CapturePlatform = "radio",
-                CaptureMedia = "news",
-                CaptureStreamUrl = "https://example.com/live"
-            }),
-            new SuccessfulProcessRunner(),
-            repository,
-            new ContinuousCaptureOptions
-            {
-                ToolExecutable = "cmd.exe",
-                ToolArgumentsTemplate = "/c echo capture {url}",
-                CommandTimeout = TimeSpan.FromSeconds(5)
-            });
+        try
+        {
+            var useCase = new ContinuousCaptureUseCase(
+                new StaticCaptureSourceProvider(new OperationsWorkerOptions
+                {
+                    CaptureSourcesFilePath = tempFilePath
+                }),
+                new StaticPluginResolver(),
+                new SuccessfulProcessRunner(),
+                repository);
 
-        var result = await useCase.ExecuteAsync();
-    var artifacts = await repository.ListByTenantAsync("global-ingestion");
+            var result = await useCase.ExecuteAsync();
+            var artifacts = await repository.ListByTenantAsync("global-ingestion");
 
-        Assert.Equal(1, result.Attempts);
-        Assert.Equal(1, result.Succeeded);
-        Assert.Equal(0, result.Failed);
-        Assert.Single(artifacts);
-        Assert.Equal("capture", artifacts[0].Kind);
+            Assert.Equal(1, result.Attempts);
+            Assert.Equal(1, result.Succeeded);
+            Assert.Equal(0, result.Failed);
+            Assert.Single(artifacts);
+            Assert.Equal("capture", artifacts[0].Kind);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
+    private sealed class StaticPluginResolver : IIngestionPluginResolver
+    {
+        public Task<PluginExecutionPlan> ResolveAsync(
+            MediaOpsCore.Modules.Capture.Domain.CaptureSource source,
+            IngestionMode ingestionMode,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PluginExecutionPlan(
+                pluginId: "test-plugin",
+                toolExecutable: "cmd.exe",
+                toolArgumentsTemplate: "/c echo capture {url}",
+                commandTimeout: TimeSpan.FromSeconds(5)));
+        }
     }
 
     private sealed class SuccessfulProcessRunner : IProcessRunner

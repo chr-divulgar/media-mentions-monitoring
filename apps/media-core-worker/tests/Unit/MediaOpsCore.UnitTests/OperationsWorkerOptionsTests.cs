@@ -11,4 +11,12 @@ public sealed class OperationsWorkerOptionsTests
 
         Assert.Equal(TimeSpan.FromSeconds(30), options.HeartbeatInterval);
     }
+
+    [Fact]
+    public void Default_continuous_media_allow_list_should_target_radio_and_video()
+    {
+        var options = new MediaOpsCore.Workers.Operations.OperationsWorkerOptions();
+
+        Assert.Equal("radio,video", options.ContinuousMediaAllowList);
+    }
 }

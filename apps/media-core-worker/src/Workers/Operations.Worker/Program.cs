@@ -17,16 +17,12 @@ builder.Services.AddSingleton<IMonitoringArtifactRepository, StageMirrorMonitori
 builder.Services.AddSingleton<IProcessRunner, LocalSystemProcessRunner>();
 builder.Services.AddSingleton<IOperationalMetrics, MeterOperationalMetrics>();
 builder.Services.AddSingleton<ICaptureSourceProvider, StaticCaptureSourceProvider>();
+builder.Services.AddSingleton<IPluginProfileProvider, JsonPluginProfileProvider>();
+builder.Services.AddSingleton<IIngestionPluginResolver, MediaPlatformIngestionPluginResolver>();
 builder.Services.AddSingleton<ISegmentCursorRepository, InMemorySegmentCursorRepository>();
 builder.Services.AddSingleton<IProcessStateRepository, InMemoryProcessStateRepository>();
 builder.Services.AddSingleton<IProcessInspector, LocalProcessInspector>();
 builder.Services.AddSingleton(new HttpClient());
-builder.Services.AddSingleton(new ContinuousCaptureOptions
-{
-	ToolExecutable = options.CaptureToolExecutable,
-	ToolArgumentsTemplate = options.CaptureToolArgumentsTemplate,
-	CommandTimeout = options.CaptureCommandTimeout
-});
 builder.Services.AddSingleton(new IncrementalSegmentationOptions
 {
 	SegmentDurationSeconds = options.SegmentDurationSeconds
@@ -41,7 +37,10 @@ builder.Services.AddSingleton<IIncrementalSegmentationUseCase, IncrementalSegmen
 builder.Services.AddSingleton<IProcessMonitorUseCase, ProcessMonitorUseCase>();
 builder.Services.AddSingleton<IReconcileInactiveUseCase, ReconcileInactiveUseCase>();
 builder.Services.AddSingleton<IChunkProcessMonitorUseCase, ChunkProcessMonitorUseCase>();
-builder.Services.AddHostedService<OperationsWorker>();
+builder.Services.AddSingleton<IContinuousIngestionOrchestrator, ContinuousIngestionOrchestrator>();
+builder.Services.AddSingleton<IDiscreteIngestionOrchestrator, DiscreteIngestionOrchestrator>();
+builder.Services.AddHostedService<ContinuousIngestionWorker>();
+builder.Services.AddHostedService<DiscreteIngestionWorker>();
 
 var host = builder.Build();
 await host.RunAsync();

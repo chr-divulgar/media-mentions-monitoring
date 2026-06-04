@@ -7,24 +7,26 @@ public sealed class InMemoryProcessStateRepository : IProcessStateRepository
 {
     private readonly object sync = new();
     private readonly Dictionary<string, ProcessState> states = new(StringComparer.Ordinal);
+    private const string DefaultPlatform = "unknown";
+    private const string DefaultMedia = "unknown";
 
-    public InMemoryProcessStateRepository(OperationsWorkerOptions options)
+    public InMemoryProcessStateRepository()
     {
         var now = DateTimeOffset.UtcNow;
         states["capture-main"] = new ProcessState(
-            Platform: options.CapturePlatform,
-            Media: options.CaptureMedia,
+            Platform: DefaultPlatform,
+            Media: DefaultMedia,
             ProcessType: "capture",
             ProcessId: Environment.ProcessId,
             Command: "echo restart capture",
             StartedAtUtc: now.AddMinutes(-1),
             EndedAtUtc: null,
             Status: "Active",
-            SourceFilePath: options.CaptureStreamUrl);
+            SourceFilePath: null);
 
         states["chunk-orphan"] = new ProcessState(
-            Platform: options.CapturePlatform,
-            Media: options.CaptureMedia,
+            Platform: DefaultPlatform,
+            Media: DefaultMedia,
             ProcessType: "chunk",
             ProcessId: Environment.ProcessId,
             Command: "echo restart chunk",

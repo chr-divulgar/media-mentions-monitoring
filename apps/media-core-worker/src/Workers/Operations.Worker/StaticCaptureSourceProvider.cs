@@ -25,34 +25,47 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
     public Task<IReadOnlyList<CaptureSource>> ListActiveSourcesAsync(CancellationToken cancellationToken = default)
     {
         var sources = LoadSources();
-        var filtered = ApplyCanaryFilter(sources);
+        var mediaScoped = ApplyContinuousMediaFilter(sources);
+        var filtered = ApplyCanaryFilter(mediaScoped);
 
         return Task.FromResult<IReadOnlyList<CaptureSource>>(filtered);
     }
 
-    private IReadOnlyList<CaptureSource> LoadSources()
+    private IReadOnlyList<CaptureSource> ApplyContinuousMediaFilter(IReadOnlyList<CaptureSource> sources)
     {
-        if (!string.IsNullOrWhiteSpace(options.CaptureSourcesFilePath) && File.Exists(options.CaptureSourcesFilePath))
+        var allowList = ParseAllowList(options.ContinuousMediaAllowList);
+        if (allowList.Count == 0)
         {
-            var json = File.ReadAllText(options.CaptureSourcesFilePath);
-            var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
-            if (items is not null && items.Count > 0)
-            {
-                return items
-                    .Select(item => new CaptureSource(item.SourceId, GlobalIngestionScopeId, item.Platform, item.Media, item.StreamUrl))
-                    .ToArray();
-            }
+            return sources;
         }
 
-        return new[]
+        return sources
+            .Where(source => allowList.Contains(source.Media))
+            .ToArray();
+    }
+
+    private IReadOnlyList<CaptureSource> LoadSources()
+    {
+        if (string.IsNullOrWhiteSpace(options.CaptureSourcesFilePath))
         {
-            new CaptureSource(
-                options.CaptureSourceId,
-                GlobalIngestionScopeId,
-                options.CapturePlatform,
-                options.CaptureMedia,
-                options.CaptureStreamUrl)
-        };
+            throw new InvalidOperationException("CaptureSourcesFilePath is required.");
+        }
+
+        if (!File.Exists(options.CaptureSourcesFilePath))
+        {
+            throw new FileNotFoundException("Capture sources file not found.", options.CaptureSourcesFilePath);
+        }
+
+        var json = File.ReadAllText(options.CaptureSourcesFilePath);
+        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
+        if (items is null || items.Count == 0)
+        {
+            throw new InvalidOperationException("Capture sources file is empty or invalid.");
+        }
+
+        return items
+            .Select(item => new CaptureSource(item.SourceId, GlobalIngestionScopeId, item.Platform, item.Media, item.StreamUrl))
+            .ToArray();
     }
 
     private IReadOnlyList<CaptureSource> ApplyCanaryFilter(IReadOnlyList<CaptureSource> sources)

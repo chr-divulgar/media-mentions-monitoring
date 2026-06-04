@@ -1,0 +1,29 @@
+[
+  {
+    "pluginId": "radio-default",
+    "media": "radio",
+    "platform": null,
+    "ingestionMode": "continuous",
+    "toolExecutable": "ffmpeg",
+    "toolArgumentsTemplate": "-i {url} -t 30 -f segment out_%03d.mp3",
+    "commandTimeoutSeconds": 30
+  },
+  {
+    "pluginId": "video-default",
+    "media": "video",
+    "platform": null,
+    "ingestionMode": "continuous",
+    "toolExecutable": "ffmpeg",
+    "toolArgumentsTemplate": "-i {url} -t 30 -f segment out_%03d.mp4",
+    "commandTimeoutSeconds": 30
+  },
+  {
+    "pluginId": "youtube-video",
+    "media": "video",
+    "platform": "youtube",
+    "ingestionMode": "continuous",
+    "toolExecutable": "yt-dlp",
+    "toolArgumentsTemplate": "{url}",
+    "commandTimeoutSeconds": 45
+  }
+]

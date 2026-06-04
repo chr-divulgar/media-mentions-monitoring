@@ -7,20 +7,20 @@ namespace MediaOpsCore.Modules.Capture.Application;
 public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
 {
     private readonly ICaptureSourceProvider captureSourceProvider;
+    private readonly IIngestionPluginResolver pluginResolver;
     private readonly IProcessRunner processRunner;
     private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
-    private readonly ContinuousCaptureOptions options;
 
     public ContinuousCaptureUseCase(
         ICaptureSourceProvider captureSourceProvider,
+        IIngestionPluginResolver pluginResolver,
         IProcessRunner processRunner,
-        IMonitoringArtifactRepository monitoringArtifactRepository,
-        ContinuousCaptureOptions options)
+        IMonitoringArtifactRepository monitoringArtifactRepository)
     {
         this.captureSourceProvider = captureSourceProvider;
+        this.pluginResolver = pluginResolver;
         this.processRunner = processRunner;
         this.monitoringArtifactRepository = monitoringArtifactRepository;
-        this.options = options;
     }
 
     public async Task<ContinuousCaptureResult> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -39,7 +39,7 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
 
             try
             {
-                var command = BuildCommand(source);
+                var command = await BuildCommandAsync(source, cancellationToken).ConfigureAwait(false);
                 var execution = await processRunner.RunAsync(command, cancellationToken).ConfigureAwait(false);
 
                 var artifact = BuildArtifact(source, capturedAtUtc, execution);
@@ -65,23 +65,29 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
         return new ContinuousCaptureResult(attempts, succeeded, failed, lastCapturedAtUtc);
     }
 
-    private ProcessCommand BuildCommand(MediaOpsCore.Modules.Capture.Domain.CaptureSource source)
+    private async Task<ProcessCommand> BuildCommandAsync(
+        MediaOpsCore.Modules.Capture.Domain.CaptureSource source,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(options.ToolExecutable))
+        var plan = await pluginResolver
+            .ResolveAsync(source, IngestionMode.Continuous, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(plan.ToolExecutable))
         {
             throw new InvalidOperationException("ToolExecutable cannot be empty.");
         }
 
-        if (string.IsNullOrWhiteSpace(options.ToolArgumentsTemplate))
+        if (string.IsNullOrWhiteSpace(plan.ToolArgumentsTemplate))
         {
             throw new InvalidOperationException("ToolArgumentsTemplate cannot be empty.");
         }
 
-        var expanded = options.ToolArgumentsTemplate.Replace("{url}", source.StreamUrl, StringComparison.Ordinal);
+        var expanded = plan.ToolArgumentsTemplate.Replace("{url}", source.StreamUrl, StringComparison.Ordinal);
         var arguments = expanded
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        return new ProcessCommand(options.ToolExecutable, arguments, timeout: options.CommandTimeout);
+        return new ProcessCommand(plan.ToolExecutable, arguments, timeout: plan.CommandTimeout);
     }
 
     private static MonitoringArtifact BuildArtifact(

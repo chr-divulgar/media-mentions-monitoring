@@ -8,6 +8,43 @@ namespace MediaOpsCore.UnitTests;
 public sealed class StaticCaptureSourceProviderCanaryTests
 {
     [Fact]
+    public async Task ListActiveSourcesAsync_should_filter_to_continuous_media_allow_list()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var payload = new[]
+            {
+                new { sourceId = "s1", platform = "caracol", media = "radio", streamUrl = "https://example.com/r1" },
+                new { sourceId = "s2", platform = "canal-1", media = "video", streamUrl = "https://example.com/v1" },
+                new { sourceId = "s3", platform = "portal-a", media = "internet", streamUrl = "https://example.com/w1" }
+            };
+
+            await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
+
+            var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions
+            {
+                EnableCanaryMode = false,
+                ContinuousMediaAllowList = "radio,video",
+                CaptureSourcesFilePath = tempFilePath
+            });
+
+            var sources = await provider.ListActiveSourcesAsync();
+
+            Assert.Equal(2, sources.Count);
+            Assert.All(sources, source => Assert.Contains(source.Media, new[] { "radio", "video" }));
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ListActiveSourcesAsync_should_select_a_platform_subset_in_canary_mode()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
@@ -16,11 +53,12 @@ public sealed class StaticCaptureSourceProviderCanaryTests
         {
             var payload = new[]
             {
-                new { sourceId = "s1", tenantId = "tenant-a", platform = "caracol", media = "radio", streamUrl = "https://example.com/c1" },
-                new { sourceId = "s2", tenantId = "tenant-a", platform = "rcn", media = "radio", streamUrl = "https://example.com/r1" },
-                new { sourceId = "s3", tenantId = "tenant-a", platform = "blu", media = "radio", streamUrl = "https://example.com/b1" },
-                new { sourceId = "s4", tenantId = "tenant-a", platform = "lafm", media = "radio", streamUrl = "https://example.com/l1" },
-                new { sourceId = "s5", tenantId = "tenant-a", platform = "wradio", media = "radio", streamUrl = "https://example.com/w1" }
+                new { sourceId = "s1", platform = "caracol", media = "radio", streamUrl = "https://example.com/c1" },
+                new { sourceId = "s2", platform = "rcn", media = "radio", streamUrl = "https://example.com/r1" },
+                new { sourceId = "s3", platform = "blu", media = "radio", streamUrl = "https://example.com/b1" },
+                new { sourceId = "s4", platform = "lafm", media = "video", streamUrl = "https://example.com/l1" },
+                new { sourceId = "s5", platform = "wradio", media = "video", streamUrl = "https://example.com/w1" },
+                new { sourceId = "s6", platform = "portal-a", media = "internet", streamUrl = "https://example.com/p1" }
             };
 
             await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
@@ -31,6 +69,7 @@ public sealed class StaticCaptureSourceProviderCanaryTests
                 CanaryPlatformMinPercent = 10,
                 CanaryPlatformMaxPercent = 20,
                 CanaryPlatformPercent = 20,
+                ContinuousMediaAllowList = "radio,video",
                 CaptureSourcesFilePath = tempFilePath
             });
 
@@ -56,8 +95,9 @@ public sealed class StaticCaptureSourceProviderCanaryTests
         {
             var payload = new[]
             {
-                new { sourceId = "s1", tenantId = "tenant-a", platform = "caracol", media = "radio", streamUrl = "https://example.com/c1" },
-                new { sourceId = "s2", tenantId = "tenant-a", platform = "rcn", media = "radio", streamUrl = "https://example.com/r1" }
+                new { sourceId = "s1", platform = "caracol", media = "radio", streamUrl = "https://example.com/c1" },
+                new { sourceId = "s2", platform = "rcn", media = "radio", streamUrl = "https://example.com/r1" },
+                new { sourceId = "s3", platform = "portal-a", media = "internet", streamUrl = "https://example.com/p1" }
             };
 
             await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
@@ -69,6 +109,7 @@ public sealed class StaticCaptureSourceProviderCanaryTests
                 CanaryPlatformMaxPercent = 20,
                 CanaryPlatformPercent = 20,
                 CanaryPlatformAllowList = "rcn",
+                ContinuousMediaAllowList = "radio,video",
                 CaptureSourcesFilePath = tempFilePath
             });
 
