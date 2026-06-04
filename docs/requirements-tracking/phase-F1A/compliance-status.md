@@ -1,5 +1,14 @@
 # Phase 1A Compliance Status
 
+## Week 2 evidence
+
+- Provider-agnostic persistence contract added in `BuildingBlocks.Application`.
+- Canonical monitoring artifact model added in `BuildingBlocks.Domain`.
+- `FirebaseAdapter` added as the initial storage adapter in `BuildingBlocks.Infrastructure`.
+- `SystemProcessRunner` added in `BuildingBlocks.Infrastructure`.
+- Adapter contract test project added for Firebase and process runner compatibility.
+- Weekly tracking docs updated for architecture and compliance status.
+
 ## Week 1 evidence
 
 - `.NET 10` solution scaffold created at `apps/media-core-worker/MediaOpsCore.sln`.
@@ -18,6 +27,8 @@ This week supports the foundation needed for the following requirements:
 
 The scaffold does not claim those requirements as complete. It only creates the technical baseline required to implement them in later weeks.
 
+Week 2 also strengthens portability for `RQ-004` by introducing a provider-agnostic repository port and an initial Firebase adapter, and supports `RQ-007` by adding the process runner abstraction needed for controlled external process execution.
+
 ## Open ambiguities
 
 - `A-001` SLA de alertas
@@ -28,3 +39,7 @@ The scaffold does not claim those requirements as complete. It only creates the 
 ## Week 1 conclusion
 
 Foundation work is in place. Functional evidence for business requirements remains pending.
+
+## Week 2 conclusion
+
+Shared contracts are now in place for persistence and process execution. The next week can start module-specific use cases without changing the dependency direction.

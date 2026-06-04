@@ -1,8 +1,8 @@
 # Phase 1A Architecture Status
 
-## Week 1 baseline
+## Week 2 baseline
 
-The initial scaffold establishes a modular hexagonal layout under `apps/media-core-worker`:
+The worker solution now establishes a modular hexagonal layout under `apps/media-core-worker` and introduces the first shared contracts:
 
 - `BuildingBlocks.Domain`
 - `BuildingBlocks.Application`
@@ -11,6 +11,8 @@ The initial scaffold establishes a modular hexagonal layout under `apps/media-co
 - `Segmentation` module
 - `ProcessGuardian` module
 - `Operations.Worker`
+
+The second week adds the first provider-agnostic persistence port, the process runner port, the initial Firebase adapter, and adapter contract tests.
 
 ## Decisions recorded
 
@@ -21,4 +23,4 @@ The initial scaffold establishes a modular hexagonal layout under `apps/media-co
 
 ## Next architectural step
 
-Add ports, use cases, and adapter registration once the first real capture flow is ported.
+Add module-specific use cases and adapter registration for capture and segmentation once the shared ports are stabilized.

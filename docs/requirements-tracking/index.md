@@ -13,3 +13,9 @@ This index tracks the Phase 1A operational unification work for MediaOpsCore.
 - Establish the layered project structure.
 - Add architecture boundary tests.
 - Add the first CI workflow for build and test.
+
+## Week 2 scope
+
+- Add provider-agnostic persistence contracts and process runner ports.
+- Add the initial Firebase adapter and adapter contract tests.
+- Keep the worker host thin while the first real ports are introduced.
