@@ -6,6 +6,11 @@ This index tracks the Phase 1A operational unification work for MediaOpsCore.
 
 - [Architecture status](phase-F1A/architecture-status.md)
 - [Compliance status](phase-F1A/compliance-status.md)
+- [Week 8 parity closure act](phase-F1A/acta-week8-paridad-funcional.md)
+
+## Phase 2 preparation
+
+- [Week 8 API backlog seed](phase-F2/backlog-week8-api-dotnet10.md)
 
 ## Week 1 scope
 
@@ -43,3 +48,9 @@ This index tracks the Phase 1A operational unification work for MediaOpsCore.
 - Execute canary mode for a 10-20% platform subset.
 - Apply tuning adjustments based on parity differences during shadow/canary cycles.
 - Document operational runbook and rollback procedure for canary execution.
+
+## Week 8 scope
+
+- Scale canary from 20% to 50% and then 100% under parity SLO gates.
+- Record Phase 1A functional parity closure evidence and decision log.
+- Prepare initial backlog for Phase 2 `.NET 10` API host implementation.

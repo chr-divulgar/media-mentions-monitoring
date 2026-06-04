@@ -30,6 +30,10 @@ Week 7 adds canary controls at source selection level with configurable 10-20% p
 
 The worker persists canary tuning evidence alongside shadow parity artifacts to support operational decisions and rollback criteria.
 
+Week 8 extends canary control with staged promotion milestones (20-50-100) gated by sustained parity success cycles, and rollback to the previous milestone when parity drops below threshold.
+
+This keeps rollout policy isolated in the worker adapter layer (`CanaryRolloutTuner`) while preserving module boundaries and use-case orchestration flow.
+
 ## Decisions recorded
 
 - Use `.NET 10` SDK-style projects with nullable reference types and implicit usings enabled.
@@ -39,4 +43,4 @@ The worker persists canary tuning evidence alongside shadow parity artifacts to 
 
 ## Next architectural step
 
-Scale canary window duration and prepare 50% progression criteria with explicit SLO gates and rollback automation hooks.
+Start Phase 2 API host implementation (`Operations.Api.Host`) over existing application use cases without moving business rules out of Domain/Application layers.

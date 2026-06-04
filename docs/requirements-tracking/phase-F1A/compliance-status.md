@@ -42,6 +42,14 @@
 - Unit tests added for canary source filtering and tuning decisions.
 - Operational runbook and rollback documentation added for canary execution.
 
+## Week 8 evidence
+
+- Canary tuning policy extended with staged milestones (20-50-100) and stable-cycle promotion gates.
+- Rollback behavior now returns canary traffic to the previous milestone when parity falls below threshold.
+- Unit tests added for 50%/100% promotion and milestone rollback behavior.
+- Phase 1A parity closure acta recorded with operational decision notes.
+- Phase 2 API backlog seed recorded for next phase handoff.
+
 ## Week 1 evidence
 
 - `.NET 10` solution scaffold created at `apps/media-core-worker/MediaOpsCore.sln`.
@@ -69,6 +77,8 @@ Week 5 extends `RQ-007` by implementing continuity controls over external proces
 Week 6 reinforces `RQ-004` and `RQ-007` by adding stage persistence/evidence outputs and explicit parity comparison workflows required before canary cutover.
 
 Week 7 extends `RQ-007` by introducing controlled canary rollout and operational rollback criteria linked to parity thresholds.
+
+Week 8 extends `RQ-007` with staged canary scale-up gates (50% and 100%) and formalizes the handoff toward `RQ-002` implementation through a Phase 2 API backlog seed.
 
 ## Open ambiguities
 
@@ -100,3 +110,7 @@ Stage integration and shadow parity comparison are now available in the worker p
 ## Week 7 conclusion
 
 Canary controls and tuning rules are now integrated in the worker execution path with explicit operational evidence. The next step is extended canary windows and progression to larger traffic percentages under SLO gates.
+
+## Week 8 conclusion
+
+Canary progression gates for 50% and 100% are now implemented with parity-based rollback behavior, closing the planned technical scope of Phase 1A. Phase 2 API host backlog is prepared for the next implementation cycle.
