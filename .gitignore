@@ -8,6 +8,13 @@ dist-ssr
 .env
 .env.*
 .cache
+.vs
+**/bin/
+**/obj/
+TestResults/
+*.user
+*.suo
+*.userprefs
 server/dist
 public/dist
 audioFiles
