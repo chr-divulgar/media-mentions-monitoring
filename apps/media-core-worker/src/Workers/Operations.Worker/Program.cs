@@ -12,6 +12,7 @@ var builder = Host.CreateApplicationBuilder(args);
 var options = new OperationsWorkerOptions();
 
 builder.Services.AddSingleton(options);
+builder.Services.AddSingleton<CanaryRolloutTuner>();
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IMonitoringArtifactRepository, StageMirrorMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IProcessRunner, LocalSystemProcessRunner>();

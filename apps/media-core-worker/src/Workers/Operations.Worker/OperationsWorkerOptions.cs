@@ -41,4 +41,20 @@ public sealed class OperationsWorkerOptions
     public string LegacySnapshotFilePath { get; set; } = "stage/legacy-snapshot.json";
 
     public double ShadowParityMinimumPercent { get; set; } = 95;
+
+    public bool EnableCanaryMode { get; set; } = true;
+
+    public int CanaryPlatformPercent { get; set; } = 20;
+
+    public int CanaryPlatformMinPercent { get; set; } = 10;
+
+    public int CanaryPlatformMaxPercent { get; set; } = 20;
+
+    public int CanaryIncreaseStepPercent { get; set; } = 5;
+
+    public int CanaryDecreaseStepPercent { get; set; } = 5;
+
+    public string? CanaryPlatformAllowList { get; set; }
+
+    public string CaptureSourcesFilePath { get; set; } = "stage/capture-sources.json";
 }

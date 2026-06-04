@@ -18,6 +18,7 @@ public sealed class OperationsWorker : BackgroundService
     private readonly IChunkProcessMonitorUseCase chunkProcessMonitorUseCase;
     private readonly IFunctionalParityUseCase functionalParityUseCase;
     private readonly IEvidenceFileStore evidenceFileStore;
+    private readonly CanaryRolloutTuner canaryRolloutTuner;
     private readonly IOperationalMetrics operationalMetrics;
 
     public OperationsWorker(
@@ -30,6 +31,7 @@ public sealed class OperationsWorker : BackgroundService
         IChunkProcessMonitorUseCase chunkProcessMonitorUseCase,
         IFunctionalParityUseCase functionalParityUseCase,
         IEvidenceFileStore evidenceFileStore,
+        CanaryRolloutTuner canaryRolloutTuner,
         IOperationalMetrics operationalMetrics)
     {
         this.logger = logger;
@@ -41,6 +43,7 @@ public sealed class OperationsWorker : BackgroundService
         this.chunkProcessMonitorUseCase = chunkProcessMonitorUseCase;
         this.functionalParityUseCase = functionalParityUseCase;
         this.evidenceFileStore = evidenceFileStore;
+        this.canaryRolloutTuner = canaryRolloutTuner;
         this.operationalMetrics = operationalMetrics;
     }
 
@@ -68,6 +71,18 @@ public sealed class OperationsWorker : BackgroundService
                     var parityReport = await functionalParityUseCase.ExecuteAsync(stoppingToken).ConfigureAwait(false);
                     var fileName = $"shadow/parity-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}.json";
                     await evidenceFileStore.WriteJsonAsync(fileName, parityReport, stoppingToken).ConfigureAwait(false);
+
+                    var tuningDecision = canaryRolloutTuner.Apply(parityReport);
+                    var tuningFile = $"shadow/canary-tuning-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}.json";
+                    await evidenceFileStore.WriteJsonAsync(tuningFile, tuningDecision, stoppingToken).ConfigureAwait(false);
+
+                    logger.LogInformation(
+                        "Canary tuning applied. previous_percent={PreviousPercent} current_percent={CurrentPercent} increased={Increased} decreased={Decreased} reason={Reason}.",
+                        tuningDecision.PreviousPercent,
+                        tuningDecision.CurrentPercent,
+                        tuningDecision.Increased,
+                        tuningDecision.Decreased,
+                        tuningDecision.Reason);
 
                     if (!parityReport.MeetsThreshold)
                     {
