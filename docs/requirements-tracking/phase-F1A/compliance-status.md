@@ -26,6 +26,14 @@
 - Metrics extended with `process_orphan_count` and `reconciliation_actions`.
 - Unit tests added for process supervision, inactive reconciliation, and chunk orphan monitoring.
 
+## Week 6 evidence
+
+- Stage integration added with optional database mirror writes in worker repository adapter.
+- Filesystem evidence store added for stage parity artifacts.
+- Shadow mode parity use case added to compare legacy vs current counts by collection.
+- Worker cycle updated to execute parity checks and emit timestamped parity evidence files.
+- Unit tests added for functional parity computation and legacy snapshot loading.
+
 ## Week 1 evidence
 
 - `.NET 10` solution scaffold created at `apps/media-core-worker/MediaOpsCore.sln`.
@@ -50,6 +58,8 @@ Weeks 3-4 extend `RQ-001` with the first unified capture and segmentation orches
 
 Week 5 extends `RQ-007` by implementing continuity controls over external process lifecycle (supervision, reconciliation, orphan control), and supports operational resilience needed for SLA evidence.
 
+Week 6 reinforces `RQ-004` and `RQ-007` by adding stage persistence/evidence outputs and explicit parity comparison workflows required before canary cutover.
+
 ## Open ambiguities
 
 - `A-001` SLA de alertas
@@ -72,3 +82,7 @@ Core capture and segmentation flows are now running inside the new worker archit
 ## Week 5 conclusion
 
 The ProcessGuardian helper scope is now represented in explicit application use cases and integrated in the worker cycle. Stage persistence integration and shadow validation remain pending for parity confirmation.
+
+## Week 6 conclusion
+
+Stage integration and shadow parity comparison are now available in the worker path, with per-collection evidence artifacts written to filesystem. Sustained shadow operation and canary execution remain pending.

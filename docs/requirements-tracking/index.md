@@ -31,3 +31,9 @@ This index tracks the Phase 1A operational unification work for MediaOpsCore.
 - Port process supervision policies (timeout and restart) into `ProcessGuardian.Application`.
 - Port inactive reconciliation use case.
 - Port chunk process orphan monitoring use case.
+
+## Week 6 scope
+
+- Integrate stage persistence and filesystem evidence outputs in end-to-end worker cycle.
+- Execute shadow mode parity comparison in parallel with current flow.
+- Compare functional parity by collection and persist parity evidence files.

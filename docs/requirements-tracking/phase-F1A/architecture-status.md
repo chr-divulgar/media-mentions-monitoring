@@ -22,6 +22,10 @@ Week 5 ports helper behaviors into `ProcessGuardian.Application` with three expl
 
 The worker orchestrates these use cases through application ports (`IProcessStateRepository`, `IProcessInspector`) so dependency direction remains unchanged.
 
+Week 6 introduces stage-oriented adapters for database mirroring and filesystem evidence writing, plus an application-level parity use case used by worker shadow mode.
+
+Shadow execution now emits parity artifacts by collection into stage evidence paths while preserving module boundaries through ports (`ILegacySnapshotProvider`, `IEvidenceFileStore`, `IFunctionalParityUseCase`).
+
 ## Decisions recorded
 
 - Use `.NET 10` SDK-style projects with nullable reference types and implicit usings enabled.
@@ -31,4 +35,4 @@ The worker orchestrates these use cases through application ports (`IProcessStat
 
 ## Next architectural step
 
-Integrate stage persistence adapters and execute shadow-mode parity validation against legacy flows.
+Run sustained shadow windows and prepare canary rollout controls with operational runbook and rollback steps.
