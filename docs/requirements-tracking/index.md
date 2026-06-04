@@ -25,3 +25,9 @@ This index tracks the Phase 1A operational unification work for MediaOpsCore.
 - Port continuous capture flow into `Capture.Application` use cases.
 - Port incremental segmentation flow into `Segmentation.Application` use cases.
 - Instrument base operational metrics for errors, lag, and generated segments.
+
+## Week 5 scope
+
+- Port process supervision policies (timeout and restart) into `ProcessGuardian.Application`.
+- Port inactive reconciliation use case.
+- Port chunk process orphan monitoring use case.

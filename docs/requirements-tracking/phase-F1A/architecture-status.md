@@ -18,6 +18,10 @@ Weeks 3-4 add capture and segmentation use cases in module application layers, w
 
 Base metrics are emitted through an application-level metrics port and a worker-side meter implementation for capture attempts/failures, generated segments, pipeline lag, and critical errors.
 
+Week 5 ports helper behaviors into `ProcessGuardian.Application` with three explicit use cases: process supervision (timeout/restart), inactive reconciliation, and chunk orphan monitoring.
+
+The worker orchestrates these use cases through application ports (`IProcessStateRepository`, `IProcessInspector`) so dependency direction remains unchanged.
+
 ## Decisions recorded
 
 - Use `.NET 10` SDK-style projects with nullable reference types and implicit usings enabled.
@@ -27,4 +31,4 @@ Base metrics are emitted through an application-level metrics port and a worker-
 
 ## Next architectural step
 
-Port ProcessGuardian helper behaviors (timeout, restart, reconciliation) and integrate stage persistence adapters for shadow execution.
+Integrate stage persistence adapters and execute shadow-mode parity validation against legacy flows.

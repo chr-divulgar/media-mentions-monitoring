@@ -17,6 +17,15 @@
 - Base operational metrics instrumented for `capture_success_rate` inputs, `segment_generation_rate`, `pipeline_lag_seconds`, and `critical_error_rate`.
 - Unit tests added for capture and segmentation use cases to validate incremental behavior.
 
+## Week 5 evidence
+
+- Process supervision use case implemented with timeout/restart policy in `ProcessGuardian.Application`.
+- Inactive reconciliation use case implemented in `ProcessGuardian.Application`.
+- Chunk process orphan monitoring use case implemented in `ProcessGuardian.Application`.
+- Worker orchestration updated to execute the three ProcessGuardian use cases every cycle.
+- Metrics extended with `process_orphan_count` and `reconciliation_actions`.
+- Unit tests added for process supervision, inactive reconciliation, and chunk orphan monitoring.
+
 ## Week 1 evidence
 
 - `.NET 10` solution scaffold created at `apps/media-core-worker/MediaOpsCore.sln`.
@@ -39,6 +48,8 @@ Week 2 also strengthens portability for `RQ-004` by introducing a provider-agnos
 
 Weeks 3-4 extend `RQ-001` with the first unified capture and segmentation orchestration flow, reinforce `RQ-004` through canonical artifact writes for both capture and segmentation, and extend `RQ-007` through operational metrics needed for SLA continuity tracking.
 
+Week 5 extends `RQ-007` by implementing continuity controls over external process lifecycle (supervision, reconciliation, orphan control), and supports operational resilience needed for SLA evidence.
+
 ## Open ambiguities
 
 - `A-001` SLA de alertas
@@ -57,3 +68,7 @@ Shared contracts are now in place for persistence and process execution. The nex
 ## Week 3-4 conclusion
 
 Core capture and segmentation flows are now running inside the new worker architecture with incremental processing and baseline telemetry. ProcessGuardian migration and stage shadow validation remain pending.
+
+## Week 5 conclusion
+
+The ProcessGuardian helper scope is now represented in explicit application use cases and integrated in the worker cycle. Stage persistence integration and shadow validation remain pending for parity confirmation.
