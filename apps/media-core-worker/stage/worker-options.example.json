@@ -1,0 +1,13 @@
+{
+  "heartbeatIntervalSeconds": 30,
+  "discreteWorkerIntervalSeconds": 300,
+  "captureSourcesFilePath": "stage/capture-sources.json",
+  "pluginProfilesFilePath": "stage/plugin-profiles.json",
+  "continuousMediaAllowList": "radio,video",
+  "enableCanaryMode": true,
+  "canaryPlatformPercent": 20,
+  "canaryPlatformMinPercent": 10,
+  "canaryPlatformMaxPercent": 100,
+  "canaryPlatformAllowList": "caracol,youtube",
+  "stageFilesystemRootPath": "stage-evidence"
+}

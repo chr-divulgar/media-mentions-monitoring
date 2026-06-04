@@ -55,6 +55,12 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
                     failed++;
                 }
             }
+            catch (InvalidOperationException exception)
+                when (exception.Message.StartsWith("No plugin profile configured", StringComparison.Ordinal))
+            {
+                // Source is ignored when no plugin profile is configured for its media/platform.
+                continue;
+            }
             catch
             {
                 failed++;

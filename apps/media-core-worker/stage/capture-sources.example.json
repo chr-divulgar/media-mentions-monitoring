@@ -1,0 +1,26 @@
+[
+  {
+    "sourceId": "caracol-radio-live",
+    "platform": "caracol",
+    "media": "radio",
+    "streamUrl": "https://stream.caracol.example/live"
+  },
+  {
+    "sourceId": "youtube-canal-noticias",
+    "platform": "youtube",
+    "media": "video",
+    "streamUrl": "https://www.youtube.com/watch?v=abc123"
+  },
+  {
+    "sourceId": "portal-economia-home",
+    "platform": "portaleconomia",
+    "media": "internet",
+    "streamUrl": "https://portaleconomia.example/home"
+  },
+  {
+    "sourceId": "revista-local-pdf",
+    "platform": "revistalocal",
+    "media": "document",
+    "streamUrl": "https://revistalocal.example/edicion.pdf"
+  }
+]

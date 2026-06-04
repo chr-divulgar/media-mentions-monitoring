@@ -6,14 +6,12 @@ namespace MediaOpsCore.Workers.Operations;
 public sealed class MediaPlatformIngestionPluginResolver : IIngestionPluginResolver
 {
     private readonly IPluginProfileProvider profileProvider;
-    private readonly OperationsWorkerOptions options;
 
     public MediaPlatformIngestionPluginResolver(
         IPluginProfileProvider profileProvider,
         OperationsWorkerOptions options)
     {
         this.profileProvider = profileProvider;
-        this.options = options;
     }
 
     public async Task<PluginExecutionPlan> ResolveAsync(
@@ -41,15 +39,6 @@ public sealed class MediaPlatformIngestionPluginResolver : IIngestionPluginResol
         if (mediaDefault is not null)
         {
             return ToExecutionPlan(mediaDefault);
-        }
-
-        if (ingestionMode == IngestionMode.Continuous && options.EnableLegacyCaptureProfileFallback)
-        {
-            return new PluginExecutionPlan(
-                pluginId: "legacy-capture-default",
-                toolExecutable: options.CaptureToolExecutable,
-                toolArgumentsTemplate: options.CaptureToolArgumentsTemplate,
-                commandTimeout: options.CaptureCommandTimeout);
         }
 
         throw new InvalidOperationException(

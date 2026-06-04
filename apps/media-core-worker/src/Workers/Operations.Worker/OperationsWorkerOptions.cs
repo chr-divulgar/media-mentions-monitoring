@@ -14,8 +14,6 @@ public sealed class OperationsWorkerOptions
 
     public string PluginProfilesFilePath { get; set; } = "stage/plugin-profiles.json";
 
-    public bool EnableLegacyCaptureProfileFallback { get; set; } = true;
-
     public string ContinuousMediaAllowList { get; set; } = "radio,video";
 
     public int SegmentDurationSeconds { get; set; } = 30;
@@ -23,14 +21,6 @@ public sealed class OperationsWorkerOptions
     public TimeSpan ProcessGuardianTimeout { get; set; } = TimeSpan.FromMinutes(30);
 
     public TimeSpan ProcessGuardianRestartCommandTimeout { get; set; } = TimeSpan.FromSeconds(20);
-
-    public bool EnableStageDatabaseMirror { get; set; }
-
-    public string StageDatabaseBaseUrl { get; set; } = string.Empty;
-
-    public string StageDatabaseRootPath { get; set; } = "monitoringArtifacts";
-
-    public string? StageDatabaseAuthToken { get; set; }
 
     public string StageFilesystemRootPath { get; set; } = "stage-evidence";
 

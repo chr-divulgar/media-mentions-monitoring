@@ -32,7 +32,7 @@ public sealed class MediaPlatformIngestionPluginResolverTests
 
         var resolver = new MediaPlatformIngestionPluginResolver(
             provider,
-            new OperationsWorkerOptions { EnableLegacyCaptureProfileFallback = false });
+            new OperationsWorkerOptions());
 
         var source = new CaptureSource("src-1", "global-ingestion", "youtube", "video", "https://example.com/watch?v=abc");
 
@@ -59,7 +59,7 @@ public sealed class MediaPlatformIngestionPluginResolverTests
 
         var resolver = new MediaPlatformIngestionPluginResolver(
             provider,
-            new OperationsWorkerOptions { EnableLegacyCaptureProfileFallback = false });
+            new OperationsWorkerOptions());
 
         var source = new CaptureSource("src-2", "global-ingestion", "caracol", "radio", "https://stream.example.com/live");
 
@@ -70,11 +70,11 @@ public sealed class MediaPlatformIngestionPluginResolverTests
     }
 
     [Fact]
-    public async Task ResolveAsync_should_throw_when_profile_is_missing_and_legacy_fallback_is_disabled()
+    public async Task ResolveAsync_should_throw_when_profile_is_missing()
     {
         var resolver = new MediaPlatformIngestionPluginResolver(
             new FakePluginProfileProvider(Array.Empty<PluginProfile>()),
-            new OperationsWorkerOptions { EnableLegacyCaptureProfileFallback = false });
+            new OperationsWorkerOptions());
 
         var source = new CaptureSource("src-3", "global-ingestion", "unknown-platform", "unknown-media", "https://unknown.example.com");
 

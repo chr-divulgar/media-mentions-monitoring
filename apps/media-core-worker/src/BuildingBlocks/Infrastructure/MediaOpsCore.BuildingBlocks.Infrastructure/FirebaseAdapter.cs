@@ -6,7 +6,7 @@ using MediaOpsCore.BuildingBlocks.Domain;
 
 namespace MediaOpsCore.BuildingBlocks.Infrastructure;
 
-public sealed class FirebaseAdapter : IMonitoringArtifactRepository
+public sealed class FirebaseAdapter : IMonitoringArtifactDatabaseRepository
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {

@@ -14,6 +14,7 @@ var options = new OperationsWorkerOptions();
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IMonitoringArtifactRepository, StageMirrorMonitoringArtifactRepository>();
+builder.Services.AddSingleton<IEvidenceFileStore, FileSystemEvidenceStore>();
 builder.Services.AddSingleton<IProcessRunner, LocalSystemProcessRunner>();
 builder.Services.AddSingleton<IOperationalMetrics, MeterOperationalMetrics>();
 builder.Services.AddSingleton<ICaptureSourceProvider, StaticCaptureSourceProvider>();
@@ -22,7 +23,6 @@ builder.Services.AddSingleton<IIngestionPluginResolver, MediaPlatformIngestionPl
 builder.Services.AddSingleton<ISegmentCursorRepository, InMemorySegmentCursorRepository>();
 builder.Services.AddSingleton<IProcessStateRepository, InMemoryProcessStateRepository>();
 builder.Services.AddSingleton<IProcessInspector, LocalProcessInspector>();
-builder.Services.AddSingleton(new HttpClient());
 builder.Services.AddSingleton(new IncrementalSegmentationOptions
 {
 	SegmentDurationSeconds = options.SegmentDurationSeconds
