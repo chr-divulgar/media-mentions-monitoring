@@ -34,12 +34,15 @@ Week 8 extends canary control with staged promotion milestones (20-50-100) gated
 
 This keeps rollout policy isolated in the worker adapter layer (`CanaryRolloutTuner`) while preserving module boundaries and use-case orchestration flow.
 
+The ingestion model is defined as shared/global for capture and segmentation sources, while tenant scope is reserved for downstream alerting, subscription, and client-facing consumption views.
+
 ## Decisions recorded
 
 - Use `.NET 10` SDK-style projects with nullable reference types and implicit usings enabled.
 - Keep the worker host thin and limited to orchestration.
 - Keep application projects free from infrastructure references.
 - Keep domain projects isolated from application and infrastructure concerns.
+- Keep ingestion data global and apply tenant partitioning at alerting/consumption boundaries.
 
 ## Next architectural step
 

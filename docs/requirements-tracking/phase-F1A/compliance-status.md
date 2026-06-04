@@ -49,6 +49,7 @@
 - Unit tests added for 50%/100% promotion and milestone rollback behavior.
 - Phase 1A parity closure acta recorded with operational decision notes.
 - Phase 2 API backlog seed recorded for next phase handoff.
+- Concept boundary documented: capture/segmentation ingestion remains global, while tenant partitioning is applied in alerting and consumption layers.
 
 ## Week 1 evidence
 
@@ -79,6 +80,8 @@ Week 6 reinforces `RQ-004` and `RQ-007` by adding stage persistence/evidence out
 Week 7 extends `RQ-007` by introducing controlled canary rollout and operational rollback criteria linked to parity thresholds.
 
 Week 8 extends `RQ-007` with staged canary scale-up gates (50% and 100%) and formalizes the handoff toward `RQ-002` implementation through a Phase 2 API backlog seed.
+
+The updated concept keeps `RQ-001` and operational continuity in a shared ingestion path, while `RQ-003` and `RQ-002` tenant specialization is addressed in alerting/API scope.
 
 ## Open ambiguities
 
@@ -114,3 +117,5 @@ Canary controls and tuning rules are now integrated in the worker execution path
 ## Week 8 conclusion
 
 Canary progression gates for 50% and 100% are now implemented with parity-based rollback behavior, closing the planned technical scope of Phase 1A. Phase 2 API host backlog is prepared for the next implementation cycle.
+
+The phase also closes with an explicit data-boundary rule: one shared ingestion flow and tenant-specific alerting/consumption processing.

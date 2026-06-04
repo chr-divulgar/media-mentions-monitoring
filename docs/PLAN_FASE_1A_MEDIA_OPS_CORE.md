@@ -30,6 +30,7 @@ Razon:
   - control de procesos huérfanos
 4. Persistencia agnostica al proveedor de base de datos (Firebase inicial), con capacidad de cambio a otro motor sin reescribir Domain/Application.
 5. Observabilidad operativa (logs estructurados, metricas base, health checks).
+6. Ingestion global compartida (captura y segmentacion) para todas las fuentes comunes; diferenciacion por tenant aplicada en alertas, reglas y vistas de consumo.
 
 ### Excluido
 1. API publica nueva en .NET 10.
@@ -51,6 +52,10 @@ Componentes:
 Regla de dependencia:
 - Domain <- Application <- Infrastructure
 - Worker host solo orquesta use cases.
+
+Separacion de contexto de datos:
+- Contexto Ingestion: artefactos de captura y segmentacion sobre fuentes globales compartidas.
+- Contexto Alerting/Consumption: reglas, suscripciones, filtros y entregables parametrizados por tenant.
 
 ## 5. Estructura sugerida de carpetas
 ```
@@ -161,6 +166,7 @@ Regla transversal de fase:
 4. Versionar scripts de migracion de datos (ejemplo: Firebase <-> Mongo).
 5. Ejecutar simulacro mensual de restauracion/reimportacion en stage.
 6. Mantener trazabilidad de cambios contra `REQUIREMENTS_LIVE_MATRIX.md`.
+7. Mantener separacion explicita entre datos globales de ingesta y datos por tenant para alertas/consumo.
 
 ## 10. Estrategia de no impacto sobre lo existente
 1. No modificar `apps/web-api` ni `apps/web-ui`.
