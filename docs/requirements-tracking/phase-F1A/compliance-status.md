@@ -78,6 +78,14 @@ Week 7 extends `RQ-007` by introducing controlled canary rollout and operational
 
 Week 8 extends `RQ-007` with staged canary scale-up gates (50% and 100%) and formalizes the handoff toward `RQ-002` implementation through a Phase 2 API backlog seed.
 
+The Phase 2 handoff now also includes a formal base plan for worker/plugin separation to sustain multichannel growth without changing the base source catalog shape:
+
+- `RQ-001`: operational split by ingestion mode (continuous/discrete) to support different media behaviors.
+- `RQ-007`: continuity guardrails preserved in dedicated continuous worker.
+- `RQ-201`: scalable onboarding of regional/local sources through profile-based routing.
+- `RQ-202`: standardized plugin execution plan as basis for downstream indexing/classification.
+- `A-003`: explicit policy for media expansion via plugin profiles and overrides.
+
 The updated concept keeps `RQ-001` and operational continuity in a shared ingestion path, while `RQ-003` and `RQ-002` tenant specialization is addressed in alerting/API scope.
 
 ## Open ambiguities
@@ -116,3 +124,5 @@ Canary controls and tuning rules are now integrated in the worker execution path
 Canary progression gates for 50% and 100% are now implemented with stability-based rollback behavior, closing the planned technical scope of Phase 1A. Phase 2 API host backlog is prepared for the next implementation cycle.
 
 The phase also closes with an explicit data-boundary rule: one shared ingestion flow and tenant-specific alerting/consumption processing.
+
+As approved handoff delta, Phase 2 will keep that data-boundary rule while evolving runtime topology into two workers and a plugin registry model documented in `docs/requirements-tracking/phase-F2/plan-workers-plugins-base.md`.

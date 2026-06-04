@@ -40,4 +40,9 @@ The ingestion model is defined as shared/global for capture and segmentation sou
 
 ## Next architectural step
 
-Start Phase 2 API host implementation (`Operations.Api.Host`) over existing application use cases without moving business rules out of Domain/Application layers.
+Start Phase 2 with two coordinated tracks over existing application use cases without moving business rules out of Domain/Application layers:
+
+1. API track: implement `Operations.Api.Host` for query/export and tenant-facing access.
+2. Ingestion track: split execution into `ContinuousIngestionWorker` and `DiscreteIngestionWorker`, governed by a plugin registry and plugin profiles resolved by `media` (with optional `platform` override).
+
+Reference plan: `docs/requirements-tracking/phase-F2/plan-workers-plugins-base.md`.

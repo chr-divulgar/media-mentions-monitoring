@@ -11,6 +11,7 @@ This index tracks the Phase 1A operational unification work for MediaOpsCore.
 ## Phase 2 preparation
 
 - [Week 8 API backlog seed](phase-F2/backlog-week8-api-dotnet10.md)
+- [Base plan for worker and plugin separation](phase-F2/plan-workers-plugins-base.md)
 
 ## Week 1 scope
 
