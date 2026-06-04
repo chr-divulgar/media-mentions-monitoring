@@ -14,6 +14,10 @@ The worker solution now establishes a modular hexagonal layout under `apps/media
 
 The second week adds the first provider-agnostic persistence port, the process runner port, the initial Firebase adapter, and adapter contract tests.
 
+Weeks 3-4 add capture and segmentation use cases in module application layers, while `Operations.Worker` stays focused on orchestration.
+
+Base metrics are emitted through an application-level metrics port and a worker-side meter implementation for capture attempts/failures, generated segments, pipeline lag, and critical errors.
+
 ## Decisions recorded
 
 - Use `.NET 10` SDK-style projects with nullable reference types and implicit usings enabled.
@@ -23,4 +27,4 @@ The second week adds the first provider-agnostic persistence port, the process r
 
 ## Next architectural step
 
-Add module-specific use cases and adapter registration for capture and segmentation once the shared ports are stabilized.
+Port ProcessGuardian helper behaviors (timeout, restart, reconciliation) and integrate stage persistence adapters for shadow execution.
