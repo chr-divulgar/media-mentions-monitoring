@@ -2,6 +2,7 @@
   <PropertyGroup>
     <AssemblyName>MediaOpsCore.Workers.Operations.Worker</AssemblyName>
     <RootNamespace>MediaOpsCore.Workers.Operations</RootNamespace>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>
