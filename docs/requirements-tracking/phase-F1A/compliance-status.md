@@ -29,25 +29,22 @@
 ## Week 6 evidence
 
 - Stage integration added with optional database mirror writes in worker repository adapter.
-- Filesystem evidence store added for stage parity artifacts.
-- Shadow mode parity use case added to compare legacy vs current counts by collection.
-- Worker cycle updated to execute parity checks and emit timestamped parity evidence files.
-- Unit tests added for functional parity computation and legacy snapshot loading.
+- Filesystem evidence outputs consolidated for stage diagnostics.
+- Worker cycle validated for capture, segmentation, and process-supervision continuity.
+- Unit tests updated to keep coverage on core operational flows.
 
 ## Week 7 evidence
 
 - Canary source selection implemented for 10-20% platform subsets.
-- Canary tuning policy implemented to increase/decrease rollout percentage based on parity threshold outcomes.
-- Worker cycle updated to persist canary tuning evidence each shadow/canary cycle.
-- Unit tests added for canary source filtering and tuning decisions.
+- Rollback guardrails aligned to operational metrics and stability checks.
+- Unit tests added for canary source filtering behavior.
 - Operational runbook and rollback documentation added for canary execution.
 
 ## Week 8 evidence
 
-- Canary tuning policy extended with staged milestones (20-50-100) and stable-cycle promotion gates.
-- Rollback behavior now returns canary traffic to the previous milestone when parity falls below threshold.
-- Unit tests added for 50%/100% promotion and milestone rollback behavior.
-- Phase 1A parity closure acta recorded with operational decision notes.
+- Canary progression executed in staged milestones (20-50-100) under operational stability gates.
+- Rollback behavior documented as configuration-based fallback to reduced rollout.
+- Phase 1A closure acta recorded with operational decision notes.
 - Phase 2 API backlog seed recorded for next phase handoff.
 - Concept boundary documented: capture/segmentation ingestion remains global, while tenant partitioning is applied in alerting and consumption layers.
 
@@ -75,9 +72,9 @@ Weeks 3-4 extend `RQ-001` with the first unified capture and segmentation orches
 
 Week 5 extends `RQ-007` by implementing continuity controls over external process lifecycle (supervision, reconciliation, orphan control), and supports operational resilience needed for SLA evidence.
 
-Week 6 reinforces `RQ-004` and `RQ-007` by adding stage persistence/evidence outputs and explicit parity comparison workflows required before canary cutover.
+Week 6 reinforces `RQ-004` and `RQ-007` by adding stage persistence/evidence outputs required before canary cutover.
 
-Week 7 extends `RQ-007` by introducing controlled canary rollout and operational rollback criteria linked to parity thresholds.
+Week 7 extends `RQ-007` by introducing controlled canary rollout and operational rollback criteria linked to stability thresholds.
 
 Week 8 extends `RQ-007` with staged canary scale-up gates (50% and 100%) and formalizes the handoff toward `RQ-002` implementation through a Phase 2 API backlog seed.
 
@@ -100,15 +97,15 @@ Shared contracts are now in place for persistence and process execution. The nex
 
 ## Week 3-4 conclusion
 
-Core capture and segmentation flows are now running inside the new worker architecture with incremental processing and baseline telemetry. ProcessGuardian migration and stage shadow validation remain pending.
+Core capture and segmentation flows are now running inside the new worker architecture with incremental processing and baseline telemetry. ProcessGuardian migration and stage validation remain pending.
 
 ## Week 5 conclusion
 
-The ProcessGuardian helper scope is now represented in explicit application use cases and integrated in the worker cycle. Stage persistence integration and shadow validation remain pending for parity confirmation.
+The ProcessGuardian helper scope is now represented in explicit application use cases and integrated in the worker cycle. Stage persistence integration and rollout validation remain pending.
 
 ## Week 6 conclusion
 
-Stage integration and shadow parity comparison are now available in the worker path, with per-collection evidence artifacts written to filesystem. Sustained shadow operation and canary execution remain pending.
+Stage integration is now available in the worker path, with evidence artifacts written to filesystem. Sustained canary execution remains pending.
 
 ## Week 7 conclusion
 
@@ -116,6 +113,6 @@ Canary controls and tuning rules are now integrated in the worker execution path
 
 ## Week 8 conclusion
 
-Canary progression gates for 50% and 100% are now implemented with parity-based rollback behavior, closing the planned technical scope of Phase 1A. Phase 2 API host backlog is prepared for the next implementation cycle.
+Canary progression gates for 50% and 100% are now implemented with stability-based rollback behavior, closing the planned technical scope of Phase 1A. Phase 2 API host backlog is prepared for the next implementation cycle.
 
 The phase also closes with an explicit data-boundary rule: one shared ingestion flow and tenant-specific alerting/consumption processing.

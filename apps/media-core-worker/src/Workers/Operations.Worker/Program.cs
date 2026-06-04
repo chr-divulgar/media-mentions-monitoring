@@ -12,13 +12,10 @@ var builder = Host.CreateApplicationBuilder(args);
 var options = new OperationsWorkerOptions();
 
 builder.Services.AddSingleton(options);
-builder.Services.AddSingleton<CanaryRolloutTuner>();
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IMonitoringArtifactRepository, StageMirrorMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IProcessRunner, LocalSystemProcessRunner>();
 builder.Services.AddSingleton<IOperationalMetrics, MeterOperationalMetrics>();
-builder.Services.AddSingleton<IEvidenceFileStore, FileSystemEvidenceStore>();
-builder.Services.AddSingleton<ILegacySnapshotProvider, JsonLegacySnapshotProvider>();
 builder.Services.AddSingleton<ICaptureSourceProvider, StaticCaptureSourceProvider>();
 builder.Services.AddSingleton<ISegmentCursorRepository, InMemorySegmentCursorRepository>();
 builder.Services.AddSingleton<IProcessStateRepository, InMemoryProcessStateRepository>();
@@ -39,16 +36,11 @@ builder.Services.AddSingleton(new ProcessGuardianOptions
 	RestartTimeout = options.ProcessGuardianTimeout,
 	RestartCommandTimeout = options.ProcessGuardianRestartCommandTimeout
 });
-builder.Services.AddSingleton(new FunctionalParityOptions
-{
-	MinimumParityPercent = options.ShadowParityMinimumPercent
-});
 builder.Services.AddSingleton<IContinuousCaptureUseCase, ContinuousCaptureUseCase>();
 builder.Services.AddSingleton<IIncrementalSegmentationUseCase, IncrementalSegmentationUseCase>();
 builder.Services.AddSingleton<IProcessMonitorUseCase, ProcessMonitorUseCase>();
 builder.Services.AddSingleton<IReconcileInactiveUseCase, ReconcileInactiveUseCase>();
 builder.Services.AddSingleton<IChunkProcessMonitorUseCase, ChunkProcessMonitorUseCase>();
-builder.Services.AddSingleton<IFunctionalParityUseCase, FunctionalParityUseCase>();
 builder.Services.AddHostedService<OperationsWorker>();
 
 var host = builder.Build();

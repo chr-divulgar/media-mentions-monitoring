@@ -36,5 +36,5 @@ Fecha de inicio propuesta: 2026-06-10
 ## Rollout y rollback
 
 1. Activacion en stage con feature flags por endpoint.
-2. Shadow read contra flujo legacy antes de habilitar consumo productivo.
-3. Rollback por desactivacion de endpoints y reversión de version de host API.
+2. Validacion operativa en stage antes de habilitar consumo productivo.
+3. Rollback por desactivacion de endpoints y reversion de version de host API.

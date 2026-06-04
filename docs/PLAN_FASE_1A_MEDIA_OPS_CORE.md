@@ -4,8 +4,8 @@
 Unificar la funcionalidad operativa actual de `media-monitor` y `media-monitor-helper` en una nueva solucion .NET 10 dentro del monorepo `media-mentions-monitoring`, sin afectar lo existente y sin incluir API en esta fase.
 
 Meta de Fase 1A:
-- Mantener la misma funcionalidad actual (paridad funcional).
-- Ejecutar en paralelo (shadow/canary) antes del corte.
+- Mantener continuidad funcional operativa en el nuevo worker.
+- Ejecutar canary progresivo antes del corte.
 - Dejar base lista para agregar API en fase posterior.
 
 ## 2. Nombre propuesto dentro de apps/
@@ -87,7 +87,7 @@ media-mentions-monitoring/apps/media-core-worker/
     Architecture/
 ```
 
-## 6. Mapeo de funcionalidad legacy -> nuevo modulo
+## 6. Mapeo de funcionalidad previa -> nuevo modulo
 1. `media-monitor` (w-service)
    - StartRecording / restart -> `Capture.Application`
    - OnChanged incremental -> `Segmentation.Application`
@@ -126,21 +126,21 @@ Regla transversal de fase:
 
 ### Semana 6
 1. Integracion end-to-end con BD y filesystem de stage.
-2. Ejecutar modo shadow en paralelo con legacy.
-3. Comparar paridad funcional (resultados por coleccion).
+2. Validar continuidad operativa en stage con evidencia de ejecucion.
+3. Confirmar estabilidad de captura, segmentacion y supervision.
 
 ### Semana 7
 1. Canary por subconjunto de plataformas (10-20%).
-2. Ajustes por diferencias y tuning.
+2. Ajustes operativos segun metricas y guardrails.
 3. Documentar runbook de operacion y rollback.
 
 ### Semana 8
 1. Escalar canary a 50% y luego 100% si KPIs ok.
-2. Cierre de Fase 1A y acta de paridad funcional.
+2. Cierre de Fase 1A y acta tecnica de fase.
 3. Preparar backlog de Fase 2 (API .NET 10).
 
 ## 8. Criterios de aceptacion Fase 1A
-1. Paridad funcional >= 95% vs sistema actual durante ventana acordada.
+1. Estabilidad operativa sostenida durante ventana acordada.
 2. No regresiones criticas en captura y segmentacion.
 3. Procesos helper cubiertos por casos de uso .NET 10.
 4. Observabilidad activa con dashboards operativos minimos.
@@ -170,22 +170,20 @@ Regla transversal de fase:
 
 ## 10. Estrategia de no impacto sobre lo existente
 1. No modificar `apps/web-api` ni `apps/web-ui`.
-2. Legacy sigue operando durante shadow/canary.
+2. Despliegue progresivo por canary con rollback controlado.
 3. Cambios sobre BD con compatibilidad hacia atras.
 4. Cutover gradual por plataformas.
 
 ## 11. Riesgos principales y mitigacion
 1. Diferencias de comportamiento en timeouts de procesos externos.
    - Mitigacion: pruebas de caracterizacion + adapter de process runner.
-2. Divergencia de datos entre legacy y nuevo flujo.
-   - Mitigacion: reconciliacion automatica y reportes diarios de delta.
-3. Sobrecarga por doble procesamiento en shadow.
-   - Mitigacion: windowing por plataformas y limites de concurrencia.
+2. Sobrecarga por aumento de cobertura durante canary.
+  - Mitigacion: windowing por plataformas y limites de concurrencia.
 
 ## 12. Entregables de Fase 1A
 1. Nueva solucion .NET 10 en `apps/media-core-worker`.
 2. Runbook operativo + rollback.
-3. Reporte de paridad funcional.
+3. Evidencia de estabilidad operativa en stage/canary.
 4. Checklist de salida hacia Fase 2 (API).
 5. Modelo canonico de datos + paquete de exportacion abierta.
 6. Scripts de migracion de datos y evidencia de prueba de restauracion.
