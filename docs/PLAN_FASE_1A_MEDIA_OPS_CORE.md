@@ -208,3 +208,21 @@ Esto permite exponer endpoints sin rehacer dominio/aplicacion ya migrados en Fas
 Para el plan general de implementacion funcional:
 1. Informes automaticos periodicos en Ops-Core mediante worker dedicado de reporting.
 2. Informes y consultas bajo demanda sobre el mismo backend por peticiones desde front.
+
+## 14. Estado implementado reciente (2026-06)
+
+Se implemento un flujo de inicializacion de fuentes en `media-core-worker` para robustecer el arranque operativo:
+
+1. Validacion de todos los `streamUrl` con FFmpeg interno antes de iniciar workers.
+2. Discovery solo para fuentes fallidas que tengan `primaryUrl`.
+3. Revalidacion de URL descubierta antes de uso.
+4. Reemplazo de `streamUrl` en memoria de ejecucion y persistencia en `stage/capture-sources.json` cuando el candidato es valido.
+
+Tambien se amplio el discovery para soportar:
+
+1. URLs directas con extensiones de streaming.
+2. Endpoints tipo `/stream` y `/live` sin extension.
+3. URLs escapadas en HTML/JS (`https:\/\/...`).
+
+Nota operativa:
+1. Si un portal solo expone la URL luego de interaccion JavaScript de reproductor, el discovery HTTP puede no resolverla sin un endpoint accesible en HTML.
