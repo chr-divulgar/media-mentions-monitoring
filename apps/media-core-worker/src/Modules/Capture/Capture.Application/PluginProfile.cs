@@ -1,4 +1,4 @@
-namespace MediaOpsCore.Modules.Capture.Application;
+﻿namespace MediaOpsCore.Modules.Capture.Application;
 
 public sealed class PluginProfile
 {
@@ -7,9 +7,9 @@ public sealed class PluginProfile
         string media,
         string? platform,
         IngestionMode ingestionMode,
-        string toolExecutable,
-        string toolArgumentsTemplate,
-        TimeSpan commandTimeout)
+        TimeSpan wavWindowDuration,
+        TimeSpan opusFlushInterval,
+        TimeSpan opusRotationInterval)
     {
         PluginId = string.IsNullOrWhiteSpace(pluginId)
             ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(pluginId))
@@ -19,15 +19,15 @@ public sealed class PluginProfile
             : media;
         Platform = string.IsNullOrWhiteSpace(platform) ? null : platform;
         IngestionMode = ingestionMode;
-        ToolExecutable = string.IsNullOrWhiteSpace(toolExecutable)
-            ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(toolExecutable))
-            : toolExecutable;
-        ToolArgumentsTemplate = string.IsNullOrWhiteSpace(toolArgumentsTemplate)
-            ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(toolArgumentsTemplate))
-            : toolArgumentsTemplate;
-        CommandTimeout = commandTimeout <= TimeSpan.Zero
-            ? throw new ArgumentOutOfRangeException(nameof(commandTimeout), "Command timeout must be greater than zero.")
-            : commandTimeout;
+        WavWindowDuration = wavWindowDuration <= TimeSpan.Zero
+            ? throw new ArgumentOutOfRangeException(nameof(wavWindowDuration), "WAV window duration must be greater than zero.")
+            : wavWindowDuration;
+        OpusFlushInterval = opusFlushInterval <= TimeSpan.Zero
+            ? throw new ArgumentOutOfRangeException(nameof(opusFlushInterval), "OPUS flush interval must be greater than zero.")
+            : opusFlushInterval;
+        OpusRotationInterval = opusRotationInterval <= TimeSpan.Zero
+            ? throw new ArgumentOutOfRangeException(nameof(opusRotationInterval), "OPUS rotation interval must be greater than zero.")
+            : opusRotationInterval;
     }
 
     public string PluginId { get; }
@@ -38,9 +38,10 @@ public sealed class PluginProfile
 
     public IngestionMode IngestionMode { get; }
 
-    public string ToolExecutable { get; }
+    public TimeSpan WavWindowDuration { get; }
 
-    public string ToolArgumentsTemplate { get; }
+    public TimeSpan OpusFlushInterval { get; }
 
-    public TimeSpan CommandTimeout { get; }
+    public TimeSpan OpusRotationInterval { get; }
 }
+

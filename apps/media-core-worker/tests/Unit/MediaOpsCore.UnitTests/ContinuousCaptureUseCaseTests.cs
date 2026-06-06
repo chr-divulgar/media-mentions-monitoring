@@ -1,7 +1,8 @@
-using MediaOpsCore.BuildingBlocks.Application;
+﻿using MediaOpsCore.BuildingBlocks.Application;
 using MediaOpsCore.BuildingBlocks.Domain;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Workers.Operations;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Xunit;
 
@@ -15,20 +16,8 @@ public sealed class ContinuousCaptureUseCaseTests
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
         await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(new[]
         {
-            new
-            {
-                sourceId = "source-a",
-                platform = "radio-platform",
-                media = "radio",
-                streamUrl = "https://example.com/radio"
-            },
-            new
-            {
-                sourceId = "source-b",
-                platform = "portal-platform",
-                media = "internet",
-                streamUrl = "https://example.com/portal"
-            }
+            new { sourceId = "source-a", platform = "radio-platform", media = "radio", streamUrl = "https://example.com/radio" },
+            new { sourceId = "source-b", platform = "portal-platform", media = "internet", streamUrl = "https://example.com/portal" }
         }));
 
         var repository = new InMemoryMonitoringArtifactRepository();
@@ -42,8 +31,9 @@ public sealed class ContinuousCaptureUseCaseTests
                     ContinuousMediaAllowList = ""
                 }),
                 new RadioOnlyPluginResolver(),
-                new SuccessfulProcessRunner(),
-                repository);
+                new SuccessfulAudioCapturePlugin(),
+                repository,
+                1);
 
             var result = await useCase.ExecuteAsync();
             var artifacts = await repository.ListByTenantAsync("global-ingestion");
@@ -63,18 +53,12 @@ public sealed class ContinuousCaptureUseCaseTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_should_persist_capture_artifacts_when_process_succeeds()
+    public async Task ExecuteAsync_should_persist_capture_artifacts_when_capture_succeeds()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
         await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(new[]
         {
-            new
-            {
-                sourceId = "source-a",
-                platform = "radio",
-                media = "radio",
-                streamUrl = "https://example.com/live"
-            }
+            new { sourceId = "source-a", platform = "radio", media = "radio", streamUrl = "https://example.com/live" }
         }));
 
         var repository = new InMemoryMonitoringArtifactRepository();
@@ -86,8 +70,9 @@ public sealed class ContinuousCaptureUseCaseTests
                     CaptureSourcesFilePath = tempFilePath
                 }),
                 new StaticPluginResolver(),
-                new SuccessfulProcessRunner(),
-                repository);
+                new SuccessfulAudioCapturePlugin(),
+                repository,
+                1);
 
             var result = await useCase.ExecuteAsync();
             var artifacts = await repository.ListByTenantAsync("global-ingestion");
@@ -107,6 +92,59 @@ public sealed class ContinuousCaptureUseCaseTests
         }
     }
 
+    [Fact]
+    public async Task ExecuteAsync_should_process_sources_in_parallel_up_to_the_configured_limit()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(new[]
+        {
+            new { sourceId = "source-a", platform = "radio-a", media = "radio", streamUrl = "https://example.com/a" },
+            new { sourceId = "source-b", platform = "radio-b", media = "radio", streamUrl = "https://example.com/b" }
+        }));
+
+        var repository = new InMemoryMonitoringArtifactRepository();
+        var gate = new ParallelCaptureGate();
+
+        try
+        {
+            var useCase = new ContinuousCaptureUseCase(
+                new StaticCaptureSourceProvider(new OperationsWorkerOptions
+                {
+                    CaptureSourcesFilePath = tempFilePath,
+                    EnableCanaryMode = false,
+                    ContinuousMediaAllowList = "radio",
+                    CaptureMaxDegreeOfParallelism = 2
+                }),
+                new StaticPluginResolver(),
+                gate,
+                repository,
+                2);
+
+            var execution = useCase.ExecuteAsync();
+
+            var bothStarted = await Task.WhenAny(gate.BothStarted, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(gate.BothStarted, bothStarted);
+
+            gate.Release();
+
+            var result = await execution;
+            var artifacts = await repository.ListByTenantAsync("global-ingestion");
+
+            Assert.Equal(2, result.Attempts);
+            Assert.Equal(2, result.Succeeded);
+            Assert.Equal(0, result.Failed);
+            Assert.Equal(2, gate.MaxConcurrentObserved);
+            Assert.Equal(2, artifacts.Count);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
     private sealed class StaticPluginResolver : IIngestionPluginResolver
     {
         public Task<PluginExecutionPlan> ResolveAsync(
@@ -116,9 +154,9 @@ public sealed class ContinuousCaptureUseCaseTests
         {
             return Task.FromResult(new PluginExecutionPlan(
                 pluginId: "test-plugin",
-                toolExecutable: "cmd.exe",
-                toolArgumentsTemplate: "/c echo capture {url}",
-                commandTimeout: TimeSpan.FromSeconds(5)));
+                wavWindowDuration: TimeSpan.FromSeconds(5),
+                opusFlushInterval: TimeSpan.FromSeconds(30),
+                opusRotationInterval: TimeSpan.FromHours(1)));
         }
     }
 
@@ -137,23 +175,79 @@ public sealed class ContinuousCaptureUseCaseTests
 
             return Task.FromResult(new PluginExecutionPlan(
                 pluginId: "radio-plugin",
-                toolExecutable: "cmd.exe",
-                toolArgumentsTemplate: "/c echo capture {url}",
-                commandTimeout: TimeSpan.FromSeconds(5)));
+                wavWindowDuration: TimeSpan.FromSeconds(5),
+                opusFlushInterval: TimeSpan.FromSeconds(30),
+                opusRotationInterval: TimeSpan.FromHours(1)));
         }
     }
 
-    private sealed class SuccessfulProcessRunner : IProcessRunner
+    private sealed class SuccessfulAudioCapturePlugin : IAudioCapturePlugin
     {
-        public Task<ProcessExecutionResult> RunAsync(ProcessCommand command, CancellationToken cancellationToken = default)
+        public Task<AudioCaptureExecutionResult> CaptureAsync(
+            MediaOpsCore.Modules.Capture.Domain.CaptureSource source,
+            PluginExecutionPlan plan,
+            CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new ProcessExecutionResult(0, "ok", string.Empty, false));
+            return Task.FromResult(new AudioCaptureExecutionResult(true, "out.opus"));
+        }
+    }
+
+    private sealed class ParallelCaptureGate : IAudioCapturePlugin
+    {
+        private int inFlight;
+        private int maxConcurrentObserved;
+        private readonly TaskCompletionSource bothStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task BothStarted => bothStarted.Task;
+
+        public int MaxConcurrentObserved => Volatile.Read(ref maxConcurrentObserved);
+
+        public void Release()
+        {
+            release.TrySetResult();
+        }
+
+        public async Task<AudioCaptureExecutionResult> CaptureAsync(
+            MediaOpsCore.Modules.Capture.Domain.CaptureSource source,
+            PluginExecutionPlan plan,
+            CancellationToken cancellationToken = default)
+        {
+            var concurrent = Interlocked.Increment(ref inFlight);
+            UpdateMaxConcurrentObserved(concurrent);
+
+            if (concurrent >= 2)
+            {
+                bothStarted.TrySetResult();
+            }
+
+            await release.Task.ConfigureAwait(false);
+            Interlocked.Decrement(ref inFlight);
+
+            return new AudioCaptureExecutionResult(true, $"{source.SourceId}.opus");
+        }
+
+        private void UpdateMaxConcurrentObserved(int concurrent)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref maxConcurrentObserved);
+                if (concurrent <= current)
+                {
+                    return;
+                }
+
+                if (Interlocked.CompareExchange(ref maxConcurrentObserved, concurrent, current) == current)
+                {
+                    return;
+                }
+            }
         }
     }
 
     private sealed class InMemoryMonitoringArtifactRepository : IMonitoringArtifactRepository
     {
-        private readonly Dictionary<string, MonitoringArtifact> artifacts = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, MonitoringArtifact> artifacts = new(StringComparer.Ordinal);
 
         public Task UpsertAsync(MonitoringArtifact artifact, CancellationToken cancellationToken = default)
         {
@@ -174,3 +268,4 @@ public sealed class ContinuousCaptureUseCaseTests
         }
     }
 }
+

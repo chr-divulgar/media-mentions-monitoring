@@ -3,7 +3,8 @@
     "sourceId": "caracol-radio-live",
     "platform": "caracol",
     "media": "radio",
-    "streamUrl": "https://stream.caracol.example/live"
+    "streamUrl": "https://stream.caracol.example/live",
+    "primaryUrl": "https://caracol.example/en-vivo"
   },
   {
     "sourceId": "youtube-canal-noticias",

@@ -1,13 +1,29 @@
-{
+﻿{
   "heartbeatIntervalSeconds": 30,
   "discreteWorkerIntervalSeconds": 300,
   "captureSourcesFilePath": "stage/capture-sources.json",
   "pluginProfilesFilePath": "stage/plugin-profiles.json",
   "continuousMediaAllowList": "radio,video",
+  "captureMaxDegreeOfParallelism": 64,
   "enableCanaryMode": true,
   "canaryPlatformPercent": 20,
   "canaryPlatformMinPercent": 10,
   "canaryPlatformMaxPercent": 100,
   "canaryPlatformAllowList": "caracol,youtube",
-  "stageFilesystemRootPath": "stage-evidence"
+  "stageFilesystemRootPath": "stage-evidence",
+  "audioOutputRootPath": ".",
+  "defaultWavWindowDurationSeconds": 30,
+  "defaultOpusFlushIntervalSeconds": 30,
+  "defaultOpusRotationIntervalHours": 1,
+  "defaultOpusBitrateKbps": 64,
+  "enableDecoderReconnect": true,
+  "decoderReconnectDelayMaxSeconds": 5,
+  "rtspPreferTcp": true,
+  "enableWavSilenceChunking": true,
+  "wavSilenceMinChunkSeconds": 20,
+  "wavSilenceMaxChunkSeconds": 30,
+  "wavSilenceHoldMilliseconds": 300,
+  "wavSilenceAnalysisWindowMilliseconds": 20,
+  "wavSilenceThresholdDb": -40
 }
+

@@ -1,4 +1,4 @@
-using MediaOpsCore.Modules.Capture.Application;
+﻿using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
 
 namespace MediaOpsCore.Workers.Operations;
@@ -49,8 +49,9 @@ public sealed class MediaPlatformIngestionPluginResolver : IIngestionPluginResol
     {
         return new PluginExecutionPlan(
             profile.PluginId,
-            profile.ToolExecutable,
-            profile.ToolArgumentsTemplate,
-            profile.CommandTimeout);
+            profile.WavWindowDuration,
+            profile.OpusFlushInterval,
+            profile.OpusRotationInterval);
     }
 }
+

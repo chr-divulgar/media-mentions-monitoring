@@ -39,7 +39,14 @@ public sealed class ContinuousIngestionWorker : BackgroundService
                 logger.LogError(exception, "Continuous ingestion cycle failed.");
             }
 
-            await Task.Delay(options.HeartbeatInterval, stoppingToken);
+            try
+            {
+                await Task.Delay(options.HeartbeatInterval, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 }

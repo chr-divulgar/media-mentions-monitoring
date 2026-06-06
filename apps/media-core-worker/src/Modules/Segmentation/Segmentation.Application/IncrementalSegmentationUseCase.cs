@@ -13,6 +13,8 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
     private readonly IncrementalSegmentationOptions options;
     private readonly Func<DateTimeOffset> utcNow;
 
+    private sealed record CaptureArtifactPayload(bool Succeeded);
+
     public IncrementalSegmentationUseCase(
         IMonitoringArtifactRepository monitoringArtifactRepository,
         ISegmentCursorRepository segmentCursorRepository,
@@ -32,6 +34,7 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
 
         var captureArtifacts = artifacts
             .Where(artifact => string.Equals(artifact.Kind, "capture", StringComparison.Ordinal))
+            .Where(artifact => CaptureSucceeded(artifact.PayloadJson))
             .OrderBy(artifact => artifact.CapturedAtUtc)
             .ToArray();
 
@@ -77,5 +80,18 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
             : Math.Max(0, (utcNow() - lagReference.Value).TotalSeconds);
 
         return new IncrementalSegmentationResult(captureArtifacts.Length, generatedSegments, pipelineLag);
+    }
+
+    private static bool CaptureSucceeded(string payloadJson)
+    {
+        try
+        {
+            var payload = JsonSerializer.Deserialize<CaptureArtifactPayload>(payloadJson);
+            return payload?.Succeeded == true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

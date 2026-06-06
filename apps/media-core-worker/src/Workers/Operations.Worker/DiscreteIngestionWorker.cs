@@ -39,7 +39,14 @@ public sealed class DiscreteIngestionWorker : BackgroundService
                 logger.LogError(exception, "Discrete ingestion cycle failed.");
             }
 
-            await Task.Delay(options.DiscreteWorkerInterval, stoppingToken);
+            try
+            {
+                await Task.Delay(options.DiscreteWorkerInterval, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 }

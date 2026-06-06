@@ -18,7 +18,7 @@ public sealed class IncrementalSegmentationUseCaseTests
             "global-ingestion",
             "source-a",
             "capture",
-            "{}",
+            "{\"Succeeded\":true}",
             new DateTimeOffset(2026, 6, 3, 11, 0, 0, TimeSpan.Zero)));
 
         await repository.UpsertAsync(new MonitoringArtifact(
@@ -26,7 +26,7 @@ public sealed class IncrementalSegmentationUseCaseTests
             "global-ingestion",
             "source-a",
             "capture",
-            "{}",
+            "{\"Succeeded\":true}",
             new DateTimeOffset(2026, 6, 3, 11, 5, 0, TimeSpan.Zero)));
 
         await cursorRepository.SaveLastProcessedAtAsync(

@@ -1,4 +1,6 @@
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Threading.Tasks;
 using MediaOpsCore.BuildingBlocks.Application;
 using MediaOpsCore.BuildingBlocks.Domain;
 
@@ -8,19 +10,22 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
 {
     private readonly ICaptureSourceProvider captureSourceProvider;
     private readonly IIngestionPluginResolver pluginResolver;
-    private readonly IProcessRunner processRunner;
+    private readonly IAudioCapturePlugin audioCapturePlugin;
     private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
+    private readonly int maxDegreeOfParallelism;
 
     public ContinuousCaptureUseCase(
         ICaptureSourceProvider captureSourceProvider,
         IIngestionPluginResolver pluginResolver,
-        IProcessRunner processRunner,
-        IMonitoringArtifactRepository monitoringArtifactRepository)
+        IAudioCapturePlugin audioCapturePlugin,
+        IMonitoringArtifactRepository monitoringArtifactRepository,
+        int maxDegreeOfParallelism)
     {
         this.captureSourceProvider = captureSourceProvider;
         this.pluginResolver = pluginResolver;
-        this.processRunner = processRunner;
+        this.audioCapturePlugin = audioCapturePlugin;
         this.monitoringArtifactRepository = monitoringArtifactRepository;
+        this.maxDegreeOfParallelism = Math.Max(1, maxDegreeOfParallelism);
     }
 
     public async Task<ContinuousCaptureResult> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -30,86 +35,74 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
         var attempts = 0;
         var succeeded = 0;
         var failed = 0;
-        DateTimeOffset? lastCapturedAtUtc = null;
+        var capturedAtUtcValues = new ConcurrentBag<DateTimeOffset>();
 
-        foreach (var source in sources)
-        {
-            attempts++;
-            var capturedAtUtc = DateTimeOffset.UtcNow;
-
-            try
+        await Parallel.ForEachAsync(
+            sources,
+            new ParallelOptions
             {
-                var command = await BuildCommandAsync(source, cancellationToken).ConfigureAwait(false);
-                var execution = await processRunner.RunAsync(command, cancellationToken).ConfigureAwait(false);
+                MaxDegreeOfParallelism = maxDegreeOfParallelism,
+                CancellationToken = cancellationToken
+            },
+            async (source, ct) =>
+            {
+                Interlocked.Increment(ref attempts);
+                var capturedAtUtc = DateTimeOffset.UtcNow;
 
-                var artifact = BuildArtifact(source, capturedAtUtc, execution);
-                await monitoringArtifactRepository.UpsertAsync(artifact, cancellationToken).ConfigureAwait(false);
-
-                if (execution.Succeeded)
+                try
                 {
-                    succeeded++;
-                    lastCapturedAtUtc = capturedAtUtc;
+                    var plan = await pluginResolver
+                        .ResolveAsync(source, IngestionMode.Continuous, ct)
+                        .ConfigureAwait(false);
+
+                    var captureResult = await audioCapturePlugin
+                        .CaptureAsync(source, plan, ct)
+                        .ConfigureAwait(false);
+
+                    var artifact = BuildArtifact(source, capturedAtUtc, captureResult);
+                    await monitoringArtifactRepository.UpsertAsync(artifact, ct).ConfigureAwait(false);
+
+                    if (captureResult.Succeeded)
+                    {
+                        Interlocked.Increment(ref succeeded);
+                        capturedAtUtcValues.Add(capturedAtUtc);
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref failed);
+                    }
                 }
-                else
+                catch (InvalidOperationException exception)
+                    when (exception.Message.StartsWith("No plugin profile configured", StringComparison.Ordinal))
                 {
-                    failed++;
+                    return;
                 }
-            }
-            catch (InvalidOperationException exception)
-                when (exception.Message.StartsWith("No plugin profile configured", StringComparison.Ordinal))
-            {
-                // Source is ignored when no plugin profile is configured for its media/platform.
-                continue;
-            }
-            catch
-            {
-                failed++;
-                throw;
-            }
-        }
+                catch
+                {
+                    Interlocked.Increment(ref failed);
+                }
+            }).ConfigureAwait(false);
+
+        DateTimeOffset? lastCapturedAtUtc = capturedAtUtcValues.Count == 0
+            ? (DateTimeOffset?)null
+            : capturedAtUtcValues.Max();
 
         return new ContinuousCaptureResult(attempts, succeeded, failed, lastCapturedAtUtc);
-    }
-
-    private async Task<ProcessCommand> BuildCommandAsync(
-        MediaOpsCore.Modules.Capture.Domain.CaptureSource source,
-        CancellationToken cancellationToken)
-    {
-        var plan = await pluginResolver
-            .ResolveAsync(source, IngestionMode.Continuous, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (string.IsNullOrWhiteSpace(plan.ToolExecutable))
-        {
-            throw new InvalidOperationException("ToolExecutable cannot be empty.");
-        }
-
-        if (string.IsNullOrWhiteSpace(plan.ToolArgumentsTemplate))
-        {
-            throw new InvalidOperationException("ToolArgumentsTemplate cannot be empty.");
-        }
-
-        var expanded = plan.ToolArgumentsTemplate.Replace("{url}", source.StreamUrl, StringComparison.Ordinal);
-        var arguments = expanded
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        return new ProcessCommand(plan.ToolExecutable, arguments, timeout: plan.CommandTimeout);
     }
 
     private static MonitoringArtifact BuildArtifact(
         MediaOpsCore.Modules.Capture.Domain.CaptureSource source,
         DateTimeOffset capturedAtUtc,
-        ProcessExecutionResult execution)
+        AudioCaptureExecutionResult captureResult)
     {
         var payload = JsonSerializer.Serialize(new
         {
             source.Platform,
             source.Media,
             source.StreamUrl,
-            execution.ExitCode,
-            execution.StandardOutput,
-            execution.StandardError,
-            execution.TimedOut
+            captureResult.Succeeded,
+            captureResult.OpusFilePath,
+            captureResult.ErrorMessage
         });
 
         return new MonitoringArtifact(
@@ -121,3 +114,4 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
             capturedAtUtc: capturedAtUtc);
     }
 }
+

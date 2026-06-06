@@ -126,4 +126,46 @@ public sealed class StaticCaptureSourceProviderCanaryTests
             }
         }
     }
+
+    [Fact]
+    public async Task ListConfiguredSourcesAsync_should_load_optional_primary_url()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var payload = new[]
+            {
+                new
+                {
+                    sourceId = "s1",
+                    platform = "caracol",
+                    media = "radio",
+                    streamUrl = "https://example.com/c1",
+                    primaryUrl = "https://caracol.example/en-vivo"
+                }
+            };
+
+            await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
+
+            var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions
+            {
+                EnableCanaryMode = false,
+                ContinuousMediaAllowList = "radio",
+                CaptureSourcesFilePath = tempFilePath
+            });
+
+            var sources = await provider.ListConfiguredSourcesAsync();
+
+            Assert.Single(sources);
+            Assert.Equal("https://caracol.example/en-vivo", sources[0].PrimaryUrl);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
 }

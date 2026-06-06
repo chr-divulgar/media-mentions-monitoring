@@ -1,5 +1,6 @@
 using MediaOpsCore.BuildingBlocks.Application;
 using MediaOpsCore.BuildingBlocks.Domain;
+using System.Collections.Concurrent;
 
 namespace MediaOpsCore.Workers.Operations;
 
@@ -8,6 +9,8 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
     private readonly InMemoryMonitoringArtifactRepository inMemoryRepository;
     private readonly IEvidenceFileStore evidenceFileStore;
     private readonly IReadOnlyList<IMonitoringArtifactDatabaseRepository> databaseRepositories;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> lastPersistedCaptureHourBySource =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public StageMirrorMonitoringArtifactRepository(
         InMemoryMonitoringArtifactRepository inMemoryRepository,
@@ -23,15 +26,21 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
     {
         await inMemoryRepository.UpsertAsync(artifact, cancellationToken).ConfigureAwait(false);
 
-        var relativePath = $"monitoringArtifacts/{Uri.EscapeDataString(artifact.Id)}.json";
+        var shouldPersistLocalEvidence = ShouldPersistLocalEvidence(artifact);
+        var relativePath = shouldPersistLocalEvidence
+            ? $"monitoringArtifacts/{Uri.EscapeDataString(artifact.Id)}.json"
+            : null;
 
-        try
+        if (relativePath is not null)
         {
-            await evidenceFileStore.WriteJsonAsync(relativePath, artifact, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Evidence write errors should not stop worker cycle; in-memory store remains source for pipeline continuity.
+            try
+            {
+                await evidenceFileStore.WriteJsonAsync(relativePath, artifact, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Evidence write errors should not stop worker cycle; in-memory store remains source for pipeline continuity.
+            }
         }
 
         var wasPersistedInDatabase = false;
@@ -49,6 +58,11 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
         }
 
         if (!wasPersistedInDatabase)
+        {
+            return;
+        }
+
+        if (relativePath is null)
         {
             return;
         }
@@ -71,5 +85,48 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
     public Task<IReadOnlyList<MonitoringArtifact>> ListByTenantAsync(string tenantId, CancellationToken cancellationToken = default)
     {
         return inMemoryRepository.ListByTenantAsync(tenantId, cancellationToken);
+    }
+
+    private bool ShouldPersistLocalEvidence(MonitoringArtifact artifact)
+    {
+        if (!string.Equals(artifact.Kind, "capture", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var sourceKey = string.IsNullOrWhiteSpace(artifact.Source)
+            ? "unknown-source"
+            : artifact.Source;
+
+        var captureHour = TruncateToUtcHour(artifact.CapturedAtUtc);
+
+        while (true)
+        {
+            if (!lastPersistedCaptureHourBySource.TryGetValue(sourceKey, out var lastPersistedHour))
+            {
+                if (lastPersistedCaptureHourBySource.TryAdd(sourceKey, captureHour))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (captureHour <= lastPersistedHour)
+            {
+                return false;
+            }
+
+            if (lastPersistedCaptureHourBySource.TryUpdate(sourceKey, captureHour, lastPersistedHour))
+            {
+                return true;
+            }
+        }
+    }
+
+    private static DateTimeOffset TruncateToUtcHour(DateTimeOffset value)
+    {
+        var utc = value.ToUniversalTime();
+        return new DateTimeOffset(utc.Year, utc.Month, utc.Day, utc.Hour, 0, 0, TimeSpan.Zero);
     }
 }

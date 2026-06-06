@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace MediaOpsCore.Workers.Operations;
 
@@ -18,6 +18,7 @@ public static class OperationsWorkerOptionsLoader
         string? CaptureSourcesFilePath,
         string? PluginProfilesFilePath,
         string? ContinuousMediaAllowList,
+        int? CaptureMaxDegreeOfParallelism,
         bool? EnableCanaryMode,
         int? CanaryPlatformPercent,
         int? CanaryPlatformMinPercent,
@@ -25,8 +26,24 @@ public static class OperationsWorkerOptionsLoader
         string? CanaryPlatformAllowList,
         string? StageFilesystemRootPath,
         int? SegmentDurationSeconds,
-        int? ProcessGuardianTimeoutSeconds,
-        int? ProcessGuardianRestartCommandTimeoutSeconds);
+        string? AudioOutputRootPath,
+        int? DefaultWavWindowDurationSeconds,
+        int? DefaultOpusFlushIntervalSeconds,
+        int? DefaultOpusRotationIntervalHours,
+        int? DefaultOpusBitrateKbps,
+        bool? EnableDecoderReconnect,
+        int? DecoderReconnectDelayMaxSeconds,
+        bool? RtspPreferTcp,
+        bool? EnableWavSilenceChunking,
+        int? WavSilenceMinChunkSeconds,
+        int? WavSilenceMaxChunkSeconds,
+        int? WavSilenceHoldMilliseconds,
+        int? WavSilenceAnalysisWindowMilliseconds,
+        double? WavSilenceThresholdDb,
+        bool? EnableStartupValidation,
+        bool? EnableStartupDiscoveryOnFailedOnly,
+        int? StartupValidationTimeoutSeconds,
+        int? StartupDiscoveryRequestTimeoutSeconds);
 
     public static OperationsWorkerOptions Load(string? configPath = null)
     {
@@ -75,6 +92,11 @@ public static class OperationsWorkerOptionsLoader
             options.ContinuousMediaAllowList = model.ContinuousMediaAllowList;
         }
 
+        if (model.CaptureMaxDegreeOfParallelism.HasValue)
+        {
+            options.CaptureMaxDegreeOfParallelism = model.CaptureMaxDegreeOfParallelism.Value;
+        }
+
         if (model.EnableCanaryMode.HasValue)
         {
             options.EnableCanaryMode = model.EnableCanaryMode.Value;
@@ -110,16 +132,97 @@ public static class OperationsWorkerOptionsLoader
             options.SegmentDurationSeconds = model.SegmentDurationSeconds.Value;
         }
 
-        if (model.ProcessGuardianTimeoutSeconds.HasValue)
+        if (!string.IsNullOrWhiteSpace(model.AudioOutputRootPath))
         {
-            options.ProcessGuardianTimeout = TimeSpan.FromSeconds(model.ProcessGuardianTimeoutSeconds.Value);
+            options.AudioOutputRootPath = model.AudioOutputRootPath;
         }
 
-        if (model.ProcessGuardianRestartCommandTimeoutSeconds.HasValue)
+        if (model.DefaultWavWindowDurationSeconds.HasValue)
         {
-            options.ProcessGuardianRestartCommandTimeout = TimeSpan.FromSeconds(model.ProcessGuardianRestartCommandTimeoutSeconds.Value);
+            options.DefaultWavWindowDurationSeconds = model.DefaultWavWindowDurationSeconds.Value;
+        }
+
+        if (model.DefaultOpusFlushIntervalSeconds.HasValue)
+        {
+            options.DefaultOpusFlushIntervalSeconds = model.DefaultOpusFlushIntervalSeconds.Value;
+        }
+
+        if (model.DefaultOpusRotationIntervalHours.HasValue)
+        {
+            options.DefaultOpusRotationIntervalHours = model.DefaultOpusRotationIntervalHours.Value;
+        }
+
+        if (model.DefaultOpusBitrateKbps.HasValue)
+        {
+            options.DefaultOpusBitrateKbps = model.DefaultOpusBitrateKbps.Value;
+        }
+
+        if (model.EnableDecoderReconnect.HasValue)
+        {
+            options.EnableDecoderReconnect = model.EnableDecoderReconnect.Value;
+        }
+
+        if (model.DecoderReconnectDelayMaxSeconds.HasValue)
+        {
+            options.DecoderReconnectDelayMaxSeconds = model.DecoderReconnectDelayMaxSeconds.Value;
+        }
+
+        if (model.RtspPreferTcp.HasValue)
+        {
+            options.RtspPreferTcp = model.RtspPreferTcp.Value;
+        }
+
+        if (model.EnableWavSilenceChunking.HasValue)
+        {
+            options.EnableWavSilenceChunking = model.EnableWavSilenceChunking.Value;
+        }
+
+        if (model.WavSilenceMinChunkSeconds.HasValue)
+        {
+            options.WavSilenceMinChunkSeconds = model.WavSilenceMinChunkSeconds.Value;
+        }
+
+        if (model.WavSilenceMaxChunkSeconds.HasValue)
+        {
+            options.WavSilenceMaxChunkSeconds = model.WavSilenceMaxChunkSeconds.Value;
+        }
+
+        if (model.WavSilenceHoldMilliseconds.HasValue)
+        {
+            options.WavSilenceHoldMilliseconds = model.WavSilenceHoldMilliseconds.Value;
+        }
+
+        if (model.WavSilenceAnalysisWindowMilliseconds.HasValue)
+        {
+            options.WavSilenceAnalysisWindowMilliseconds = model.WavSilenceAnalysisWindowMilliseconds.Value;
+        }
+
+        if (model.WavSilenceThresholdDb.HasValue)
+        {
+            options.WavSilenceThresholdDb = model.WavSilenceThresholdDb.Value;
+        }
+
+        if (model.EnableStartupValidation.HasValue)
+        {
+            options.EnableStartupValidation = model.EnableStartupValidation.Value;
+        }
+
+        if (model.EnableStartupDiscoveryOnFailedOnly.HasValue)
+        {
+            options.EnableStartupDiscoveryOnFailedOnly = model.EnableStartupDiscoveryOnFailedOnly.Value;
+        }
+
+        if (model.StartupValidationTimeoutSeconds.HasValue)
+        {
+            options.StartupValidationTimeoutSeconds = model.StartupValidationTimeoutSeconds.Value;
+        }
+
+        if (model.StartupDiscoveryRequestTimeoutSeconds.HasValue)
+        {
+            options.StartupDiscoveryRequestTimeoutSeconds = model.StartupDiscoveryRequestTimeoutSeconds.Value;
         }
 
         return options;
     }
 }
+

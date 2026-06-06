@@ -1,47 +1,48 @@
-[
+﻿[
   {
     "pluginId": "radio-default",
     "media": "radio",
     "platform": null,
     "ingestionMode": "continuous",
-    "toolExecutable": "ffmpeg",
-    "toolArgumentsTemplate": "-i {url} -t 30 -f segment out_%03d.mp3",
-    "commandTimeoutSeconds": 30
+    "wavWindowDurationSeconds": 30,
+    "opusFlushIntervalSeconds": 30,
+    "opusRotationIntervalHours": 1
   },
   {
     "pluginId": "video-default",
     "media": "video",
     "platform": null,
     "ingestionMode": "continuous",
-    "toolExecutable": "ffmpeg",
-    "toolArgumentsTemplate": "-i {url} -t 30 -f segment out_%03d.mp4",
-    "commandTimeoutSeconds": 30
+    "wavWindowDurationSeconds": 30,
+    "opusFlushIntervalSeconds": 30,
+    "opusRotationIntervalHours": 1
   },
   {
     "pluginId": "youtube-video",
     "media": "video",
     "platform": "youtube",
     "ingestionMode": "continuous",
-    "toolExecutable": "yt-dlp",
-    "toolArgumentsTemplate": "{url}",
-    "commandTimeoutSeconds": 45
+    "wavWindowDurationSeconds": 30,
+    "opusFlushIntervalSeconds": 30,
+    "opusRotationIntervalHours": 1
   },
   {
     "pluginId": "web-scraper-default",
     "media": "internet",
     "platform": null,
     "ingestionMode": "discrete",
-    "toolExecutable": "python",
-    "toolArgumentsTemplate": "-m scraper.run --url {url}",
-    "commandTimeoutSeconds": 120
+    "wavWindowDurationSeconds": 30,
+    "opusFlushIntervalSeconds": 30,
+    "opusRotationIntervalHours": 1
   },
   {
     "pluginId": "pdf-ingestion-default",
     "media": "document",
     "platform": null,
     "ingestionMode": "discrete",
-    "toolExecutable": "python",
-    "toolArgumentsTemplate": "-m pdf_ingest.run --source {url}",
-    "commandTimeoutSeconds": 120
+    "wavWindowDurationSeconds": 30,
+    "opusFlushIntervalSeconds": 30,
+    "opusRotationIntervalHours": 1
   }
 ]
+

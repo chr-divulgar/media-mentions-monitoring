@@ -8,6 +8,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 {
     private readonly OperationsWorkerOptions options;
     private const string GlobalIngestionScopeId = "global-ingestion";
+    private IReadOnlyList<CaptureSource>? resolvedSources;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -15,7 +16,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         PropertyNameCaseInsensitive = true
     };
 
-    private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl);
+    private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl, string? PrimaryUrl);
 
     public StaticCaptureSourceProvider(OperationsWorkerOptions options)
     {
@@ -24,11 +25,58 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 
     public Task<IReadOnlyList<CaptureSource>> ListActiveSourcesAsync(CancellationToken cancellationToken = default)
     {
-        var sources = LoadSources();
+        var sources = resolvedSources ?? LoadSources();
         var mediaScoped = ApplyContinuousMediaFilter(sources);
         var filtered = ApplyCanaryFilter(mediaScoped);
 
         return Task.FromResult<IReadOnlyList<CaptureSource>>(filtered);
+    }
+
+    public Task<IReadOnlyList<CaptureSource>> ListConfiguredSourcesAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<IReadOnlyList<CaptureSource>>(LoadSources());
+    }
+
+    public void SetResolvedSources(IReadOnlyList<CaptureSource> sources)
+    {
+        resolvedSources = sources;
+    }
+
+    public Task<bool> PersistStreamUrlAsync(string sourceId, string streamUrl, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId) || string.IsNullOrWhiteSpace(streamUrl))
+        {
+            return Task.FromResult(false);
+        }
+
+        var json = File.ReadAllText(options.CaptureSourcesFilePath);
+        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
+        if (items is null || items.Count == 0)
+        {
+            return Task.FromResult(false);
+        }
+
+        var sourceIndex = items.FindIndex(item => string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+        if (sourceIndex < 0)
+        {
+            return Task.FromResult(false);
+        }
+
+        if (string.Equals(items[sourceIndex].StreamUrl, streamUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(false);
+        }
+
+        items[sourceIndex] = items[sourceIndex] with { StreamUrl = streamUrl };
+
+        var updatedJson = JsonSerializer.Serialize(items, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        });
+
+        File.WriteAllText(options.CaptureSourcesFilePath, updatedJson);
+        return Task.FromResult(true);
     }
 
     private IReadOnlyList<CaptureSource> ApplyContinuousMediaFilter(IReadOnlyList<CaptureSource> sources)
@@ -64,7 +112,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         }
 
         return items
-            .Select(item => new CaptureSource(item.SourceId, GlobalIngestionScopeId, item.Platform, item.Media, item.StreamUrl))
+            .Select(item => new CaptureSource(item.SourceId, GlobalIngestionScopeId, item.Platform, item.Media, item.StreamUrl, item.PrimaryUrl))
             .ToArray();
     }
 

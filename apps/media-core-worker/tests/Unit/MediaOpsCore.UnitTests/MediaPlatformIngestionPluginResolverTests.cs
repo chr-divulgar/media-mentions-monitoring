@@ -1,4 +1,4 @@
-using MediaOpsCore.Modules.Capture.Application;
+﻿using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
 using MediaOpsCore.Workers.Operations;
 using Xunit;
@@ -17,29 +17,27 @@ public sealed class MediaPlatformIngestionPluginResolverTests
                 media: "video",
                 platform: null,
                 ingestionMode: IngestionMode.Continuous,
-                toolExecutable: "ffmpeg",
-                toolArgumentsTemplate: "-i {url}",
-                commandTimeout: TimeSpan.FromSeconds(15)),
+                wavWindowDuration: TimeSpan.FromSeconds(10),
+                opusFlushInterval: TimeSpan.FromSeconds(30),
+                opusRotationInterval: TimeSpan.FromHours(1)),
             new PluginProfile(
                 pluginId: "youtube-override",
                 media: "video",
                 platform: "youtube",
                 ingestionMode: IngestionMode.Continuous,
-                toolExecutable: "yt-dlp",
-                toolArgumentsTemplate: "{url}",
-                commandTimeout: TimeSpan.FromSeconds(20))
+                wavWindowDuration: TimeSpan.FromSeconds(10),
+                opusFlushInterval: TimeSpan.FromSeconds(20),
+                opusRotationInterval: TimeSpan.FromHours(2))
         });
 
-        var resolver = new MediaPlatformIngestionPluginResolver(
-            provider,
-            new OperationsWorkerOptions());
-
+        var resolver = new MediaPlatformIngestionPluginResolver(provider, new OperationsWorkerOptions());
         var source = new CaptureSource("src-1", "global-ingestion", "youtube", "video", "https://example.com/watch?v=abc");
 
         var plan = await resolver.ResolveAsync(source, IngestionMode.Continuous);
 
         Assert.Equal("youtube-override", plan.PluginId);
-        Assert.Equal("yt-dlp", plan.ToolExecutable);
+        Assert.Equal(TimeSpan.FromSeconds(20), plan.OpusFlushInterval);
+        Assert.Equal(TimeSpan.FromHours(2), plan.OpusRotationInterval);
     }
 
     [Fact]
@@ -52,21 +50,19 @@ public sealed class MediaPlatformIngestionPluginResolverTests
                 media: "radio",
                 platform: null,
                 ingestionMode: IngestionMode.Continuous,
-                toolExecutable: "ffmpeg",
-                toolArgumentsTemplate: "-i {url}",
-                commandTimeout: TimeSpan.FromSeconds(15))
+                wavWindowDuration: TimeSpan.FromSeconds(10),
+                opusFlushInterval: TimeSpan.FromSeconds(30),
+                opusRotationInterval: TimeSpan.FromHours(1))
         });
 
-        var resolver = new MediaPlatformIngestionPluginResolver(
-            provider,
-            new OperationsWorkerOptions());
-
+        var resolver = new MediaPlatformIngestionPluginResolver(provider, new OperationsWorkerOptions());
         var source = new CaptureSource("src-2", "global-ingestion", "caracol", "radio", "https://stream.example.com/live");
 
         var plan = await resolver.ResolveAsync(source, IngestionMode.Continuous);
 
         Assert.Equal("radio-default", plan.PluginId);
-        Assert.Equal("ffmpeg", plan.ToolExecutable);
+        Assert.Equal(TimeSpan.FromSeconds(30), plan.OpusFlushInterval);
+        Assert.Equal(TimeSpan.FromHours(1), plan.OpusRotationInterval);
     }
 
     [Fact]
@@ -96,3 +92,4 @@ public sealed class MediaPlatformIngestionPluginResolverTests
         }
     }
 }
+

@@ -96,15 +96,100 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
         }
     }
 
-    private static MonitoringArtifact CreateArtifact(string id)
+    [Fact]
+    public async Task UpsertAsync_should_not_write_local_evidence_for_segment_artifacts()
+    {
+        var tempRoot = CreateTempDirectory();
+        try
+        {
+            var options = new OperationsWorkerOptions
+            {
+                StageFilesystemRootPath = tempRoot
+            };
+            var evidenceStore = new FileSystemEvidenceStore(options);
+            var repository = new StageMirrorMonitoringArtifactRepository(
+                new InMemoryMonitoringArtifactRepository(),
+                evidenceStore,
+                Array.Empty<IMonitoringArtifactDatabaseRepository>());
+
+            var segmentArtifact = CreateArtifact(
+                id: "segment-capture-unit-test-1",
+                source: "unit-test",
+                kind: "segment",
+                capturedAtUtc: DateTimeOffset.UtcNow);
+
+            await repository.UpsertAsync(segmentArtifact);
+
+            var filePath = BuildEvidencePath(tempRoot, segmentArtifact.Id);
+            Assert.False(File.Exists(filePath));
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task UpsertAsync_should_write_capture_evidence_only_once_per_source_per_hour()
+    {
+        var tempRoot = CreateTempDirectory();
+        try
+        {
+            var options = new OperationsWorkerOptions
+            {
+                StageFilesystemRootPath = tempRoot
+            };
+            var evidenceStore = new FileSystemEvidenceStore(options);
+            var repository = new StageMirrorMonitoringArtifactRepository(
+                new InMemoryMonitoringArtifactRepository(),
+                evidenceStore,
+                Array.Empty<IMonitoringArtifactDatabaseRepository>());
+
+            var firstCapture = CreateArtifact(
+                id: "capture-unit-test-20260605150000000",
+                source: "unit-test",
+                kind: "capture",
+                capturedAtUtc: new DateTimeOffset(2026, 6, 5, 15, 5, 0, TimeSpan.Zero));
+
+            var sameHourCapture = CreateArtifact(
+                id: "capture-unit-test-20260605153000000",
+                source: "unit-test",
+                kind: "capture",
+                capturedAtUtc: new DateTimeOffset(2026, 6, 5, 15, 30, 0, TimeSpan.Zero));
+
+            var nextHourCapture = CreateArtifact(
+                id: "capture-unit-test-20260605160000000",
+                source: "unit-test",
+                kind: "capture",
+                capturedAtUtc: new DateTimeOffset(2026, 6, 5, 16, 1, 0, TimeSpan.Zero));
+
+            await repository.UpsertAsync(firstCapture);
+            await repository.UpsertAsync(sameHourCapture);
+            await repository.UpsertAsync(nextHourCapture);
+
+            Assert.True(File.Exists(BuildEvidencePath(tempRoot, firstCapture.Id)));
+            Assert.False(File.Exists(BuildEvidencePath(tempRoot, sameHourCapture.Id)));
+            Assert.True(File.Exists(BuildEvidencePath(tempRoot, nextHourCapture.Id)));
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tempRoot);
+        }
+    }
+
+    private static MonitoringArtifact CreateArtifact(
+        string id,
+        string source = "unit-test",
+        string kind = "capture",
+        DateTimeOffset? capturedAtUtc = null)
     {
         return new MonitoringArtifact(
             id: id,
             tenantId: "global-ingestion",
-            source: "unit-test",
-            kind: "capture",
+            source: source,
+            kind: kind,
             payloadJson: "{}",
-            capturedAtUtc: DateTimeOffset.UtcNow);
+            capturedAtUtc: capturedAtUtc ?? DateTimeOffset.UtcNow);
     }
 
     private static string BuildEvidencePath(string root, string artifactId)

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Workers.Operations;
 using Xunit;
@@ -19,9 +19,9 @@ public sealed class JsonPluginProfileProviderTests
                 media = "radio",
                 platform = (string?)null,
                 ingestionMode = "continuous",
-                toolExecutable = "ffmpeg",
-                toolArgumentsTemplate = "-i {url}",
-                commandTimeoutSeconds = 25
+                wavWindowDurationSeconds = 15,
+                opusFlushIntervalSeconds = 30,
+                opusRotationIntervalHours = 1
             },
             new
             {
@@ -29,18 +29,15 @@ public sealed class JsonPluginProfileProviderTests
                 media = "internet",
                 platform = (string?)"site-a",
                 ingestionMode = "discrete",
-                toolExecutable = "crawler",
-                toolArgumentsTemplate = "--url {url}",
-                commandTimeoutSeconds = 40
+                wavWindowDurationSeconds = 20,
+                opusFlushIntervalSeconds = 20,
+                opusRotationIntervalHours = 2
             }
         }));
 
         try
         {
-            var options = new OperationsWorkerOptions
-            {
-                PluginProfilesFilePath = tempFilePath
-            };
+            var options = new OperationsWorkerOptions { PluginProfilesFilePath = tempFilePath };
             var provider = new JsonPluginProfileProvider(options);
 
             var profiles = await provider.ListProfilesAsync();
@@ -49,11 +46,14 @@ public sealed class JsonPluginProfileProviderTests
             Assert.Contains(profiles, profile =>
                 profile.PluginId == "radio-default" &&
                 profile.IngestionMode == IngestionMode.Continuous &&
-                profile.CommandTimeout == TimeSpan.FromSeconds(25));
+                profile.WavWindowDuration == TimeSpan.FromSeconds(15) &&
+                profile.OpusFlushInterval == TimeSpan.FromSeconds(30));
             Assert.Contains(profiles, profile =>
                 profile.PluginId == "web-discrete" &&
                 profile.IngestionMode == IngestionMode.Discrete &&
-                profile.Platform == "site-a");
+                profile.Platform == "site-a" &&
+                profile.WavWindowDuration == TimeSpan.FromSeconds(20) &&
+                profile.OpusRotationInterval == TimeSpan.FromHours(2));
         }
         finally
         {
@@ -64,3 +64,4 @@ public sealed class JsonPluginProfileProviderTests
         }
     }
 }
+

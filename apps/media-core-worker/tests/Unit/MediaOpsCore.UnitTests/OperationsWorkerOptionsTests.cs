@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace MediaOpsCore.UnitTests;
 
@@ -18,5 +18,16 @@ public sealed class OperationsWorkerOptionsTests
         var options = new MediaOpsCore.Workers.Operations.OperationsWorkerOptions();
 
         Assert.Equal("radio,video", options.ContinuousMediaAllowList);
+    }
+
+    [Fact]
+    public void Default_audio_windows_should_be_30_seconds()
+    {
+        var options = new MediaOpsCore.Workers.Operations.OperationsWorkerOptions();
+
+        Assert.Equal(30, options.DefaultWavWindowDurationSeconds);
+        Assert.Equal(30, options.DefaultOpusFlushIntervalSeconds);
+        Assert.Equal(1, options.DefaultOpusRotationIntervalHours);
+        Assert.Equal(64, options.DefaultOpusBitrateKbps);
     }
 }

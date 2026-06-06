@@ -22,3 +22,11 @@ audioFiles
 apps/web-api/public/*
 scripts/*.json
 /graphify-out
+
+*.wav
+*.flac
+*.opus
+*.mp3
+/apps/media-core-worker/stage-evidence/*
+/apps/media-core-worker/stage/*
+/apps/media-core-worker/graphify-out/*

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using MediaOpsCore.Modules.Capture.Application;
 
 namespace MediaOpsCore.Workers.Operations;
@@ -18,9 +18,9 @@ public sealed class JsonPluginProfileProvider : IPluginProfileProvider
         string Media,
         string? Platform,
         string? IngestionMode,
-        string ToolExecutable,
-        string ToolArgumentsTemplate,
-        int? CommandTimeoutSeconds);
+        int? WavWindowDurationSeconds,
+        int? OpusFlushIntervalSeconds,
+        int? OpusRotationIntervalHours);
 
     public JsonPluginProfileProvider(OperationsWorkerOptions options)
     {
@@ -52,9 +52,9 @@ public sealed class JsonPluginProfileProvider : IPluginProfileProvider
                 item.Media,
                 item.Platform,
                 ParseIngestionMode(item.IngestionMode),
-                item.ToolExecutable,
-                item.ToolArgumentsTemplate,
-                TimeSpan.FromSeconds(item.CommandTimeoutSeconds.GetValueOrDefault(15))))
+                TimeSpan.FromSeconds(item.WavWindowDurationSeconds.GetValueOrDefault(options.DefaultWavWindowDurationSeconds)),
+                TimeSpan.FromSeconds(item.OpusFlushIntervalSeconds.GetValueOrDefault(options.DefaultOpusFlushIntervalSeconds)),
+                TimeSpan.FromHours(item.OpusRotationIntervalHours.GetValueOrDefault(options.DefaultOpusRotationIntervalHours))))
             .ToArray();
 
         return Task.FromResult<IReadOnlyList<PluginProfile>>(profiles);
@@ -69,3 +69,4 @@ public sealed class JsonPluginProfileProvider : IPluginProfileProvider
         };
     }
 }
+
