@@ -58,7 +58,7 @@ public sealed class OperationsWorker : BackgroundService
                 operationalMetrics.RecordProcessGuardianRun(chunkMonitorResult.OrphansDetected, reconcileInactiveResult.Reconciled);
 
                 logger.LogInformation(
-                    "Operations cycle completed. capture_attempts={CaptureAttempts} capture_succeeded={CaptureSucceeded} capture_failed={CaptureFailed} segments_generated={SegmentsGenerated} pipeline_lag_seconds={PipelineLagSeconds} process_inspected={ProcessInspected} process_restarted={ProcessRestarted} process_timed_out={ProcessTimedOut} reconciled_inactive={ReconciledInactive} orphans_detected={OrphansDetected} orphans_stopped={OrphansStopped}.",
+                    "Operations cycle completed. capture_attempts={CaptureAttempts} capture_started={CaptureStarted} capture_not_started={CaptureNotStarted} segments_generated={SegmentsGenerated} pipeline_lag_seconds={PipelineLagSeconds} process_inspected={ProcessInspected} process_restarted={ProcessRestarted} process_timed_out={ProcessTimedOut} reconciled_inactive={ReconciledInactive} orphans_detected={OrphansDetected} orphans_stopped={OrphansStopped}.",
                     captureResult.Attempts,
                     captureResult.Succeeded,
                     captureResult.Failed,

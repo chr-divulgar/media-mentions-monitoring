@@ -33,7 +33,7 @@ public sealed class ContinuousIngestionOrchestrator : IContinuousIngestionOrches
         operationalMetrics.RecordSegmentationRun(segmentationResult.SegmentsGenerated, segmentationResult.PipelineLagSeconds);
 
         logger.LogInformation(
-            "Continuous ingestion cycle completed. capture_attempts={CaptureAttempts} capture_succeeded={CaptureSucceeded} capture_failed={CaptureFailed} segments_generated={SegmentsGenerated} pipeline_lag_seconds={PipelineLagSeconds}.",
+            "Continuous ingestion cycle completed. capture_attempts={CaptureAttempts} capture_started={CaptureStarted} capture_not_started={CaptureNotStarted} segments_generated={SegmentsGenerated} pipeline_lag_seconds={PipelineLagSeconds}.",
             captureResult.Attempts,
             captureResult.Succeeded,
             captureResult.Failed,

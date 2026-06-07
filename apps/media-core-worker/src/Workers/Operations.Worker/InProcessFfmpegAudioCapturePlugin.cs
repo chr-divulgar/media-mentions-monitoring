@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using FFmpeg.AutoGen;
 using FFmpeg.AutoGen.Bindings.DynamicallyLoaded;
+using MediaOpsCore.BuildingBlocks.Application;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
 using Microsoft.Extensions.Logging;
@@ -16,18 +17,24 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     private const int AudioChannels = 1;
     private const int AudioBytesPerSample = 2;
     private const int WavHeaderSize = 44;
+    private const string DefaultHttpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Safari/537.36";
     private static readonly string[] RequiredFfmpegLibraries = ["avutil", "avcodec", "avformat", "swresample"];
 
     private static int ffmpegInitialized;
     private int disposed;
     private readonly OperationsWorkerOptions options;
     private readonly ILogger<InProcessFfmpegAudioCapturePlugin> logger;
+    private readonly IOperationalMetrics operationalMetrics;
     private readonly ConcurrentDictionary<string, CaptureSession> sessions = new(StringComparer.Ordinal);
 
-    public InProcessFfmpegAudioCapturePlugin(OperationsWorkerOptions options, ILogger<InProcessFfmpegAudioCapturePlugin> logger)
+    public InProcessFfmpegAudioCapturePlugin(
+        OperationsWorkerOptions options,
+        ILogger<InProcessFfmpegAudioCapturePlugin> logger,
+        IOperationalMetrics operationalMetrics)
     {
         this.options = options;
         this.logger = logger;
+        this.operationalMetrics = operationalMetrics;
         EnsureFfmpegInitialized();
     }
 
@@ -47,8 +54,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         var session = sessions.AddOrUpdate(
             source.SourceId,
-            _ => CaptureSession.Start(source, sourceDirectory, plan, options, logger),
-            (_, existing) => existing.IsRunning ? existing : CaptureSession.Start(source, sourceDirectory, plan, options, logger));
+            _ => CaptureSession.Start(source, sourceDirectory, plan, options, logger, operationalMetrics),
+            (_, existing) => existing.IsRunning ? existing : CaptureSession.Start(source, sourceDirectory, plan, options, logger, operationalMetrics));
 
         var startupResult = await session.WaitForStartupAsync(cancellationToken).ConfigureAwait(false);
         if (!startupResult.Succeeded)
@@ -167,6 +174,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         private readonly CaptureSource source;
         private readonly OperationsWorkerOptions options;
         private readonly ILogger logger;
+        private readonly IOperationalMetrics operationalMetrics;
         private volatile string? activeOpusPath;
         private volatile bool isRunning;
         private volatile string? lastError;
@@ -176,13 +184,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             string sourceDirectory,
             PluginExecutionPlan plan,
             OperationsWorkerOptions options,
-            ILogger logger)
+            ILogger logger,
+            IOperationalMetrics operationalMetrics)
         {
             this.source = source;
             this.sourceDirectory = sourceDirectory;
             this.plan = plan;
             this.options = options;
             this.logger = logger;
+            this.operationalMetrics = operationalMetrics;
             sourceId = source.SourceId;
             isRunning = true;
             captureTask = Task.Run(RunAsync);
@@ -193,9 +203,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             string sourceDirectory,
             PluginExecutionPlan plan,
             OperationsWorkerOptions options,
-            ILogger logger)
+            ILogger logger,
+            IOperationalMetrics operationalMetrics)
         {
-            return new CaptureSession(source, sourceDirectory, plan, options, logger);
+            return new CaptureSession(source, sourceDirectory, plan, options, logger, operationalMetrics);
         }
 
         public bool IsRunning => isRunning && !captureTask.IsCompleted;
@@ -276,8 +287,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             AVPacket* outputPacket = null;
             AVDictionary* inputOptions = null;
             AVFormatContext* inputContextPtr = null;
-            MemoryStream? pendingOpusPcm = null;
-            MemoryStream? pendingWavPcm = null;
+            PcmByteQueue? pendingOpusPcm = null;
+            PcmByteQueue? pendingWavPcm = null;
             var sampleCursor = 0L;
             var encoderSampleCursor = 0L;
             var lastFlushAt = DateTimeOffset.UtcNow;
@@ -286,6 +297,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             var nextRotationAt = AlignWindow(lastFlushAt, effectiveOpusRotationInterval).Add(effectiveOpusRotationInterval);
             var encoderFrameSize = 0;
             WavChunkingState? wavChunkingState = null;
+            var consecutivePacketSendErrors = 0;
+            var consecutiveEncoderFrameSendFailures = 0;
+            const int maxConsecutivePacketSendErrors = 8;
+            const int maxConsecutiveEncoderFrameSendFailures = 48;
 
             try
             {
@@ -316,7 +331,40 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     ffmpeg.av_dict_set(&inputOptions, "rtsp_transport", "tcp", 0);
                 }
 
-                ffmpeg.avformat_open_input(&inputContextPtr, source.StreamUrl, null, &inputOptions).ThrowIfError("avformat_open_input");
+                var openResult = ffmpeg.avformat_open_input(&inputContextPtr, source.StreamUrl, null, &inputOptions);
+                if (openResult < 0 && isHttpStream)
+                {
+                    if (inputContextPtr is not null)
+                    {
+                        ffmpeg.avformat_close_input(&inputContextPtr);
+                    }
+
+                    ffmpeg.av_dict_free(&inputOptions);
+
+                    // Rebuild baseline options and retry once with browser-like HTTP headers.
+                    ffmpeg.av_dict_set(&inputOptions, "probesize", "131072", 0);
+                    ffmpeg.av_dict_set(&inputOptions, "analyzeduration", "1000000", 0);
+                    ffmpeg.av_dict_set(&inputOptions, "stimeout", "5000000", 0);
+
+                    if (options.EnableDecoderReconnect)
+                    {
+                        ffmpeg.av_dict_set(&inputOptions, "reconnect", "1", 0);
+                        ffmpeg.av_dict_set(&inputOptions, "reconnect_streamed", "1", 0);
+                        ffmpeg.av_dict_set(&inputOptions, "reconnect_delay_max", options.DecoderReconnectDelayMaxSeconds.ToString(), 0);
+                    }
+
+                    ffmpeg.av_dict_set(&inputOptions, "user_agent", DefaultHttpUserAgent, 0);
+
+                    var headers = BuildHttpRequestHeaders(source.StreamUrl);
+                    if (!string.IsNullOrWhiteSpace(headers))
+                    {
+                        ffmpeg.av_dict_set(&inputOptions, "headers", headers, 0);
+                    }
+
+                    openResult = ffmpeg.avformat_open_input(&inputContextPtr, source.StreamUrl, null, &inputOptions);
+                }
+
+                openResult.ThrowIfError("avformat_open_input");
                 inputContext = inputContextPtr;
                 ffmpeg.avformat_find_stream_info(inputContext, null).ThrowIfError("avformat_find_stream_info");
 
@@ -404,8 +452,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
                 ffmpeg.avcodec_open2(encoderContext, encoder, null).ThrowIfError("avcodec_open2(encoder)");
                 encoderFrameSize = encoderContext->frame_size > 0 ? encoderContext->frame_size : AudioSampleRate / 2;
-                pendingOpusPcm = new MemoryStream();
-                pendingWavPcm = new MemoryStream();
+                pendingOpusPcm = new PcmByteQueue();
+                pendingWavPcm = new PcmByteQueue();
                 wavChunkingState = options.EnableWavSilenceChunking
                     ? WavChunkingState.Create(options, logger, sourceId)
                     : null;
@@ -443,7 +491,32 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         continue;
                     }
 
-                    ffmpeg.avcodec_send_packet(decoderContext, inputPacket).ThrowIfError("avcodec_send_packet");
+                    var sendPacketResult = ffmpeg.avcodec_send_packet(decoderContext, inputPacket);
+                    if (sendPacketResult < 0)
+                    {
+                        consecutivePacketSendErrors++;
+
+                        // Some HTTP/ICY streams emit malformed packets intermittently.
+                        // Skip a bounded number of consecutive decoder send failures before aborting the session.
+                        if (consecutivePacketSendErrors <= maxConsecutivePacketSendErrors)
+                        {
+                            if (consecutivePacketSendErrors == 1 || consecutivePacketSendErrors == maxConsecutivePacketSendErrors)
+                            {
+                                logger.LogWarning(
+                                    "Transient decoder packet error for source {SourceId}. FFmpegCode={ErrorCode}, ConsecutiveErrors={ConsecutiveErrors}/{MaxConsecutiveErrors}.",
+                                    sourceId,
+                                    sendPacketResult,
+                                    consecutivePacketSendErrors,
+                                    maxConsecutivePacketSendErrors);
+                            }
+
+                            continue;
+                        }
+
+                        sendPacketResult.ThrowIfError("avcodec_send_packet");
+                    }
+
+                    consecutivePacketSendErrors = 0;
 
                     while (true)
                     {
@@ -481,7 +554,17 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         var now = DateTimeOffset.UtcNow;
 
                         AppendSamples(pendingOpusPcm!, resampledFrame, AudioChannels);
-                        EncodeBufferedSamples(pendingOpusPcm!, encoderFrameSize, encoderContext, encoderFrame, outputContext, outputStream, outputPacket, ref encoderSampleCursor);
+                        EncodeBufferedSamples(
+                            pendingOpusPcm!,
+                            encoderFrameSize,
+                            encoderContext,
+                            encoderFrame,
+                            outputContext,
+                            outputStream,
+                            outputPacket,
+                            ref encoderSampleCursor,
+                            ref consecutiveEncoderFrameSendFailures,
+                            maxConsecutiveEncoderFrameSendFailures);
 
                         AppendSamples(pendingWavPcm!, resampledFrame, AudioChannels);
                         if (wavChunkingState is not null)
@@ -521,7 +604,18 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
                 if (pendingOpusPcm is not null && pendingOpusPcm.Length > 0)
                 {
-                    EncodeBufferedSamples(pendingOpusPcm, int.MaxValue, encoderContext, encoderFrame!, outputContext, outputStream, outputPacket, ref encoderSampleCursor, flushFinal: true);
+                    EncodeBufferedSamples(
+                        pendingOpusPcm,
+                        int.MaxValue,
+                        encoderContext,
+                        encoderFrame!,
+                        outputContext,
+                        outputStream,
+                        outputPacket,
+                        ref encoderSampleCursor,
+                        ref consecutiveEncoderFrameSendFailures,
+                        maxConsecutiveEncoderFrameSendFailures,
+                        flushFinal: true);
                 }
 
                 DrainEncoder(encoderContext, outputContext, outputStream, outputPacket);
@@ -538,6 +632,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             {
                 var detailedError = exception.ToString();
                 SetFailure(detailedError);
+                operationalMetrics.RecordCaptureRuntimeFailure(sourceId);
                 logger.LogError(exception, "Capture failed for source {SourceId}.", sourceId);
                 startupCompletionSource.TrySetResult(new AudioCaptureExecutionResult(false, activeOpusPath ?? CurrentOpusPath(), detailedError));
                 return Task.CompletedTask;
@@ -546,8 +641,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             {
                 isRunning = false;
 
-                pendingOpusPcm?.Dispose();
-                pendingWavPcm?.Dispose();
+                pendingOpusPcm = null;
+                pendingWavPcm = null;
 
                 if (outputContext is not null)
                 {
@@ -639,6 +734,21 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             return context;
         }
 
+        private static string BuildHttpRequestHeaders(string streamUrl)
+        {
+            if (!Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))
+            {
+                return string.Empty;
+            }
+
+            var origin = uri.IsDefaultPort
+                ? $"{uri.Scheme}://{uri.Host}"
+                : $"{uri.Scheme}://{uri.Host}:{uri.Port}";
+            var referer = $"{origin}/";
+
+            return $"Referer: {referer}\r\nOrigin: {origin}\r\nAccept: */*\r\n";
+        }
+
         private void RotateOutput(ref AVFormatContext* outputContext, ref AVStream* outputStream, AVCodecContext* encoderContext, AVPacket* packet, DateTimeOffset now, TimeSpan rotationInterval)
         {
             if (outputContext is null)
@@ -666,9 +776,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             outputContext = OpenOutputContext(activeOpusPath, encoderContext, ref outputStream);
         }
 
-        private static void DrainEncoder(AVCodecContext* encoderContext, AVFormatContext* outputContext, AVStream* outputStream, AVPacket* packet)
+        private void DrainEncoder(AVCodecContext* encoderContext, AVFormatContext* outputContext, AVStream* outputStream, AVPacket* packet)
         {
-            ffmpeg.avcodec_send_frame(encoderContext, null).ThrowIfError("avcodec_send_frame(flush)");
+            if (!TrySendFrameWithRecovery(encoderContext, null, outputContext, outputStream, packet, 0, flushFinal: true))
+            {
+                logger.LogWarning("Skipping encoder flush for source {SourceId} after repeated send_frame failure.", sourceId);
+                return;
+            }
 
             while (true)
             {
@@ -686,43 +800,43 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private static void AppendSamples(MemoryStream pendingPcm, AVFrame* frame, int channels)
+        private static void AppendSamples(PcmByteQueue pendingPcm, AVFrame* frame, int channels)
         {
             var pcmBytes = checked((int)(frame->nb_samples * channels * AudioBytesPerSample));
-            var span = new ReadOnlySpan<byte>(frame->data[0], pcmBytes);
-            pendingPcm.Write(span);
+            pendingPcm.AppendFromFrame(frame, pcmBytes);
         }
 
-        private static void FlushWavWindow(MemoryStream pcmBuffer, string outputPath)
+        private static void FlushWavWindow(PcmByteQueue pcmBuffer, string outputPath)
         {
             if (pcmBuffer.Length == 0)
             {
                 return;
             }
 
-            var pcmBytes = pcmBuffer.ToArray();
-            pcmBuffer.SetLength(0);
-
-            var wavBytes = new byte[WavHeaderSize + pcmBytes.Length];
+            var pcmLength = pcmBuffer.Length;
+            var wavHeader = new byte[WavHeaderSize];
 
             var bytesPerSecond = AudioSampleRate * AudioChannels * AudioBytesPerSample;
-            WriteAscii(wavBytes, 0, "RIFF");
-            BinaryPrimitives.WriteInt32LittleEndian(wavBytes.AsSpan(4, 4), 36 + pcmBytes.Length);
-            WriteAscii(wavBytes, 8, "WAVE");
-            WriteAscii(wavBytes, 12, "fmt ");
-            BinaryPrimitives.WriteInt32LittleEndian(wavBytes.AsSpan(16, 4), 16);
-            BinaryPrimitives.WriteInt16LittleEndian(wavBytes.AsSpan(20, 2), 1);
-            BinaryPrimitives.WriteInt16LittleEndian(wavBytes.AsSpan(22, 2), (short)AudioChannels);
-            BinaryPrimitives.WriteInt32LittleEndian(wavBytes.AsSpan(24, 4), AudioSampleRate);
-            BinaryPrimitives.WriteInt32LittleEndian(wavBytes.AsSpan(28, 4), bytesPerSecond);
-            BinaryPrimitives.WriteInt16LittleEndian(wavBytes.AsSpan(32, 2), (short)(AudioChannels * AudioBytesPerSample));
-            BinaryPrimitives.WriteInt16LittleEndian(wavBytes.AsSpan(34, 2), 16);
-            WriteAscii(wavBytes, 36, "data");
-            BinaryPrimitives.WriteInt32LittleEndian(wavBytes.AsSpan(40, 4), pcmBytes.Length);
-            pcmBytes.CopyTo(wavBytes, WavHeaderSize);
+            WriteAscii(wavHeader, 0, "RIFF");
+            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(4, 4), 36 + pcmLength);
+            WriteAscii(wavHeader, 8, "WAVE");
+            WriteAscii(wavHeader, 12, "fmt ");
+            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(16, 4), 16);
+            BinaryPrimitives.WriteInt16LittleEndian(wavHeader.AsSpan(20, 2), 1);
+            BinaryPrimitives.WriteInt16LittleEndian(wavHeader.AsSpan(22, 2), (short)AudioChannels);
+            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(24, 4), AudioSampleRate);
+            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(28, 4), bytesPerSecond);
+            BinaryPrimitives.WriteInt16LittleEndian(wavHeader.AsSpan(32, 2), (short)(AudioChannels * AudioBytesPerSample));
+            BinaryPrimitives.WriteInt16LittleEndian(wavHeader.AsSpan(34, 2), 16);
+            WriteAscii(wavHeader, 36, "data");
+            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(40, 4), pcmLength);
 
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-            File.WriteAllBytes(outputPath, wavBytes);
+
+            using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+            fileStream.Write(wavHeader, 0, wavHeader.Length);
+            pcmBuffer.WriteAllTo(fileStream);
+            pcmBuffer.ResetAfterWrite();
         }
 
         private static void WriteAscii(Span<byte> destination, int offset, string value)
@@ -733,8 +847,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private static void EncodeBufferedSamples(
-            MemoryStream pendingPcm,
+        private void EncodeBufferedSamples(
+            PcmByteQueue pendingPcm,
             int frameSize,
             AVCodecContext* encoderContext,
             AVFrame* encoderFrame,
@@ -742,6 +856,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             AVStream* outputStream,
             AVPacket* packet,
             ref long encoderSampleCursor,
+            ref int consecutiveEncoderFrameSendFailures,
+            int maxConsecutiveEncoderFrameSendFailures,
             bool flushFinal = false)
         {
             var bytesPerSampleFrame = frameSize * AudioChannels * AudioBytesPerSample;
@@ -762,16 +878,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 }
 
                 var bytesToEncode = samplesToEncode * AudioChannels * AudioBytesPerSample;
-                var pcm = pendingPcm.ToArray();
-                var frameBytes = new byte[bytesToEncode];
-                Buffer.BlockCopy(pcm, 0, frameBytes, 0, bytesToEncode);
-
-                var remainingBytes = pcm.Length - bytesToEncode;
-                pendingPcm.SetLength(0);
-                if (remainingBytes > 0)
-                {
-                    pendingPcm.Write(pcm, bytesToEncode, remainingBytes);
-                }
 
                 ffmpeg.av_frame_unref(encoderFrame);
                 encoderFrame->nb_samples = samplesToEncode;
@@ -789,8 +895,38 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 encoderFrame->pts = encoderSampleCursor;
                 encoderSampleCursor += samplesToEncode;
 
-                Marshal.Copy(frameBytes, 0, (IntPtr)encoderFrame->data[0], bytesToEncode);
-                ffmpeg.avcodec_send_frame(encoderContext, encoderFrame).ThrowIfError("avcodec_send_frame");
+                pendingPcm.CopyToAndConsume((IntPtr)encoderFrame->data[0], bytesToEncode);
+
+                if (!TrySendFrameWithRecovery(encoderContext, encoderFrame, outputContext, outputStream, packet, samplesToEncode, flushFinal))
+                {
+                    if (!flushFinal)
+                    {
+                        consecutiveEncoderFrameSendFailures++;
+
+                        if (consecutiveEncoderFrameSendFailures == 1
+                            || consecutiveEncoderFrameSendFailures % 12 == 0)
+                        {
+                            logger.LogWarning(
+                                "Encoder send_frame is failing repeatedly for source {SourceId}. ConsecutiveFailures={ConsecutiveFailures}/{MaxConsecutiveFailures}, SamplesToEncode={SamplesToEncode}.",
+                                sourceId,
+                                consecutiveEncoderFrameSendFailures,
+                                maxConsecutiveEncoderFrameSendFailures,
+                                samplesToEncode);
+                        }
+
+                        if (consecutiveEncoderFrameSendFailures >= maxConsecutiveEncoderFrameSendFailures)
+                        {
+                            throw new InvalidOperationException(
+                                $"Encoder send_frame failed repeatedly for source {sourceId}; aborting capture to allow recovery.");
+                        }
+
+                        continue;
+                    }
+
+                    throw new InvalidOperationException($"avcodec_send_frame failed for source {sourceId} during final flush after retry.");
+                }
+
+                consecutiveEncoderFrameSendFailures = 0;
 
                 while (true)
                 {
@@ -805,6 +941,176 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     packet->stream_index = outputStream->index;
                     ffmpeg.av_packet_rescale_ts(packet, encoderContext->time_base, outputStream->time_base);
                     ffmpeg.av_interleaved_write_frame(outputContext, packet).ThrowIfError("av_interleaved_write_frame");
+                }
+            }
+        }
+
+        private bool TrySendFrameWithRecovery(
+            AVCodecContext* encoderContext,
+            AVFrame* encoderFrame,
+            AVFormatContext* outputContext,
+            AVStream* outputStream,
+            AVPacket* packet,
+            int samplesToEncode,
+            bool flushFinal)
+        {
+            var sendResult = ffmpeg.avcodec_send_frame(encoderContext, encoderFrame);
+            if (sendResult >= 0)
+            {
+                return true;
+            }
+
+            DrainEncoderPackets(encoderContext, outputContext, outputStream, packet);
+
+            sendResult = ffmpeg.avcodec_send_frame(encoderContext, encoderFrame);
+            if (sendResult >= 0)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static void DrainEncoderPackets(AVCodecContext* encoderContext, AVFormatContext* outputContext, AVStream* outputStream, AVPacket* packet)
+        {
+            while (true)
+            {
+                ffmpeg.av_packet_unref(packet);
+                var result = ffmpeg.avcodec_receive_packet(encoderContext, packet);
+                if (result == ffmpeg.AVERROR(ffmpeg.EAGAIN) || result == ffmpeg.AVERROR_EOF)
+                {
+                    break;
+                }
+
+                if (result < 0)
+                {
+                    break;
+                }
+
+                packet->stream_index = outputStream->index;
+                ffmpeg.av_packet_rescale_ts(packet, encoderContext->time_base, outputStream->time_base);
+                ffmpeg.av_interleaved_write_frame(outputContext, packet).ThrowIfError("av_interleaved_write_frame(drain)");
+            }
+        }
+
+        private sealed class PcmByteQueue
+        {
+            private const int DefaultCapacity = 64 * 1024;
+            private const int ShrinkThreshold = 1024 * 1024;
+
+            private byte[] buffer;
+            private int startOffset;
+            private int length;
+
+            public PcmByteQueue()
+            {
+                buffer = new byte[DefaultCapacity];
+            }
+
+            public int Length => length;
+
+            public void AppendFromFrame(AVFrame* frame, int bytesToAppend)
+            {
+                if (bytesToAppend <= 0)
+                {
+                    return;
+                }
+
+                EnsureWritable(bytesToAppend);
+                Marshal.Copy((IntPtr)frame->data[0], buffer, startOffset + length, bytesToAppend);
+                length += bytesToAppend;
+            }
+
+            public void CopyToAndConsume(IntPtr destination, int count)
+            {
+                if (count <= 0)
+                {
+                    return;
+                }
+
+                if (count > length)
+                {
+                    throw new InvalidOperationException($"PCM buffer underflow. Requested={count}, Available={length}.");
+                }
+
+                Marshal.Copy(buffer, startOffset, destination, count);
+                startOffset += count;
+                length -= count;
+                NormalizeAfterConsume();
+            }
+
+            public void WriteAllTo(Stream destination)
+            {
+                if (length == 0)
+                {
+                    return;
+                }
+
+                destination.Write(buffer, startOffset, length);
+            }
+
+            public void ResetAfterWrite()
+            {
+                startOffset = 0;
+                length = 0;
+                MaybeShrink();
+            }
+
+            private void EnsureWritable(int additionalBytes)
+            {
+                if (additionalBytes <= buffer.Length - (startOffset + length))
+                {
+                    return;
+                }
+
+                if (additionalBytes <= buffer.Length - length)
+                {
+                    Buffer.BlockCopy(buffer, startOffset, buffer, 0, length);
+                    startOffset = 0;
+                    if (additionalBytes <= buffer.Length - length)
+                    {
+                        return;
+                    }
+                }
+
+                var required = checked(length + additionalBytes);
+                var newCapacity = Math.Max(DefaultCapacity, buffer.Length);
+                while (newCapacity < required)
+                {
+                    newCapacity = checked(newCapacity * 2);
+                }
+
+                var resized = new byte[newCapacity];
+                if (length > 0)
+                {
+                    Buffer.BlockCopy(buffer, startOffset, resized, 0, length);
+                }
+
+                buffer = resized;
+                startOffset = 0;
+            }
+
+            private void NormalizeAfterConsume()
+            {
+                if (length == 0)
+                {
+                    startOffset = 0;
+                    MaybeShrink();
+                    return;
+                }
+
+                if (startOffset > buffer.Length / 2)
+                {
+                    Buffer.BlockCopy(buffer, startOffset, buffer, 0, length);
+                    startOffset = 0;
+                }
+            }
+
+            private void MaybeShrink()
+            {
+                if (length == 0 && buffer.Length > ShrinkThreshold)
+                {
+                    buffer = new byte[DefaultCapacity];
                 }
             }
         }

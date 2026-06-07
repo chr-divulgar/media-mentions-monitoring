@@ -9,6 +9,7 @@ public sealed class MeterOperationalMetrics : IOperationalMetrics, IDisposable
     private readonly Counter<int> captureAttempts;
     private readonly Counter<int> captureSuccesses;
     private readonly Counter<int> captureFailures;
+    private readonly Counter<int> captureRuntimeFailures;
     private readonly Counter<int> segmentsGenerated;
     private readonly Counter<int> processOrphanCount;
     private readonly Counter<int> reconciliationActions;
@@ -20,6 +21,7 @@ public sealed class MeterOperationalMetrics : IOperationalMetrics, IDisposable
         captureAttempts = meter.CreateCounter<int>("capture_attempt_count");
         captureSuccesses = meter.CreateCounter<int>("capture_success_count");
         captureFailures = meter.CreateCounter<int>("capture_failure_count");
+        captureRuntimeFailures = meter.CreateCounter<int>("capture_runtime_failure_count");
         segmentsGenerated = meter.CreateCounter<int>("segment_generation_count");
         processOrphanCount = meter.CreateCounter<int>("process_orphan_count");
         reconciliationActions = meter.CreateCounter<int>("reconciliation_actions");
@@ -32,6 +34,11 @@ public sealed class MeterOperationalMetrics : IOperationalMetrics, IDisposable
         captureAttempts.Add(attempts);
         captureSuccesses.Add(succeeded);
         captureFailures.Add(failed);
+    }
+
+    public void RecordCaptureRuntimeFailure(string sourceId)
+    {
+        captureRuntimeFailures.Add(1, KeyValuePair.Create<string, object?>("source_id", sourceId));
     }
 
     public void RecordSegmentationRun(int segmentsGenerated, double pipelineLagSeconds)
