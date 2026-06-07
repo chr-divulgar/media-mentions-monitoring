@@ -1,5 +1,26 @@
 # Plan de implementación: captura de audio con FFmpeg.AutoGen
 
+## Actualización implementada (2026-06-07)
+
+Cambios aplicados en `apps/media-core-worker/src/Workers/Operations.Worker/InProcessFfmpegAudioCapturePlugin.cs`:
+
+- Rotación de archivos OPUS por timeline de audio (no por reloj de pared) para mantener consistencia entre nombre de archivo, duración efectiva y timestamps de chunks.
+- Seguridad de transcripción: eliminación de API key hardcodeada. Ahora se resuelve por `GOOGLE_SPEECH_API_KEY` (entorno) y fallback a `.env`.
+- Pipeline de transcripción con cola bounded y concurrencia configurable (`MEDIA_TRANSCRIPTION_WORKERS`, `MEDIA_TRANSCRIPTION_QUEUE_CAPACITY`).
+- Mitigación de pérdida de contenido en fronteras de chunk: solape PCM entre chunks consecutivos.
+- Mitigación de omisión interna en chunks largos: cada chunk se transcribe por subventanas (`12s` con solape interno de `2s`) y luego se unifica con deduplicación por overlap léxico para conservar coherencia textual.
+
+Archivos de configuración asociados:
+
+- `.env.example` en `apps/media-core-worker/.env.example`
+- Excepción de plantilla en `.gitignore`: `!.env.example`
+
+Impacto operativo esperado:
+
+- Menor pérdida de frases en límites de chunk y dentro del chunk.
+- Mejor trazabilidad temporal entre audio completo y JSON de transcripción.
+- Menor riesgo de exposición de credenciales en repositorio.
+
 ## Contexto
 
 - 50+ streams simultáneos de URLs (RTSP / HLS / HTTP)

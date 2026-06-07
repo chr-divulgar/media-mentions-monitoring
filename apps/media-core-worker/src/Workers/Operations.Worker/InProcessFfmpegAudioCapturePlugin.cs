@@ -1,6 +1,8 @@
-﻿using System.Buffers.Binary;
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
+using System.Net.Http;
+using System.Text.Encodings.Web;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading.Channels;
 using FFmpeg.AutoGen;
 using FFmpeg.AutoGen.Bindings.DynamicallyLoaded;
@@ -16,7 +18,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     private const int AudioSampleRate = 16000;
     private const int AudioChannels = 1;
     private const int AudioBytesPerSample = 2;
-    private const int WavHeaderSize = 44;
+    private const int TranscriptionChunkOverlapSeconds = 3;
+    private const int RecognitionWindowSeconds = 12;
+    private const int RecognitionWindowOverlapSeconds = 2;
     private const string DefaultHttpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Safari/537.36";
     private static readonly string[] RequiredFfmpegLibraries = ["avutil", "avcodec", "avformat", "swresample"];
 
@@ -25,6 +29,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     private readonly OperationsWorkerOptions options;
     private readonly ILogger<InProcessFfmpegAudioCapturePlugin> logger;
     private readonly IOperationalMetrics operationalMetrics;
+    private readonly ChunkTranscriptionPipeline chunkTranscriptionPipeline;
     private readonly ConcurrentDictionary<string, CaptureSession> sessions = new(StringComparer.Ordinal);
 
     public InProcessFfmpegAudioCapturePlugin(
@@ -35,6 +40,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         this.options = options;
         this.logger = logger;
         this.operationalMetrics = operationalMetrics;
+        chunkTranscriptionPipeline = new ChunkTranscriptionPipeline(logger);
         EnsureFfmpegInitialized();
     }
 
@@ -49,13 +55,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         }
 
         var mediaDirectory = BuildMediaDirectoryName(source.Media);
-        var sourceDirectory = Path.Combine(options.AudioOutputRootPath, mediaDirectory, source.SourceId);
-        Directory.CreateDirectory(sourceDirectory);
 
         var session = sessions.AddOrUpdate(
             source.SourceId,
-            _ => CaptureSession.Start(source, sourceDirectory, plan, options, logger, operationalMetrics),
-            (_, existing) => existing.IsRunning ? existing : CaptureSession.Start(source, sourceDirectory, plan, options, logger, operationalMetrics));
+            _ => CaptureSession.Start(source, options.AudioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline),
+            (_, existing) => existing.IsRunning || existing.CompletedByEndOfInput
+                ? existing
+                : CaptureSession.Start(source, options.AudioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline));
 
         var startupResult = await session.WaitForStartupAsync(cancellationToken).ConfigureAwait(false);
         if (!startupResult.Succeeded)
@@ -65,6 +71,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         if (!session.IsRunning)
         {
+            if (session.CompletedByEndOfInput && string.IsNullOrWhiteSpace(session.LastError))
+            {
+                return new AudioCaptureExecutionResult(true, session.LastOpusPath ?? session.CurrentOpusPath());
+            }
+
             return new AudioCaptureExecutionResult(false, session.CurrentOpusPath(), session.LastError);
         }
 
@@ -84,6 +95,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         }
 
         sessions.Clear();
+        chunkTranscriptionPipeline.Dispose();
     }
 
     private static void EnsureFfmpegInitialized()
@@ -169,30 +181,37 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private readonly Task captureTask;
         private readonly string sourceId;
-        private readonly string sourceDirectory;
+        private readonly string audioOutputRootPath;
+        private readonly string mediaDirectory;
         private readonly PluginExecutionPlan plan;
         private readonly CaptureSource source;
         private readonly OperationsWorkerOptions options;
         private readonly ILogger logger;
         private readonly IOperationalMetrics operationalMetrics;
+        private readonly ChunkTranscriptionPipeline chunkTranscriptionPipeline;
         private volatile string? activeOpusPath;
+        private volatile bool completedByEndOfInput;
         private volatile bool isRunning;
         private volatile string? lastError;
 
         private CaptureSession(
             CaptureSource source,
-            string sourceDirectory,
+            string audioOutputRootPath,
+            string mediaDirectory,
             PluginExecutionPlan plan,
             OperationsWorkerOptions options,
             ILogger logger,
-            IOperationalMetrics operationalMetrics)
+            IOperationalMetrics operationalMetrics,
+            ChunkTranscriptionPipeline chunkTranscriptionPipeline)
         {
             this.source = source;
-            this.sourceDirectory = sourceDirectory;
+            this.audioOutputRootPath = audioOutputRootPath;
+            this.mediaDirectory = mediaDirectory;
             this.plan = plan;
             this.options = options;
             this.logger = logger;
             this.operationalMetrics = operationalMetrics;
+            this.chunkTranscriptionPipeline = chunkTranscriptionPipeline;
             sourceId = source.SourceId;
             isRunning = true;
             captureTask = Task.Run(RunAsync);
@@ -200,18 +219,24 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         public static CaptureSession Start(
             CaptureSource source,
-            string sourceDirectory,
+            string audioOutputRootPath,
+            string mediaDirectory,
             PluginExecutionPlan plan,
             OperationsWorkerOptions options,
             ILogger logger,
-            IOperationalMetrics operationalMetrics)
+            IOperationalMetrics operationalMetrics,
+            ChunkTranscriptionPipeline chunkTranscriptionPipeline)
         {
-            return new CaptureSession(source, sourceDirectory, plan, options, logger, operationalMetrics);
+            return new CaptureSession(source, audioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline);
         }
 
         public bool IsRunning => isRunning && !captureTask.IsCompleted;
 
+        public bool CompletedByEndOfInput => completedByEndOfInput;
+
         public string? LastError => lastError;
+
+        public string? LastOpusPath => activeOpusPath;
 
         public string CurrentOpusPath() => CurrentOpusPath(DateTimeOffset.UtcNow);
 
@@ -222,20 +247,27 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         public string CurrentOpusPath(DateTimeOffset now, TimeSpan rotationInterval)
         {
-            var windowStart = AlignWindow(now, rotationInterval);
-            var suffix = rotationInterval >= TimeSpan.FromHours(1)
-                ? windowStart.ToString("yyyyMMdd_HH")
-                : rotationInterval >= TimeSpan.FromMinutes(1)
-                    ? windowStart.ToString("yyyyMMdd_HHmm")
-                    : windowStart.ToString("yyyyMMdd_HHmmss");
-
-            return Path.Combine(sourceDirectory, $"{sourceId}_{suffix}.opus");
+            var sourceDirectory = ResolveSourceDirectory(now);
+            return Path.Combine(sourceDirectory, $"{sourceId}_{now:yyyy-MM-dd_HH-mm-ss}.opus");
         }
 
-        public string CurrentWavPath(DateTimeOffset now)
+        public string CurrentTranscriptionJsonPath(string opusPath)
         {
-            var windowStart = AlignWindow(now, plan.WavWindowDuration);
-            return Path.Combine(sourceDirectory, $"{sourceId}_{windowStart:yyyyMMdd_HHmmss}.wav");
+            return Path.ChangeExtension(opusPath, ".json");
+        }
+
+        private string ResolveSourceDirectory(DateTimeOffset timestamp)
+        {
+            var sourceDirectory = Path.Combine(
+                audioOutputRootPath,
+                mediaDirectory,
+                timestamp.ToString("yyyy"),
+                timestamp.ToString("MM"),
+                timestamp.ToString("dd"),
+                sourceId);
+
+            Directory.CreateDirectory(sourceDirectory);
+            return sourceDirectory;
         }
 
         public Task<AudioCaptureExecutionResult> WaitForStartupAsync(CancellationToken cancellationToken)
@@ -269,6 +301,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         private void SetFailure(string message)
         {
             lastError = message;
+            completedByEndOfInput = false;
             isRunning = false;
         }
 
@@ -288,15 +321,22 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             AVDictionary* inputOptions = null;
             AVFormatContext* inputContextPtr = null;
             PcmByteQueue? pendingOpusPcm = null;
-            PcmByteQueue? pendingWavPcm = null;
-            var sampleCursor = 0L;
+            PcmByteQueue? pendingFlacPcm = null;
             var encoderSampleCursor = 0L;
             var lastFlushAt = DateTimeOffset.UtcNow;
-            var effectiveOpusRotationInterval = TimeSpan.FromHours(1);
-            var nextWavWindowAt = AlignWindow(lastFlushAt, plan.WavWindowDuration).Add(plan.WavWindowDuration);
+            var effectiveOpusRotationInterval = plan.OpusRotationInterval > TimeSpan.Zero
+                ? plan.OpusRotationInterval
+                : TimeSpan.FromHours(1);
+            var nextFlacWindowAt = AlignWindow(lastFlushAt, plan.WavWindowDuration).Add(plan.WavWindowDuration);
             var nextRotationAt = AlignWindow(lastFlushAt, effectiveOpusRotationInterval).Add(effectiveOpusRotationInterval);
             var encoderFrameSize = 0;
-            WavChunkingState? wavChunkingState = null;
+            string? currentTranscriptionJsonPath = null;
+            var currentOpusStartedAt = DateTimeOffset.UtcNow;
+            var currentOpusSampleCursor = 0L;
+            long? flacChunkStartSample = null;
+            string? flacChunkTranscriptionJsonPath = null;
+            byte[]? transcriptionOverlapTailPcm = null;
+            ChunkingState? chunkingState = null;
             var consecutivePacketSendErrors = 0;
             var consecutiveEncoderFrameSendFailures = 0;
             const int maxConsecutivePacketSendErrors = 8;
@@ -453,15 +493,18 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 ffmpeg.avcodec_open2(encoderContext, encoder, null).ThrowIfError("avcodec_open2(encoder)");
                 encoderFrameSize = encoderContext->frame_size > 0 ? encoderContext->frame_size : AudioSampleRate / 2;
                 pendingOpusPcm = new PcmByteQueue();
-                pendingWavPcm = new PcmByteQueue();
-                wavChunkingState = options.EnableWavSilenceChunking
-                    ? WavChunkingState.Create(options, logger, sourceId)
+                pendingFlacPcm = new PcmByteQueue();
+                chunkingState = options.EnableWavSilenceChunking
+                    ? ChunkingState.Create(options, logger, sourceId)
                     : null;
 
                 activeOpusPath = CurrentOpusPath(DateTimeOffset.UtcNow, effectiveOpusRotationInterval);
+                currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
+                currentOpusStartedAt = DateTimeOffset.UtcNow;
+                currentOpusSampleCursor = 0;
                 outputContext = OpenOutputContext(activeOpusPath, encoderContext, ref outputStream);
                 startupCompletionSource.TrySetResult(new AudioCaptureExecutionResult(true, activeOpusPath));
-                logger.LogInformation("Capture started for source {SourceId}. Reconnect={ReconnectEnabled}, RtspTcp={RtspPreferTcp}, WavSilenceChunking={SilenceChunkingEnabled}, OpusBitrateKbps={OpusBitrateKbps}.", sourceId, options.EnableDecoderReconnect, options.RtspPreferTcp, wavChunkingState is not null, options.DefaultOpusBitrateKbps);
+                logger.LogInformation("Capture started for source {SourceId}. Reconnect={ReconnectEnabled}, RtspTcp={RtspPreferTcp}, SilenceChunking={SilenceChunkingEnabled}, OpusBitrateKbps={OpusBitrateKbps}.", sourceId, options.EnableDecoderReconnect, options.RtspPreferTcp, chunkingState is not null, options.DefaultOpusBitrateKbps);
                 logger.LogInformation("OPUS rotation interval for source {SourceId}: profile={ProfileRotationMinutes} min, effective={EffectiveRotationMinutes} min.", sourceId, plan.OpusRotationInterval.TotalMinutes, effectiveOpusRotationInterval.TotalMinutes);
 
                 inputPacket = ffmpeg.av_packet_alloc();
@@ -481,6 +524,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     var readResult = ffmpeg.av_read_frame(inputContext, inputPacket);
                     if (readResult == ffmpeg.AVERROR_EOF)
                     {
+                        completedByEndOfInput = true;
                         break;
                     }
 
@@ -549,9 +593,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         ffmpeg.av_frame_get_buffer(resampledFrame, 0).ThrowIfError("av_frame_get_buffer");
 
                         ffmpeg.swr_convert_frame(swrContext, resampledFrame, inputFrame).ThrowIfError("swr_convert_frame");
-                        sampleCursor += resampledFrame->nb_samples;
 
                         var now = DateTimeOffset.UtcNow;
+                        var frameSampleCount = resampledFrame->nb_samples;
 
                         AppendSamples(pendingOpusPcm!, resampledFrame, AudioChannels);
                         EncodeBufferedSamples(
@@ -566,21 +610,43 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                             ref consecutiveEncoderFrameSendFailures,
                             maxConsecutiveEncoderFrameSendFailures);
 
-                        AppendSamples(pendingWavPcm!, resampledFrame, AudioChannels);
-                        if (wavChunkingState is not null)
+                        var flacChunkWasEmpty = pendingFlacPcm!.Length == 0;
+                        AppendSamples(pendingFlacPcm!, resampledFrame, AudioChannels);
+                        if (flacChunkWasEmpty)
                         {
-                            var cutDecision = wavChunkingState.Observe(resampledFrame);
+                            flacChunkStartSample = currentOpusSampleCursor;
+                            flacChunkTranscriptionJsonPath = currentTranscriptionJsonPath;
+                        }
+
+                        currentOpusSampleCursor += frameSampleCount;
+                        var currentAudioTimeline = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
+
+                        if (chunkingState is not null)
+                        {
+                            var cutDecision = chunkingState.Observe(resampledFrame);
                             if (cutDecision.ShouldCut)
                             {
-                                FlushWavWindow(pendingWavPcm!, CurrentWavPath(now));
-                                logger.LogDebug("WAV chunk cut for source {SourceId}. ForcedByMaxWindow={ForcedByMaxWindow}, ChunkSamples={ChunkSamples}.", sourceId, cutDecision.ForcedByMaxWindow, cutDecision.ChunkSamples);
-                                wavChunkingState.ResetAfterFlush();
+                                var chunkStartSample = flacChunkStartSample ?? currentOpusSampleCursor;
+                                var chunkStartedAt = ResolveChunkTime(currentOpusStartedAt, chunkStartSample);
+                                var chunkEndedAt = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
+                                var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
+                                EnqueueChunkTranscription(pendingFlacPcm!, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: true);
+                                flacChunkStartSample = null;
+                                flacChunkTranscriptionJsonPath = null;
+                                logger.LogDebug("FLAC chunk cut for source {SourceId}. ForcedByMaxWindow={ForcedByMaxWindow}, ChunkSamples={ChunkSamples}.", sourceId, cutDecision.ForcedByMaxWindow, cutDecision.ChunkSamples);
+                                chunkingState.ResetAfterFlush();
                             }
                         }
-                        else if (now >= nextWavWindowAt)
+                        else if (now >= nextFlacWindowAt)
                         {
-                            FlushWavWindow(pendingWavPcm!, CurrentWavPath(now));
-                            nextWavWindowAt = AlignWindow(now, plan.WavWindowDuration).Add(plan.WavWindowDuration);
+                            var chunkStartSample = flacChunkStartSample ?? currentOpusSampleCursor;
+                            var chunkStartedAt = ResolveChunkTime(currentOpusStartedAt, chunkStartSample);
+                            var chunkEndedAt = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
+                            var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
+                            EnqueueChunkTranscription(pendingFlacPcm!, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: true);
+                            flacChunkStartSample = null;
+                            flacChunkTranscriptionJsonPath = null;
+                            nextFlacWindowAt = AlignWindow(now, plan.WavWindowDuration).Add(plan.WavWindowDuration);
                         }
 
                         ffmpeg.av_frame_unref(inputFrame);
@@ -594,10 +660,25 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                             lastFlushAt = now;
                         }
 
-                        if (now >= nextRotationAt)
+                        if (currentAudioTimeline >= nextRotationAt)
                         {
-                            RotateOutput(ref outputContext, ref outputStream, encoderContext, outputPacket, now, effectiveOpusRotationInterval);
-                            nextRotationAt = AlignWindow(now, effectiveOpusRotationInterval).Add(effectiveOpusRotationInterval);
+                            if (pendingFlacPcm!.Length > 0)
+                            {
+                                var chunkStartSample = flacChunkStartSample ?? currentOpusSampleCursor;
+                                var chunkStartedAt = ResolveChunkTime(currentOpusStartedAt, chunkStartSample);
+                                var chunkEndedAt = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
+                                var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
+                                EnqueueChunkTranscription(pendingFlacPcm, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: false);
+                                flacChunkStartSample = null;
+                                flacChunkTranscriptionJsonPath = null;
+                                chunkingState?.ResetAfterFlush();
+                            }
+
+                            RotateOutput(ref outputContext, ref outputStream, encoderContext, outputPacket, nextRotationAt, effectiveOpusRotationInterval);
+                            currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
+                            currentOpusStartedAt = nextRotationAt;
+                            currentOpusSampleCursor = 0;
+                            nextRotationAt = AlignWindow(currentOpusStartedAt, effectiveOpusRotationInterval).Add(effectiveOpusRotationInterval);
                         }
                     }
                 }
@@ -620,9 +701,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
                 DrainEncoder(encoderContext, outputContext, outputStream, outputPacket);
 
-                if (pendingWavPcm is not null && pendingWavPcm.Length > 0)
+                if (pendingFlacPcm is not null && pendingFlacPcm.Length > 0)
                 {
-                    FlushWavWindow(pendingWavPcm, CurrentWavPath(DateTimeOffset.UtcNow));
+                    var chunkStartSample = flacChunkStartSample ?? currentOpusSampleCursor;
+                    var chunkStartedAt = ResolveChunkTime(currentOpusStartedAt, chunkStartSample);
+                    var chunkEndedAt = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
+                    var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
+                    EnqueueChunkTranscription(pendingFlacPcm, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: false);
                 }
                 isRunning = false;
                 logger.LogInformation("Capture completed for source {SourceId}.", sourceId);
@@ -642,7 +727,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 isRunning = false;
 
                 pendingOpusPcm = null;
-                pendingWavPcm = null;
+                pendingFlacPcm = null;
 
                 if (outputContext is not null)
                 {
@@ -806,44 +891,325 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             pendingPcm.AppendFromFrame(frame, pcmBytes);
         }
 
-        private static void FlushWavWindow(PcmByteQueue pcmBuffer, string outputPath)
+        private void EnqueueChunkTranscription(
+            PcmByteQueue pcmBuffer,
+            DateTimeOffset chunkStartedAt,
+            DateTimeOffset chunkEndedAt,
+            string? transcriptionJsonPath,
+            ref byte[]? overlapTailPcm,
+            bool preserveOverlapForNextChunk)
         {
             if (pcmBuffer.Length == 0)
             {
                 return;
             }
 
-            var pcmLength = pcmBuffer.Length;
-            var wavHeader = new byte[WavHeaderSize];
+            if (string.IsNullOrWhiteSpace(transcriptionJsonPath))
+            {
+                pcmBuffer.ResetAfterWrite();
+                overlapTailPcm = null;
+                return;
+            }
 
-            var bytesPerSecond = AudioSampleRate * AudioChannels * AudioBytesPerSample;
-            WriteAscii(wavHeader, 0, "RIFF");
-            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(4, 4), 36 + pcmLength);
-            WriteAscii(wavHeader, 8, "WAVE");
-            WriteAscii(wavHeader, 12, "fmt ");
-            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(16, 4), 16);
-            BinaryPrimitives.WriteInt16LittleEndian(wavHeader.AsSpan(20, 2), 1);
-            BinaryPrimitives.WriteInt16LittleEndian(wavHeader.AsSpan(22, 2), (short)AudioChannels);
-            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(24, 4), AudioSampleRate);
-            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(28, 4), bytesPerSecond);
-            BinaryPrimitives.WriteInt16LittleEndian(wavHeader.AsSpan(32, 2), (short)(AudioChannels * AudioBytesPerSample));
-            BinaryPrimitives.WriteInt16LittleEndian(wavHeader.AsSpan(34, 2), 16);
-            WriteAscii(wavHeader, 36, "data");
-            BinaryPrimitives.WriteInt32LittleEndian(wavHeader.AsSpan(40, 4), pcmLength);
+            var currentPcm = pcmBuffer.Snapshot();
+            if (currentPcm.Length == 0)
+            {
+                return;
+            }
 
-            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            var payloadPcm = ConcatPcm(overlapTailPcm, currentPcm);
+            var flacWindows = BuildFlacRecognitionWindows(payloadPcm);
+            if (flacWindows.Count == 0)
+            {
+                pcmBuffer.ResetAfterWrite();
+                return;
+            }
 
-            using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.Read);
-            fileStream.Write(wavHeader, 0, wavHeader.Length);
-            pcmBuffer.WriteAllTo(fileStream);
+            chunkTranscriptionPipeline.Enqueue(new ChunkTranscriptionRequest(
+                transcriptionJsonPath,
+                chunkStartedAt,
+                chunkEndedAt,
+                flacWindows,
+                sourceId));
+
+            if (preserveOverlapForNextChunk)
+            {
+                var overlapBytes = TranscriptionChunkOverlapSeconds * AudioSampleRate * AudioChannels * AudioBytesPerSample;
+                overlapTailPcm = TailPcm(currentPcm, overlapBytes);
+            }
+            else
+            {
+                overlapTailPcm = null;
+            }
+
             pcmBuffer.ResetAfterWrite();
         }
 
-        private static void WriteAscii(Span<byte> destination, int offset, string value)
+        private static DateTimeOffset ResolveChunkTime(DateTimeOffset opusStartedAt, long sampleOffset)
         {
-            for (var index = 0; index < value.Length; index++)
+            if (sampleOffset <= 0)
             {
-                destination[offset + index] = (byte)value[index];
+                return opusStartedAt;
+            }
+
+            var ticks = (sampleOffset * TimeSpan.TicksPerSecond) / AudioSampleRate;
+            return opusStartedAt.AddTicks(ticks);
+        }
+
+        private static byte[] EncodeFlacChunkBytes(byte[] pcmSnapshot)
+        {
+            if (pcmSnapshot.Length == 0)
+            {
+                return [];
+            }
+
+            AVFormatContext* outputContext = null;
+            AVCodecContext* encoderContext = null;
+            AVStream* outputStream = null;
+            AVFrame* frame = null;
+            AVPacket* packet = null;
+            byte* dynamicBuffer = null;
+            byte[]? encodedBytes = null;
+
+            try
+            {
+                AVCodec* encoder = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_FLAC);
+                if (encoder is null)
+                {
+                    throw new InvalidOperationException("FLAC encoder not found.");
+                }
+
+                ffmpeg.avformat_alloc_output_context2(&outputContext, null, "flac", null).ThrowIfError("avformat_alloc_output_context2(flac)");
+
+                encoderContext = ffmpeg.avcodec_alloc_context3(encoder);
+                if (encoderContext is null)
+                {
+                    throw new InvalidOperationException("Unable to allocate FLAC encoder context.");
+                }
+
+                encoderContext->sample_rate = AudioSampleRate;
+                encoderContext->sample_fmt = AVSampleFormat.AV_SAMPLE_FMT_S16;
+                encoderContext->time_base = new AVRational { num = 1, den = AudioSampleRate };
+
+                try
+                {
+                    ffmpeg.av_channel_layout_default(&encoderContext->ch_layout, AudioChannels);
+                }
+                catch (NotSupportedException exception)
+                {
+                    throw new InvalidOperationException("av_channel_layout_default(flac_encoder) is not supported by the loaded FFmpeg bindings.", exception);
+                }
+
+                if ((outputContext->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
+                {
+                    encoderContext->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
+                }
+
+                ffmpeg.avcodec_open2(encoderContext, encoder, null).ThrowIfError("avcodec_open2(flac_encoder)");
+
+                outputStream = ffmpeg.avformat_new_stream(outputContext, null);
+                if (outputStream is null)
+                {
+                    throw new InvalidOperationException("Unable to create FLAC output stream.");
+                }
+
+                ffmpeg.avcodec_parameters_from_context(outputStream->codecpar, encoderContext).ThrowIfError("avcodec_parameters_from_context(flac)");
+                outputStream->time_base = encoderContext->time_base;
+
+                ffmpeg.avio_open_dyn_buf(&outputContext->pb).ThrowIfError("avio_open_dyn_buf(flac)");
+                outputContext->flags |= ffmpeg.AVFMT_FLAG_CUSTOM_IO;
+                ffmpeg.avformat_write_header(outputContext, null).ThrowIfError("avformat_write_header(flac)");
+
+                frame = ffmpeg.av_frame_alloc();
+                packet = ffmpeg.av_packet_alloc();
+                if (frame is null || packet is null)
+                {
+                    throw new InvalidOperationException("Unable to allocate FLAC frame or packet.");
+                }
+
+                var frameSamples = encoderContext->frame_size > 0 ? encoderContext->frame_size : 4096;
+                var bytesPerSample = AudioChannels * AudioBytesPerSample;
+                var offset = 0;
+                var pts = 0L;
+
+                while (offset < pcmSnapshot.Length)
+                {
+                    var availableSamples = (pcmSnapshot.Length - offset) / bytesPerSample;
+                    if (availableSamples <= 0)
+                    {
+                        break;
+                    }
+
+                    var samplesToEncode = Math.Min(frameSamples, availableSamples);
+                    var bytesToEncode = samplesToEncode * bytesPerSample;
+
+                    ffmpeg.av_frame_unref(frame);
+                    frame->nb_samples = samplesToEncode;
+                    frame->format = (int)AVSampleFormat.AV_SAMPLE_FMT_S16;
+                    frame->sample_rate = AudioSampleRate;
+                    frame->pts = pts;
+                    pts += samplesToEncode;
+
+                    try
+                    {
+                        ffmpeg.av_channel_layout_default(&frame->ch_layout, AudioChannels);
+                    }
+                    catch (NotSupportedException exception)
+                    {
+                        throw new InvalidOperationException("av_channel_layout_default(flac_frame) is not supported by the loaded FFmpeg bindings.", exception);
+                    }
+
+                    ffmpeg.av_frame_get_buffer(frame, 0).ThrowIfError("av_frame_get_buffer(flac)");
+                    Marshal.Copy(pcmSnapshot, offset, (IntPtr)frame->data[0], bytesToEncode);
+                    offset += bytesToEncode;
+
+                    ffmpeg.avcodec_send_frame(encoderContext, frame).ThrowIfError("avcodec_send_frame(flac)");
+                    WriteAvailableFlacPackets(outputContext, outputStream, encoderContext, packet);
+                }
+
+                ffmpeg.avcodec_send_frame(encoderContext, null).ThrowIfError("avcodec_send_frame(flac_flush)");
+                WriteAvailableFlacPackets(outputContext, outputStream, encoderContext, packet);
+
+                ffmpeg.av_write_trailer(outputContext).ThrowIfError("av_write_trailer(flac)");
+
+                var dynamicSize = ffmpeg.avio_close_dyn_buf(outputContext->pb, &dynamicBuffer);
+                outputContext->pb = null;
+                if (dynamicSize < 0)
+                {
+                    throw new InvalidOperationException($"avio_close_dyn_buf(flac) failed with FFmpeg error code {dynamicSize}.");
+                }
+
+                encodedBytes = new byte[dynamicSize];
+                if (dynamicSize > 0)
+                {
+                    Marshal.Copy((IntPtr)dynamicBuffer, encodedBytes, 0, dynamicSize);
+                }
+
+            }
+            finally
+            {
+                if (dynamicBuffer is not null)
+                {
+                    ffmpeg.av_free(dynamicBuffer);
+                }
+
+                if (packet is not null)
+                {
+                    ffmpeg.av_packet_free(&packet);
+                }
+
+                if (frame is not null)
+                {
+                    ffmpeg.av_frame_free(&frame);
+                }
+
+                if (outputContext is not null)
+                {
+                    if (outputContext->pb is not null)
+                    {
+                        ffmpeg.avio_context_free(&outputContext->pb);
+                    }
+
+                    ffmpeg.avformat_free_context(outputContext);
+                }
+
+                if (encoderContext is not null)
+                {
+                    AVCodecContext* encoderToFree = encoderContext;
+                    ffmpeg.avcodec_free_context(&encoderToFree);
+                }
+            }
+
+            return encodedBytes ?? [];
+        }
+
+        private static byte[] ConcatPcm(byte[]? prefix, byte[] current)
+        {
+            if (prefix is null || prefix.Length == 0)
+            {
+                return current;
+            }
+
+            var combined = new byte[prefix.Length + current.Length];
+            Buffer.BlockCopy(prefix, 0, combined, 0, prefix.Length);
+            Buffer.BlockCopy(current, 0, combined, prefix.Length, current.Length);
+            return combined;
+        }
+
+        private static byte[] TailPcm(byte[] pcm, int tailBytes)
+        {
+            if (pcm.Length == 0 || tailBytes <= 0)
+            {
+                return [];
+            }
+
+            if (pcm.Length <= tailBytes)
+            {
+                var clone = new byte[pcm.Length];
+                Buffer.BlockCopy(pcm, 0, clone, 0, pcm.Length);
+                return clone;
+            }
+
+            var tail = new byte[tailBytes];
+            Buffer.BlockCopy(pcm, pcm.Length - tailBytes, tail, 0, tailBytes);
+            return tail;
+        }
+
+        private static IReadOnlyList<byte[]> BuildFlacRecognitionWindows(byte[] pcm)
+        {
+            if (pcm.Length == 0)
+            {
+                return [];
+            }
+
+            var bytesPerSecond = AudioSampleRate * AudioChannels * AudioBytesPerSample;
+            var windowBytes = Math.Max(bytesPerSecond, RecognitionWindowSeconds * bytesPerSecond);
+            var overlapBytes = Math.Clamp(RecognitionWindowOverlapSeconds * bytesPerSecond, 0, windowBytes / 2);
+            var stepBytes = Math.Max(1, windowBytes - overlapBytes);
+
+            var windows = new List<byte[]>();
+            for (var offset = 0; offset < pcm.Length; offset += stepBytes)
+            {
+                var remaining = pcm.Length - offset;
+                if (remaining <= 0)
+                {
+                    break;
+                }
+
+                var bytesToTake = Math.Min(windowBytes, remaining);
+                var windowPcm = new byte[bytesToTake];
+                Buffer.BlockCopy(pcm, offset, windowPcm, 0, bytesToTake);
+
+                var flac = EncodeFlacChunkBytes(windowPcm);
+                if (flac.Length > 0)
+                {
+                    windows.Add(flac);
+                }
+
+                if (offset + bytesToTake >= pcm.Length)
+                {
+                    break;
+                }
+            }
+
+            return windows;
+        }
+
+        private static void WriteAvailableFlacPackets(AVFormatContext* outputContext, AVStream* outputStream, AVCodecContext* encoderContext, AVPacket* packet)
+        {
+            while (true)
+            {
+                ffmpeg.av_packet_unref(packet);
+                var result = ffmpeg.avcodec_receive_packet(encoderContext, packet);
+                if (result == ffmpeg.AVERROR(ffmpeg.EAGAIN) || result == ffmpeg.AVERROR_EOF)
+                {
+                    break;
+                }
+
+                result.ThrowIfError("avcodec_receive_packet(flac)");
+                packet->stream_index = outputStream->index;
+                ffmpeg.av_packet_rescale_ts(packet, encoderContext->time_base, outputStream->time_base);
+                ffmpeg.av_interleaved_write_frame(outputContext, packet).ThrowIfError("av_interleaved_write_frame(flac)");
             }
         }
 
@@ -1049,6 +1415,18 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 destination.Write(buffer, startOffset, length);
             }
 
+            public byte[] Snapshot()
+            {
+                if (length == 0)
+                {
+                    return [];
+                }
+
+                var snapshot = new byte[length];
+                Buffer.BlockCopy(buffer, startOffset, snapshot, 0, length);
+                return snapshot;
+            }
+
             public void ResetAfterWrite()
             {
                 startOffset = 0;
@@ -1115,7 +1493,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private sealed class WavChunkingState
+        private sealed class ChunkingState
         {
             private readonly int minSamples;
             private readonly int maxSamples;
@@ -1128,7 +1506,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             private int analysisSamples;
             private double analysisSquares;
 
-            private WavChunkingState(int minSamples, int maxSamples, int silenceHoldSamples, int analysisWindowSamples, double thresholdLinear)
+            private ChunkingState(int minSamples, int maxSamples, int silenceHoldSamples, int analysisWindowSamples, double thresholdLinear)
             {
                 this.minSamples = minSamples;
                 this.maxSamples = maxSamples;
@@ -1137,7 +1515,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 this.thresholdLinear = thresholdLinear;
             }
 
-            public static WavChunkingState? Create(OperationsWorkerOptions options, ILogger logger, string sourceId)
+            public static ChunkingState? Create(OperationsWorkerOptions options, ILogger logger, string sourceId)
             {
                 var minSeconds = Math.Max(1, options.WavSilenceMinChunkSeconds);
                 var maxSeconds = Math.Max(minSeconds, options.WavSilenceMaxChunkSeconds);
@@ -1145,7 +1523,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 var windowMs = Math.Max(1, options.WavSilenceAnalysisWindowMilliseconds);
                 var thresholdLinear = Math.Clamp(Math.Pow(10d, options.WavSilenceThresholdDb / 20d), 1e-6, 1d);
 
-                return new WavChunkingState(
+                return new ChunkingState(
                     minSeconds * AudioSampleRate,
                     maxSeconds * AudioSampleRate,
                     (holdMs * AudioSampleRate) / 1000,
@@ -1153,11 +1531,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     thresholdLinear);
             }
 
-            public WavCutDecision Observe(AVFrame* frame)
+            public ChunkCutDecision Observe(AVFrame* frame)
             {
                 if (frame is null || frame->data[0] is null || frame->nb_samples <= 0)
                 {
-                    return WavCutDecision.None;
+                    return ChunkCutDecision.None;
                 }
 
                 var samples = (short*)frame->data[0];
@@ -1185,17 +1563,17 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
                         if (chunkSamples >= minSamples && silentSamplesAccumulator >= silenceHoldSamples)
                         {
-                            return new WavCutDecision(true, false, chunkSamples);
+                            return new ChunkCutDecision(true, false, chunkSamples);
                         }
                     }
 
                     if (chunkSamples >= maxSamples)
                     {
-                        return new WavCutDecision(true, true, chunkSamples);
+                        return new ChunkCutDecision(true, true, chunkSamples);
                     }
                 }
 
-                return WavCutDecision.None;
+                return ChunkCutDecision.None;
             }
 
             public void ResetAfterFlush()
@@ -1207,11 +1585,441 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private readonly record struct WavCutDecision(bool ShouldCut, bool ForcedByMaxWindow, int ChunkSamples)
+        private readonly record struct ChunkCutDecision(bool ShouldCut, bool ForcedByMaxWindow, int ChunkSamples)
         {
-            public static WavCutDecision None => new(false, false, 0);
+            public static ChunkCutDecision None => new(false, false, 0);
         }
 
+    }
+
+    private readonly record struct ChunkTranscriptionRequest(
+        string JsonPath,
+        DateTimeOffset StartTime,
+        DateTimeOffset EndTime,
+        IReadOnlyList<byte[]> FlacWindows,
+        string SourceId);
+
+    private sealed record ChunkTranscriptionItem(string Text, string StartTime, string EndTime);
+
+    private sealed class ChunkTranscriptionPipeline : IDisposable
+    {
+        private const string DefaultLanguage = "es-CO";
+        private const string NoSpeechFallback = "M\u00fasica-NoEspa\u00f1ol.";
+        private const int RecognitionMaxOverlapWords = 12;
+
+        private static readonly JsonSerializerOptions JsonOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            WriteIndented = true
+        };
+
+        private readonly ILogger logger;
+        private readonly HttpClient httpClient;
+        private readonly Channel<ChunkTranscriptionRequest> queue;
+        private readonly CancellationTokenSource cancellationTokenSource = new();
+        private readonly Task[] workers;
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> fileLocks = new(StringComparer.OrdinalIgnoreCase);
+        private readonly string googleApiKey;
+        private int disposed;
+
+        public ChunkTranscriptionPipeline(ILogger logger)
+        {
+            this.logger = logger;
+            googleApiKey = ResolveGoogleApiKey();
+            httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(60)
+            };
+
+            var defaultWorkerCount = Math.Clamp(Environment.ProcessorCount / 2, 2, 6);
+            var workerCount = ResolveConfiguredInt("MEDIA_TRANSCRIPTION_WORKERS", defaultWorkerCount, 1, 12);
+            var defaultQueueCapacity = Math.Max(workerCount * 4, 8);
+            var queueCapacity = ResolveConfiguredInt("MEDIA_TRANSCRIPTION_QUEUE_CAPACITY", defaultQueueCapacity, 4, 256);
+
+            queue = Channel.CreateBounded<ChunkTranscriptionRequest>(new BoundedChannelOptions(queueCapacity)
+            {
+                SingleWriter = false,
+                SingleReader = false,
+                AllowSynchronousContinuations = false,
+                FullMode = BoundedChannelFullMode.Wait
+            });
+
+            workers = Enumerable.Range(0, workerCount)
+                .Select(_ => Task.Run(ProcessQueueAsync))
+                .ToArray();
+
+            logger.LogInformation(
+                "Chunk transcription pipeline initialized with {WorkerCount} worker(s) and queue capacity {QueueCapacity}.",
+                workerCount,
+                queueCapacity);
+        }
+
+        public void Enqueue(ChunkTranscriptionRequest request)
+        {
+            if (Volatile.Read(ref disposed) != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                queue.Writer.WriteAsync(request, cancellationTokenSource.Token).AsTask().GetAwaiter().GetResult();
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Failed to enqueue chunk transcription for source {SourceId} because the queue is unavailable.", request.SourceId);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+            {
+                return;
+            }
+
+            queue.Writer.TryComplete();
+            cancellationTokenSource.Cancel();
+
+            try
+            {
+                Task.WaitAll(workers, TimeSpan.FromSeconds(30));
+            }
+            catch
+            {
+            }
+
+            cancellationTokenSource.Dispose();
+            httpClient.Dispose();
+
+            foreach (var semaphore in fileLocks.Values)
+            {
+                semaphore.Dispose();
+            }
+
+            fileLocks.Clear();
+        }
+
+        private async Task ProcessQueueAsync()
+        {
+            try
+            {
+                await foreach (var request in queue.Reader.ReadAllAsync(cancellationTokenSource.Token).ConfigureAwait(false))
+                {
+                    var entryText = string.Empty;
+
+                    try
+                    {
+                        var transcription = await RecognizeWindowedAsync(request.FlacWindows, DefaultLanguage).ConfigureAwait(false);
+                        entryText = string.IsNullOrWhiteSpace(transcription) ? NoSpeechFallback : transcription;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception exception)
+                    {
+                        // On transcription failures, still write the entry with empty text.
+                        logger.LogWarning(exception, "Chunk transcription failed for source {SourceId}.", request.SourceId);
+                        entryText = string.Empty;
+                    }
+
+                    try
+                    {
+                        var entry = new ChunkTranscriptionItem(
+                            entryText,
+                            request.StartTime.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+                            request.EndTime.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"));
+
+                        await AppendOrderedAsync(request.JsonPath, entry).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception exception)
+                    {
+                        logger.LogWarning(exception, "Failed to persist chunk transcription entry for source {SourceId} into {JsonPath}.", request.SourceId, request.JsonPath);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        private async Task<string> RecognizeWindowedAsync(IReadOnlyList<byte[]> flacWindows, string language)
+        {
+            if (flacWindows.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var segments = new List<string>(flacWindows.Count);
+            foreach (var window in flacWindows)
+            {
+                var segment = await RecognizeSingleAsync(window, language).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(segment))
+                {
+                    segments.Add(segment);
+                }
+            }
+
+            return MergeTranscriptSegments(segments);
+        }
+
+        private async Task<string> RecognizeSingleAsync(byte[] flacBytes, string language)
+        {
+            if (flacBytes.Length < 4 || flacBytes[0] != (byte)'f' || flacBytes[1] != (byte)'L' || flacBytes[2] != (byte)'a' || flacBytes[3] != (byte)'C')
+            {
+                return string.Empty;
+            }
+
+            var sampleRate = ReadFlacSampleRate(flacBytes);
+            var url = "http://www.google.com/speech-api/v2/recognize"
+                + $"?client=chromium&lang={Uri.EscapeDataString(language)}"
+                + $"&key={Uri.EscapeDataString(googleApiKey)}&pFilter=0";
+
+            using var content = new ByteArrayContent(flacBytes);
+            content.Headers.TryAddWithoutValidation("Content-Type", $"audio/x-flac; rate={sampleRate}");
+
+            using var response = await httpClient.PostAsync(url, content, cancellationTokenSource.Token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            var body = await response.Content.ReadAsStringAsync(cancellationTokenSource.Token).ConfigureAwait(false);
+            foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                using var document = JsonDocument.Parse(line);
+                if (!document.RootElement.TryGetProperty("result", out var result) || result.GetArrayLength() == 0)
+                {
+                    continue;
+                }
+
+                var alternatives = result[0].GetProperty("alternative");
+                if (alternatives.GetArrayLength() > 0 && alternatives[0].TryGetProperty("transcript", out var transcriptProperty))
+                {
+                    return transcriptProperty.GetString() ?? string.Empty;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static string MergeTranscriptSegments(IReadOnlyList<string> segments)
+        {
+            if (segments.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var merged = segments[0].Trim();
+            for (var i = 1; i < segments.Count; i++)
+            {
+                var next = segments[i].Trim();
+                if (string.IsNullOrWhiteSpace(next))
+                {
+                    continue;
+                }
+
+                merged = MergePairByWordOverlap(merged, next);
+            }
+
+            return merged;
+        }
+
+        private static string MergePairByWordOverlap(string left, string right)
+        {
+            var leftTokens = left.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var rightTokens = right.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (leftTokens.Length == 0)
+            {
+                return right;
+            }
+
+            if (rightTokens.Length == 0)
+            {
+                return left;
+            }
+
+            var maxOverlap = Math.Min(RecognitionMaxOverlapWords, Math.Min(leftTokens.Length, rightTokens.Length));
+            var overlapWords = 0;
+
+            for (var size = maxOverlap; size >= 1; size--)
+            {
+                var equal = true;
+                for (var i = 0; i < size; i++)
+                {
+                    var leftWord = NormalizeWord(leftTokens[leftTokens.Length - size + i]);
+                    var rightWord = NormalizeWord(rightTokens[i]);
+                    if (!leftWord.Equals(rightWord, StringComparison.Ordinal))
+                    {
+                        equal = false;
+                        break;
+                    }
+                }
+
+                if (equal)
+                {
+                    overlapWords = size;
+                    break;
+                }
+            }
+
+            if (overlapWords >= rightTokens.Length)
+            {
+                return left;
+            }
+
+            var remainder = string.Join(' ', rightTokens.Skip(overlapWords));
+            return string.IsNullOrWhiteSpace(remainder)
+                ? left
+                : string.Concat(left.TrimEnd(), " ", remainder);
+        }
+
+        private static string NormalizeWord(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return string.Empty;
+            }
+
+            var chars = token.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray();
+            return chars.Length == 0 ? string.Empty : new string(chars);
+        }
+
+        private static string ResolveGoogleApiKey()
+        {
+            var fromEnv = Environment.GetEnvironmentVariable("GOOGLE_SPEECH_API_KEY")?.Trim();
+            if (!string.IsNullOrWhiteSpace(fromEnv))
+            {
+                return fromEnv;
+            }
+
+            var fromDotEnv = TryReadGoogleApiKeyFromDotEnv();
+            if (!string.IsNullOrWhiteSpace(fromDotEnv))
+            {
+                return fromDotEnv;
+            }
+
+            throw new InvalidOperationException(
+                "Missing GOOGLE_SPEECH_API_KEY. Set the environment variable or create a .env file with GOOGLE_SPEECH_API_KEY=<value>.");
+        }
+
+        private static string? TryReadGoogleApiKeyFromDotEnv()
+        {
+            var candidatePaths = new[]
+            {
+                Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+                Path.Combine(AppContext.BaseDirectory, ".env"),
+                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env"),
+                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".env")
+            }
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var path in candidatePaths)
+            {
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+
+                foreach (var rawLine in File.ReadLines(path))
+                {
+                    var line = rawLine.Trim();
+                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
+                    {
+                        continue;
+                    }
+
+                    var separatorIndex = line.IndexOf('=');
+                    if (separatorIndex <= 0)
+                    {
+                        continue;
+                    }
+
+                    var key = line[..separatorIndex].Trim();
+                    if (!key.Equals("GOOGLE_SPEECH_API_KEY", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var value = line[(separatorIndex + 1)..].Trim().Trim('"', '\'');
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static int ResolveConfiguredInt(string key, int fallback, int min, int max)
+        {
+            var raw = Environment.GetEnvironmentVariable(key);
+            if (string.IsNullOrWhiteSpace(raw) || !int.TryParse(raw, out var parsed))
+            {
+                return fallback;
+            }
+
+            return Math.Clamp(parsed, min, max);
+        }
+
+        private async Task AppendOrderedAsync(string jsonPath, ChunkTranscriptionItem entry)
+        {
+            var directory = Path.GetDirectoryName(jsonPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var fileLock = fileLocks.GetOrAdd(jsonPath, _ => new SemaphoreSlim(1, 1));
+            await fileLock.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
+
+            try
+            {
+                List<ChunkTranscriptionItem> items;
+                if (File.Exists(jsonPath))
+                {
+                    var existingJson = await File.ReadAllTextAsync(jsonPath, cancellationTokenSource.Token).ConfigureAwait(false);
+                    items = JsonSerializer.Deserialize<List<ChunkTranscriptionItem>>(existingJson, JsonOptions) ?? [];
+                }
+                else
+                {
+                    items = [];
+                }
+
+                items.Add(entry);
+                items = items
+                    .OrderBy(item => item.StartTime, StringComparer.Ordinal)
+                    .ThenBy(item => item.EndTime, StringComparer.Ordinal)
+                    .ToList();
+
+                var json = JsonSerializer.Serialize(items, JsonOptions);
+                await File.WriteAllTextAsync(jsonPath, json, cancellationTokenSource.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                fileLock.Release();
+            }
+        }
+
+        private static int ReadFlacSampleRate(byte[] flac)
+        {
+            const int rateOffset = 18;
+            if (flac.Length < rateOffset + 3)
+            {
+                return AudioSampleRate;
+            }
+
+            var sampleRate = (flac[rateOffset] << 12)
+                | (flac[rateOffset + 1] << 4)
+                | (flac[rateOffset + 2] >> 4);
+
+            return sampleRate > 0 ? sampleRate : AudioSampleRate;
+        }
     }
 
 }
