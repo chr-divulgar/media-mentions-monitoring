@@ -9,6 +9,74 @@ namespace MediaOpsCore.UnitTests;
 public sealed class StartupSourceInitializationServiceTests
 {
     [Fact]
+    public async Task InitializeAsync_should_exclude_sources_that_fail_validation_and_are_not_recovered()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var payload = new[]
+            {
+                new
+                {
+                    sourceId = "healthy",
+                    platform = "a",
+                    media = "radio",
+                    streamUrl = "https://ok.example.com/live.aac",
+                    primaryUrl = "https://site.example.com/healthy"
+                },
+                new
+                {
+                    sourceId = "failed",
+                    platform = "b",
+                    media = "radio",
+                    streamUrl = "https://bad.example.com/live.aac",
+                    primaryUrl = "https://site.example.com/failed"
+                }
+            };
+
+            await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
+
+            var options = new OperationsWorkerOptions
+            {
+                CaptureSourcesFilePath = tempFilePath,
+                EnableCanaryMode = false,
+                EnableStartupValidation = true,
+                EnableStartupDiscoveryOnFailedOnly = true
+            };
+
+            var provider = new StaticCaptureSourceProvider(options);
+            var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["https://ok.example.com/live.aac"] = true,
+                ["https://bad.example.com/live.aac"] = false
+            });
+            var discovery = new FakeDiscovery([]);
+
+            var sut = new StartupSourceInitializationService(
+                options,
+                provider,
+                validator,
+                discovery,
+                NullLogger<StartupSourceInitializationService>.Instance);
+
+            await sut.InitializeAsync();
+            var effective = await provider.ListActiveSourcesAsync();
+
+            Assert.Single(effective);
+            Assert.Equal("healthy", effective[0].SourceId);
+            Assert.Equal(1, discovery.Calls);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
+    [Fact]
     public async Task InitializeAsync_should_discover_only_failed_sources_and_replace_stream_url_when_revalidated()
     {
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
@@ -50,9 +118,14 @@ public sealed class StartupSourceInitializationServiceTests
             {
                 ["https://ok.example.com/live.aac"] = true,
                 ["https://bad.example.com/live.aac"] = false,
+                ["https://resolved-invalid.example.com/live.m3u8"] = false,
                 ["https://resolved.example.com/live.m3u8"] = true
             });
-            var discovery = new FakeDiscovery("https://resolved.example.com/live.m3u8");
+            var discovery = new FakeDiscovery(
+            [
+                "https://resolved-invalid.example.com/live.m3u8",
+                "https://resolved.example.com/live.m3u8"
+            ]);
 
             var sut = new StartupSourceInitializationService(
                 options,
@@ -67,6 +140,7 @@ public sealed class StartupSourceInitializationServiceTests
             Assert.Equal(2, effective.Count);
             Assert.Contains(validator.Calls, url => string.Equals(url, "https://ok.example.com/live.aac", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(validator.Calls, url => string.Equals(url, "https://bad.example.com/live.aac", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(validator.Calls, url => string.Equals(url, "https://resolved-invalid.example.com/live.m3u8", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(validator.Calls, url => string.Equals(url, "https://resolved.example.com/live.m3u8", StringComparison.OrdinalIgnoreCase));
 
             var recovered = effective.Single(source => source.SourceId == "failed");
@@ -76,6 +150,71 @@ public sealed class StartupSourceInitializationServiceTests
             var configuredAfterStartup = await provider.ListConfiguredSourcesAsync();
             var persisted = configuredAfterStartup.Single(source => source.SourceId == "failed");
             Assert.Equal("https://resolved.example.com/live.m3u8", persisted.StreamUrl);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task InitializeAsync_should_persist_discovered_stream_url_even_when_it_looks_tokenized()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var payload = new[]
+            {
+                new
+                {
+                    sourceId = "failed",
+                    platform = "b",
+                    media = "radio",
+                    streamUrl = "https://bad.example.com/live.aac",
+                    primaryUrl = "https://site.example.com/failed"
+                }
+            };
+
+            await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
+
+            var options = new OperationsWorkerOptions
+            {
+                CaptureSourcesFilePath = tempFilePath,
+                EnableCanaryMode = false,
+                EnableStartupValidation = true,
+                EnableStartupDiscoveryOnFailedOnly = true
+            };
+
+            var provider = new StaticCaptureSourceProvider(options);
+            var discoveredTokenizedUrl = "https://stream-177.zeno.fm/t8sz23cfhfhvv?zt=eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4OTM0NTYwMDB9.signature";
+
+            var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["https://bad.example.com/live.aac"] = false,
+                [discoveredTokenizedUrl] = true
+            });
+            var discovery = new FakeDiscovery([discoveredTokenizedUrl]);
+
+            var sut = new StartupSourceInitializationService(
+                options,
+                provider,
+                validator,
+                discovery,
+                NullLogger<StartupSourceInitializationService>.Instance);
+
+            await sut.InitializeAsync();
+
+            var active = await provider.ListActiveSourcesAsync();
+            Assert.Single(active);
+            Assert.Equal(discoveredTokenizedUrl, active[0].StreamUrl);
+
+            var configuredAfterStartup = await provider.ListConfiguredSourcesAsync();
+            Assert.Single(configuredAfterStartup);
+            Assert.Equal(discoveredTokenizedUrl, configuredAfterStartup[0].StreamUrl);
         }
         finally
         {
@@ -107,19 +246,24 @@ public sealed class StartupSourceInitializationServiceTests
 
     private sealed class FakeDiscovery : IStartupSourceDiscoveryService
     {
-        private readonly string resolvedUrl;
+        private readonly IReadOnlyList<string> resolvedUrls;
 
-        public FakeDiscovery(string resolvedUrl)
+        public FakeDiscovery(IReadOnlyList<string> resolvedUrls)
         {
-            this.resolvedUrl = resolvedUrl;
+            this.resolvedUrls = resolvedUrls;
         }
 
         public int Calls { get; private set; }
 
-        public Task<string?> TryResolveStreamUrlAsync(CaptureSource source, CancellationToken cancellationToken = default)
+        public Task<IReadOnlyList<string>> DiscoverStreamUrlsAsync(CaptureSource source, CancellationToken cancellationToken = default)
         {
             Calls++;
-            return Task.FromResult<string?>(resolvedUrl);
+            return Task.FromResult(resolvedUrls);
+        }
+
+        public Task<string?> TryResolveStreamUrlAsync(CaptureSource source, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(resolvedUrls.FirstOrDefault());
         }
     }
 }

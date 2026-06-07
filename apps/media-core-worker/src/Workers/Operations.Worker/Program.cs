@@ -22,6 +22,8 @@ builder.Services.AddSingleton<IStartupStreamValidator, FfmpegStartupStreamValida
 builder.Services.AddSingleton<HttpClient>();
 builder.Services.AddSingleton<IStartupSourceDiscoveryService, HttpStartupSourceDiscoveryService>();
 builder.Services.AddSingleton<IStartupSourceInitializationService, StartupSourceInitializationService>();
+builder.Services.AddSingleton<SourceAvailabilityReconciliationService>();
+builder.Services.AddSingleton<ICaptureAttemptObserver>(sp => sp.GetRequiredService<SourceAvailabilityReconciliationService>());
 builder.Services.AddSingleton<IPluginProfileProvider, JsonPluginProfileProvider>();
 builder.Services.AddSingleton<IIngestionPluginResolver, MediaPlatformIngestionPluginResolver>();
 builder.Services.AddSingleton<ISegmentCursorRepository, InMemorySegmentCursorRepository>();
@@ -34,12 +36,14 @@ builder.Services.AddSingleton<IContinuousCaptureUseCase>(sp => new ContinuousCap
 	sp.GetRequiredService<IIngestionPluginResolver>(),
 	sp.GetRequiredService<IAudioCapturePlugin>(),
 	sp.GetRequiredService<IMonitoringArtifactRepository>(),
-	options.CaptureMaxDegreeOfParallelism));
+	options.CaptureMaxDegreeOfParallelism,
+	sp.GetRequiredService<ICaptureAttemptObserver>()));
 builder.Services.AddSingleton<IIncrementalSegmentationUseCase, IncrementalSegmentationUseCase>();
 builder.Services.AddSingleton<IContinuousIngestionOrchestrator, ContinuousIngestionOrchestrator>();
 builder.Services.AddSingleton<IDiscreteIngestionOrchestrator, DiscreteIngestionOrchestrator>();
 builder.Services.AddHostedService<ContinuousIngestionWorker>();
 builder.Services.AddHostedService<DiscreteIngestionWorker>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SourceAvailabilityReconciliationService>());
 
 var host = builder.Build();
 await host.Services.GetRequiredService<IStartupSourceInitializationService>().InitializeAsync();

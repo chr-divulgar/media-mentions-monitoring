@@ -38,71 +38,71 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
 
         logger.LogInformation("Startup source validation started for {SourceCount} sources.", configuredSources.Count);
 
-        foreach (var source in configuredSources)
+        var initialValidationTasks = configuredSources
+            .Select(source => streamValidator.ValidateAsync(source.StreamUrl, cancellationToken))
+            .ToArray();
+
+        var initialValidationResults = await Task.WhenAll(initialValidationTasks).ConfigureAwait(false);
+
+        var validSourceIds = new List<string>(configuredSources.Count);
+        var invalidSourceIds = new List<string>();
+
+        for (var index = 0; index < configuredSources.Count; index++)
         {
-            var initialValidation = await streamValidator.ValidateAsync(source.StreamUrl, cancellationToken).ConfigureAwait(false);
+            var source = configuredSources[index];
+            var initialValidation = initialValidationResults[index];
             if (initialValidation.Succeeded)
             {
                 effectiveSources.Add(source);
+                validSourceIds.Add(source.SourceId);
                 continue;
             }
-
-            logger.LogWarning(
-                "Startup validation failed for source {SourceId} streamUrl {StreamUrl}. Error={Error}",
-                source.SourceId,
-                source.StreamUrl,
-                initialValidation.ErrorMessage ?? "n/a");
 
             if (!options.EnableStartupDiscoveryOnFailedOnly || string.IsNullOrWhiteSpace(source.PrimaryUrl))
             {
-                effectiveSources.Add(source);
+                invalidSourceIds.Add(source.SourceId);
                 continue;
             }
 
-            var discoveredStreamUrl = await sourceDiscoveryService
-                .TryResolveStreamUrlAsync(source, cancellationToken)
+            var discoveredCandidates = await sourceDiscoveryService
+                .DiscoverStreamUrlsAsync(source, cancellationToken)
                 .ConfigureAwait(false);
+
+            if (discoveredCandidates.Count == 0)
+            {
+                invalidSourceIds.Add(source.SourceId);
+                continue;
+            }
+
+            var validationResults = await Task.WhenAll(discoveredCandidates.Select(async candidate =>
+            {
+                var validation = await streamValidator.ValidateAsync(candidate, cancellationToken).ConfigureAwait(false);
+                return (Candidate: candidate, Validation: validation);
+            })).ConfigureAwait(false);
+
+            var successfulCandidate = validationResults.FirstOrDefault(result => result.Validation.Succeeded);
+            var discoveredStreamUrl = successfulCandidate.Candidate;
 
             if (string.IsNullOrWhiteSpace(discoveredStreamUrl))
             {
-                logger.LogWarning("Startup discovery could not resolve streamUrl for source {SourceId} from primaryUrl {PrimaryUrl}.", source.SourceId, source.PrimaryUrl);
-                effectiveSources.Add(source);
+                invalidSourceIds.Add(source.SourceId);
                 continue;
             }
-
-            var postDiscoveryValidation = await streamValidator.ValidateAsync(discoveredStreamUrl, cancellationToken).ConfigureAwait(false);
-            if (!postDiscoveryValidation.Succeeded)
-            {
-                logger.LogWarning(
-                    "Discovered streamUrl failed validation for source {SourceId}. Candidate={Candidate}. Error={Error}",
-                    source.SourceId,
-                    discoveredStreamUrl,
-                    postDiscoveryValidation.ErrorMessage ?? "n/a");
-                effectiveSources.Add(source);
-                continue;
-            }
-
-            logger.LogInformation(
-                "Source {SourceId} recovered by startup discovery. Old streamUrl={OldStreamUrl}, New streamUrl={NewStreamUrl}.",
-                source.SourceId,
-                source.StreamUrl,
-                discoveredStreamUrl);
 
             effectiveSources.Add(source.WithStreamUrl(discoveredStreamUrl));
+            validSourceIds.Add(source.SourceId);
 
-            var persisted = await captureSourceProvider
+            await captureSourceProvider
                 .PersistStreamUrlAsync(source.SourceId, discoveredStreamUrl, cancellationToken)
                 .ConfigureAwait(false);
-
-            if (persisted)
-            {
-                logger.LogInformation(
-                    "Persisted discovered streamUrl for source {SourceId} into capture sources file.",
-                    source.SourceId);
-            }
         }
 
         captureSourceProvider.SetResolvedSources(effectiveSources);
-        logger.LogInformation("Startup source validation completed. Effective sources: {SourceCount}.", effectiveSources.Count);
+        logger.LogInformation(
+            "Startup source validation/discovery finished. Valid={ValidCount} [{ValidSourceIds}] Invalid={InvalidCount} [{InvalidSourceIds}]",
+            validSourceIds.Count,
+            string.Join(",", validSourceIds),
+            invalidSourceIds.Count,
+            string.Join(",", invalidSourceIds));
     }
 }

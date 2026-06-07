@@ -33,7 +33,8 @@ public sealed class ContinuousCaptureUseCaseTests
                 new RadioOnlyPluginResolver(),
                 new SuccessfulAudioCapturePlugin(),
                 repository,
-                1);
+                1,
+                NullCaptureAttemptObserver.Instance);
 
             var result = await useCase.ExecuteAsync();
             var artifacts = await repository.ListByTenantAsync("global-ingestion");
@@ -72,7 +73,8 @@ public sealed class ContinuousCaptureUseCaseTests
                 new StaticPluginResolver(),
                 new SuccessfulAudioCapturePlugin(),
                 repository,
-                1);
+                1,
+                NullCaptureAttemptObserver.Instance);
 
             var result = await useCase.ExecuteAsync();
             var artifacts = await repository.ListByTenantAsync("global-ingestion");
@@ -118,7 +120,8 @@ public sealed class ContinuousCaptureUseCaseTests
                 new StaticPluginResolver(),
                 gate,
                 repository,
-                2);
+                2,
+                NullCaptureAttemptObserver.Instance);
 
             var execution = useCase.ExecuteAsync();
 

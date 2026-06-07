@@ -8,6 +8,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 {
     private readonly OperationsWorkerOptions options;
     private const string GlobalIngestionScopeId = "global-ingestion";
+    private readonly object syncRoot = new();
     private IReadOnlyList<CaptureSource>? resolvedSources;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
@@ -25,7 +26,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 
     public Task<IReadOnlyList<CaptureSource>> ListActiveSourcesAsync(CancellationToken cancellationToken = default)
     {
-        var sources = resolvedSources ?? LoadSources();
+        var sources = ListResolvedSources();
         var mediaScoped = ApplyContinuousMediaFilter(sources);
         var filtered = ApplyCanaryFilter(mediaScoped);
 
@@ -39,7 +40,74 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 
     public void SetResolvedSources(IReadOnlyList<CaptureSource> sources)
     {
-        resolvedSources = sources;
+        lock (syncRoot)
+        {
+            resolvedSources = sources.ToArray();
+        }
+    }
+
+    public IReadOnlyList<CaptureSource> ListResolvedSources()
+    {
+        lock (syncRoot)
+        {
+            if (resolvedSources is null)
+            {
+                resolvedSources = LoadSources();
+            }
+
+            return resolvedSources.ToArray();
+        }
+    }
+
+    public bool AddOrUpdateResolvedSource(CaptureSource source)
+    {
+        lock (syncRoot)
+        {
+            var current = (resolvedSources ?? LoadSources()).ToList();
+            var index = current.FindIndex(item => string.Equals(item.SourceId, source.SourceId, StringComparison.OrdinalIgnoreCase));
+
+            if (index >= 0)
+            {
+                var existing = current[index];
+                if (string.Equals(existing.StreamUrl, source.StreamUrl, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(existing.PrimaryUrl, source.PrimaryUrl, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(existing.Platform, source.Platform, StringComparison.Ordinal)
+                    && string.Equals(existing.Media, source.Media, StringComparison.Ordinal))
+                {
+                    resolvedSources = current.ToArray();
+                    return false;
+                }
+
+                current[index] = source;
+                resolvedSources = current.ToArray();
+                return true;
+            }
+
+            current.Add(source);
+            resolvedSources = current.ToArray();
+            return true;
+        }
+    }
+
+    public bool RemoveResolvedSource(string sourceId)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId))
+        {
+            return false;
+        }
+
+        lock (syncRoot)
+        {
+            var current = (resolvedSources ?? LoadSources()).ToList();
+            var removed = current.RemoveAll(item => string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+            if (removed == 0)
+            {
+                return false;
+            }
+
+            resolvedSources = current.ToArray();
+            return true;
+        }
     }
 
     public Task<bool> PersistStreamUrlAsync(string sourceId, string streamUrl, CancellationToken cancellationToken = default)

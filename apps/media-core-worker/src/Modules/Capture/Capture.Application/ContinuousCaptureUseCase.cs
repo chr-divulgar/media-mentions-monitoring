@@ -12,6 +12,7 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
     private readonly IIngestionPluginResolver pluginResolver;
     private readonly IAudioCapturePlugin audioCapturePlugin;
     private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
+    private readonly ICaptureAttemptObserver captureAttemptObserver;
     private readonly int maxDegreeOfParallelism;
 
     public ContinuousCaptureUseCase(
@@ -19,13 +20,15 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
         IIngestionPluginResolver pluginResolver,
         IAudioCapturePlugin audioCapturePlugin,
         IMonitoringArtifactRepository monitoringArtifactRepository,
-        int maxDegreeOfParallelism)
+        int maxDegreeOfParallelism,
+        ICaptureAttemptObserver? captureAttemptObserver = null)
     {
         this.captureSourceProvider = captureSourceProvider;
         this.pluginResolver = pluginResolver;
         this.audioCapturePlugin = audioCapturePlugin;
         this.monitoringArtifactRepository = monitoringArtifactRepository;
         this.maxDegreeOfParallelism = Math.Max(1, maxDegreeOfParallelism);
+        this.captureAttemptObserver = captureAttemptObserver ?? NullCaptureAttemptObserver.Instance;
     }
 
     public async Task<ContinuousCaptureResult> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -71,6 +74,10 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
                     {
                         Interlocked.Increment(ref failed);
                     }
+
+                    await captureAttemptObserver
+                        .ReportAsync(source, captureResult, ct)
+                        .ConfigureAwait(false);
                 }
                 catch (InvalidOperationException exception)
                     when (exception.Message.StartsWith("No plugin profile configured", StringComparison.Ordinal))
@@ -80,6 +87,9 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
                 catch
                 {
                     Interlocked.Increment(ref failed);
+                    await captureAttemptObserver
+                        .ReportAsync(source, new AudioCaptureExecutionResult(false, string.Empty, "capture execution failed"), ct)
+                        .ConfigureAwait(false);
                 }
             }).ConfigureAwait(false);
 
