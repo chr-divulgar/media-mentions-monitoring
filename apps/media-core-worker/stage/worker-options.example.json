@@ -11,7 +11,7 @@
   "canaryPlatformMaxPercent": 100,
   "canaryPlatformAllowList": "caracol,youtube",
   "stageFilesystemRootPath": "stage-evidence",
-  "audioOutputRootPath": ".",
+  "audioOutputRootPath": "D:\\",
   "defaultWavWindowDurationSeconds": 30,
   "defaultOpusFlushIntervalSeconds": 30,
   "defaultOpusRotationIntervalHours": 1,

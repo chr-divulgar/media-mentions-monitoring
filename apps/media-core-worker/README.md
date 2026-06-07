@@ -4,6 +4,8 @@ Week 1 scaffold for the Phase 1A operational unification effort.
 
 Current implementation includes continuous audio capture, startup stream validation with FFmpeg, failed-source discovery from `primaryUrl`, and persistence of recovered `streamUrl` values.
 
+Push-Location "C:\Users\juanb\Documents\chr-divulgar\media-mentions-monitoring\apps\media-core-worker"; dotnet build "src\Workers\Operations.Worker\Operations.Worker.csproj"; dotnet ".\src\Workers\Operations.Worker\bin\Debug\net10.0\MediaOpsCore.Workers.Operations.Worker.dll"; Pop-Location
+
 ## Structure
 
 - `src/BuildingBlocks` contains shared domain, application, and infrastructure baselines.
