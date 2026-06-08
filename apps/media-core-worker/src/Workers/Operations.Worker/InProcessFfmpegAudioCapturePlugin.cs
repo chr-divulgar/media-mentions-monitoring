@@ -409,8 +409,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 // HTTP/HTTPS streams need gentler probing; RTSP/local can be aggressive
                 ffmpeg.av_dict_set(&inputOptions, "probesize", isHttpStream ? "131072" : "32768", 0);
                 ffmpeg.av_dict_set(&inputOptions, "analyzeduration", isHttpStream ? "1000000" : "0", 0);
-                
-                if (!isHttpStream)
+
+                if (isHttpStream)
+                {
+                    // Force live edge for HLS/DASH streams: start from the last segment, not the DVR buffer start.
+                    // Without this, many radio servers deliver 20-30 min of buffered audio before reaching live.
+                    ffmpeg.av_dict_set(&inputOptions, "live_start_index", "-1", 0);
+                    ffmpeg.av_dict_set(&inputOptions, "fflags", "nobuffer+discardcorrupt", 0);
+                }
+                else
                 {
                     ffmpeg.av_dict_set(&inputOptions, "fflags", "nobuffer", 0);
                 }
