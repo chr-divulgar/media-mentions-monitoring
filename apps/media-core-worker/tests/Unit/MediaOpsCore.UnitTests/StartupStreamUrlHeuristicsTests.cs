@@ -37,4 +37,24 @@ public sealed class StartupStreamUrlHeuristicsTests
 
         Assert.True(StartupStreamUrlHeuristics.IsLikelyEphemeral(url));
     }
+
+    [Theory]
+    [InlineData("https://prisa-co.mc.tritondigital.com/LA_LUCIERNAGA_CARACOL_RADIO_409_P/media/mcv/caracol/multimedia/20260606/4982842_023447_audio_128.mp3")]
+    [InlineData("https://cdn.example.com/radio/20260607/session_audio_128.mp3")]
+    [InlineData("https://cdn.example.com/audio/202606/broadcast.aac")]
+    [InlineData("https://archive.tritondigital.com/station/media/files/9123456_084500_audio_64.mp3")]
+    public void IsLikelyVodRecording_should_reject_dated_cdn_paths(string url)
+    {
+        Assert.True(StartupStreamUrlHeuristics.IsLikelyVodRecording(url));
+    }
+
+    [Theory]
+    [InlineData("https://playerservices.streamtheworld.com/api/livestream-redirect/CARACOL_RADIOAAC.aac")]
+    [InlineData("https://19253.live.streamtheworld.com/CARACOL_RADIOAAC.aac")]
+    [InlineData("https://mdstrm.com/audio/632c9b23d1dcd7027f32f7fe/live.m3u8")]
+    [InlineData("https://geostreaming.rtvc.gov.co/Radio_Radionacional/Radionacional.stream/playlist.m3u8")]
+    public void IsLikelyVodRecording_should_accept_live_stream_urls(string url)
+    {
+        Assert.False(StartupStreamUrlHeuristics.IsLikelyVodRecording(url));
+    }
 }

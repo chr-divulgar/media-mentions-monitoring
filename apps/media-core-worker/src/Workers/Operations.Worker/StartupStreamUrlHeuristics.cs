@@ -1,10 +1,67 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace MediaOpsCore.Workers.Operations;
 
 public static class StartupStreamUrlHeuristics
 {
+    // Matches 8-digit date segments in a URL path: /20260606/, /20260101/, etc.
+    private static readonly Regex DatePathSegmentRegex = new(
+        @"/\d{8}/",
+        RegexOptions.Compiled);
+
+    // Matches 6-digit YYYYMM folder segments: /202606/, /202601/, etc.
+    private static readonly Regex YearMonthPathSegmentRegex = new(
+        @"/\d{6}/",
+        RegexOptions.Compiled);
+
+    // Matches Triton Digital VOD recording filenames: 4982842_023447_audio_128.mp3
+    private static readonly Regex TritonVodFilenameRegex = new(
+        @"\d{5,}_\d{6}_audio[_\d]*\.(mp3|aac|opus|ogg)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Returns true when the URL looks like a VOD recording rather than a live stream.
+    /// Filters out dated CDN paths (Triton, prisa-co, etc.) that contain past recordings.
+    /// </summary>
+    public static bool IsLikelyVodRecording(string streamUrl)
+    {
+        if (!Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var path = uri.AbsolutePath;
+
+        // /20260606/ — date folder
+        if (DatePathSegmentRegex.IsMatch(path))
+        {
+            return true;
+        }
+
+        // /202606/ — year+month folder (common in Triton CDN VOD paths)
+        if (YearMonthPathSegmentRegex.IsMatch(path))
+        {
+            return true;
+        }
+
+        // Triton Digital VOD filename pattern: 4982842_023447_audio_128.mp3
+        if (TritonVodFilenameRegex.IsMatch(path))
+        {
+            return true;
+        }
+
+        // Triton Digital VOD CDN: *.mc.tritondigital.com/*/media/*
+        if (uri.Host.EndsWith(".tritondigital.com", StringComparison.OrdinalIgnoreCase)
+            && path.Contains("/media/", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     public static bool IsLikelyEphemeral(string streamUrl)
     {
         if (!Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))

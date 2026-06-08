@@ -645,6 +645,12 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
 
     private static bool LooksLikeStreamUrl(string value)
     {
+        // Reject VOD recordings (dated CDN paths, Triton recordings, etc.) before any other check.
+        if (StartupStreamUrlHeuristics.IsLikelyVodRecording(value))
+        {
+            return false;
+        }
+
         if (Uri.TryCreate(value, UriKind.Absolute, out var absoluteUri))
         {
             if (absoluteUri.Host.Equals("stream.zeno.fm", StringComparison.OrdinalIgnoreCase)
