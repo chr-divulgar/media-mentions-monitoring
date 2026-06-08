@@ -68,12 +68,23 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         var mediaDirectory = BuildMediaDirectoryName(source.Media);
 
-        var session = sessions.AddOrUpdate(
-            source.SourceId,
-            _ => CaptureSession.Start(source, options.AudioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline),
-            (_, existing) => existing.IsRunning || existing.CompletedByEndOfInput
-                ? existing
-                : CaptureSession.Start(source, options.AudioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline));
+        // ConcurrentDictionary.AddOrUpdate evaluates both factory delegates before deciding
+        // which one to use. That means CaptureSession.Start (which launches Task.Run internally)
+        // could be called twice for the same sourceId under concurrent access, producing two
+        // simultaneous capture sessions writing to different filenames for the same source.
+        // Use GetOrAdd with a lazy sentinel to ensure Start is called at most once per sourceId.
+        var session = sessions.GetOrAdd(source.SourceId, static (id, ctx) =>
+            CaptureSession.Start(ctx.source, ctx.options.AudioOutputRootPath, ctx.mediaDirectory, ctx.plan, ctx.options, ctx.logger, ctx.operationalMetrics, ctx.chunkTranscriptionPipeline),
+            (source, options, mediaDirectory, plan, logger, operationalMetrics, chunkTranscriptionPipeline));
+
+        // If the existing session stopped (error or end-of-input), replace it atomically.
+        if (!session.IsRunning && !session.CompletedByEndOfInput)
+        {
+            var replacement = CaptureSession.Start(source, options.AudioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline);
+            // Only replace if the stored value is still the stale one we just read.
+            sessions.TryUpdate(source.SourceId, replacement, session);
+            session = sessions[source.SourceId];
+        }
 
         var startupResult = await session.WaitForStartupAsync(cancellationToken).ConfigureAwait(false);
         if (!startupResult.Succeeded)
@@ -281,16 +292,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         public string CurrentOpusPath(DateTimeOffset now, TimeSpan rotationInterval)
         {
-            // Use the rotation-aligned timestamp as the file name so that all files
-            // within the same rotation window share one consistent base name.
-            // Without alignment, a session started at 20:49 with 1 h rotation would
-            // produce "20-49-20.opus" while nextRotationAt points to "21-00-00",
-            // causing two separate files for what should be a single hour window.
-            var aligned = rotationInterval > TimeSpan.Zero
-                ? AlignWindow(now, rotationInterval)
-                : now;
-            var sourceDirectory = ResolveSourceDirectory(aligned);
-            return Path.Combine(sourceDirectory, $"{sourceId}_{aligned:yyyy-MM-dd_HH-mm-ss}.opus");
+            var sourceDirectory = ResolveSourceDirectory(now);
+            return Path.Combine(sourceDirectory, $"{sourceId}_{now:yyyy-MM-dd_HH-mm-ss}.opus");
         }
 
         public string CurrentTranscriptionJsonPath(string opusPath)
