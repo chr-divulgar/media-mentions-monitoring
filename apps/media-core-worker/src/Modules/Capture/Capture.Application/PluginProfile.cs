@@ -7,7 +7,7 @@ public sealed class PluginProfile
         string media,
         string? platform,
         IngestionMode ingestionMode,
-        TimeSpan wavWindowDuration,
+        TimeSpan flacWindowDuration,
         TimeSpan opusFlushInterval,
         TimeSpan opusRotationInterval)
     {
@@ -19,9 +19,9 @@ public sealed class PluginProfile
             : media;
         Platform = string.IsNullOrWhiteSpace(platform) ? null : platform;
         IngestionMode = ingestionMode;
-        WavWindowDuration = wavWindowDuration <= TimeSpan.Zero
-            ? throw new ArgumentOutOfRangeException(nameof(wavWindowDuration), "WAV window duration must be greater than zero.")
-            : wavWindowDuration;
+        FlacWindowDuration = flacWindowDuration <= TimeSpan.Zero
+            ? throw new ArgumentOutOfRangeException(nameof(flacWindowDuration), "FLAC window duration must be greater than zero.")
+            : flacWindowDuration;
         OpusFlushInterval = opusFlushInterval <= TimeSpan.Zero
             ? throw new ArgumentOutOfRangeException(nameof(opusFlushInterval), "OPUS flush interval must be greater than zero.")
             : opusFlushInterval;
@@ -38,7 +38,7 @@ public sealed class PluginProfile
 
     public IngestionMode IngestionMode { get; }
 
-    public TimeSpan WavWindowDuration { get; }
+    public TimeSpan FlacWindowDuration { get; }
 
     public TimeSpan OpusFlushInterval { get; }
 

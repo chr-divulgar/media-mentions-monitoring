@@ -18,7 +18,7 @@ public sealed class JsonPluginProfileProvider : IPluginProfileProvider
         string Media,
         string? Platform,
         string? IngestionMode,
-        int? WavWindowDurationSeconds,
+        int? FlacWindowDurationSeconds,
         int? OpusFlushIntervalSeconds,
         int? OpusRotationIntervalHours);
 
@@ -52,7 +52,7 @@ public sealed class JsonPluginProfileProvider : IPluginProfileProvider
                 item.Media,
                 item.Platform,
                 ParseIngestionMode(item.IngestionMode),
-                TimeSpan.FromSeconds(item.WavWindowDurationSeconds.GetValueOrDefault(options.DefaultWavWindowDurationSeconds)),
+                TimeSpan.FromSeconds(item.FlacWindowDurationSeconds.GetValueOrDefault(options.DefaultFlacWindowDurationSeconds)),
                 TimeSpan.FromSeconds(item.OpusFlushIntervalSeconds.GetValueOrDefault(options.DefaultOpusFlushIntervalSeconds)),
                 TimeSpan.FromHours(item.OpusRotationIntervalHours.GetValueOrDefault(options.DefaultOpusRotationIntervalHours))))
             .ToArray();

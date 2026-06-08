@@ -49,7 +49,7 @@ public sealed class MediaPlatformIngestionPluginResolver : IIngestionPluginResol
     {
         return new PluginExecutionPlan(
             profile.PluginId,
-            profile.WavWindowDuration,
+            profile.FlacWindowDuration,
             profile.OpusFlushInterval,
             profile.OpusRotationInterval);
     }

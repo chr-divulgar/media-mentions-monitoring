@@ -4,16 +4,16 @@ public sealed class PluginExecutionPlan
 {
     public PluginExecutionPlan(
         string pluginId,
-        TimeSpan wavWindowDuration,
+        TimeSpan flacWindowDuration,
         TimeSpan opusFlushInterval,
         TimeSpan opusRotationInterval)
     {
         PluginId = string.IsNullOrWhiteSpace(pluginId)
             ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(pluginId))
             : pluginId;
-        WavWindowDuration = wavWindowDuration <= TimeSpan.Zero
-            ? throw new ArgumentOutOfRangeException(nameof(wavWindowDuration), "WAV window duration must be greater than zero.")
-            : wavWindowDuration;
+        FlacWindowDuration = flacWindowDuration <= TimeSpan.Zero
+            ? throw new ArgumentOutOfRangeException(nameof(flacWindowDuration), "FLAC window duration must be greater than zero.")
+            : flacWindowDuration;
         OpusFlushInterval = opusFlushInterval <= TimeSpan.Zero
             ? throw new ArgumentOutOfRangeException(nameof(opusFlushInterval), "OPUS flush interval must be greater than zero.")
             : opusFlushInterval;
@@ -24,7 +24,7 @@ public sealed class PluginExecutionPlan
 
     public string PluginId { get; }
 
-    public TimeSpan WavWindowDuration { get; }
+    public TimeSpan FlacWindowDuration { get; }
 
     public TimeSpan OpusFlushInterval { get; }
 

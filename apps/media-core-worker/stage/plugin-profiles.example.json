@@ -4,7 +4,7 @@
     "media": "radio",
     "platform": null,
     "ingestionMode": "continuous",
-    "wavWindowDurationSeconds": 30,
+    "flacWindowDurationSeconds": 12,
     "opusFlushIntervalSeconds": 30,
     "opusRotationIntervalHours": 1
   },
@@ -13,7 +13,7 @@
     "media": "video",
     "platform": null,
     "ingestionMode": "continuous",
-    "wavWindowDurationSeconds": 30,
+    "flacWindowDurationSeconds": 12,
     "opusFlushIntervalSeconds": 30,
     "opusRotationIntervalHours": 1
   },
@@ -22,7 +22,7 @@
     "media": "video",
     "platform": "youtube",
     "ingestionMode": "continuous",
-    "wavWindowDurationSeconds": 30,
+    "flacWindowDurationSeconds": 12,
     "opusFlushIntervalSeconds": 30,
     "opusRotationIntervalHours": 1
   },
@@ -31,7 +31,7 @@
     "media": "internet",
     "platform": null,
     "ingestionMode": "discrete",
-    "wavWindowDurationSeconds": 30,
+    "flacWindowDurationSeconds": 30,
     "opusFlushIntervalSeconds": 30,
     "opusRotationIntervalHours": 1
   },
@@ -40,7 +40,7 @@
     "media": "document",
     "platform": null,
     "ingestionMode": "discrete",
-    "wavWindowDurationSeconds": 30,
+    "flacWindowDurationSeconds": 30,
     "opusFlushIntervalSeconds": 30,
     "opusRotationIntervalHours": 1
   }
