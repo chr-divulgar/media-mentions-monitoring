@@ -30,6 +30,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     private static readonly int RecognitionVadSearchSeconds = ResolveConfiguredInt("MEDIA_RECOGNITION_VAD_SEARCH_SECONDS", 2, 0, 5);
     // Each VAD chunk becomes its own JSON entry (1:1). Set >1 via env only for special cases.
     private static readonly int WindowsPerEntry = ResolveConfiguredInt("MEDIA_WINDOWS_PER_ENTRY", 1, 1, 10);
+    // Must match flacSilenceMaxChunkSeconds in worker-options.json so the fast path covers all normal VAD chunks.
+    private static readonly int FlacSilenceMaxChunkSeconds = ResolveConfiguredInt("MEDIA_FLAC_SILENCE_MAX_CHUNK_SECONDS", 20, 5, 120);
     // 20 ms analysis frame at 16 kHz / mono / s16 = 640 bytes
     private const int RmsAnalysisFrameBytes = AudioSampleRate * AudioChannels * AudioBytesPerSample * 20 / 1000;
     private const string DefaultHttpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Safari/537.36";
@@ -1289,9 +1291,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             var bytesPerSecond = AudioSampleRate * AudioChannels * AudioBytesPerSample;
             var windowBytes = Math.Max(bytesPerSecond, RecognitionWindowSeconds * bytesPerSecond);
 
-            // Fast path: chunk fits in a single recognition window → one API call, no merge, no duplicates.
-            // Normal case for VAD chunks of 12-20 s with RecognitionWindowSeconds=12.
-            if (pcm.Length <= windowBytes)
+            // Fast path: VAD found silence within the expected range (12-20 s) → one API call, no split, no merge, no duplicates.
+            // Split path only activates when silence was NOT found before maxChunk and the chunk is abnormally large.
+            var maxVadChunkBytes = FlacSilenceMaxChunkSeconds * bytesPerSecond;
+            if (pcm.Length <= maxVadChunkBytes)
             {
                 var singleFlac = EncodeFlacChunkBytes(pcm);
                 return singleFlac.Length > 0 ? [singleFlac] : [];
