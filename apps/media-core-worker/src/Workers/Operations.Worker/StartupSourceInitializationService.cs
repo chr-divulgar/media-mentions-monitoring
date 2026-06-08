@@ -53,6 +53,15 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
             var initialValidation = initialValidationResults[index];
             if (initialValidation.Succeeded)
             {
+                // Primary URL is valid. If fallbacks are not yet populated and discovery is enabled,
+                // run discovery silently to find alternate URLs and persist them — without blocking capture.
+                if (source.FallbackStreamUrls.Count == 0
+                    && options.EnableStartupDiscoveryOnFailedOnly
+                    && !string.IsNullOrWhiteSpace(source.PrimaryUrl))
+                {
+                    _ = DiscoverAndPersistFallbacksAsync(source, cancellationToken);
+                }
+
                 effectiveSources.Add(source);
                 validSourceIds.Add(source.SourceId);
                 continue;
@@ -117,5 +126,51 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
             string.Join(",", validSourceIds),
             invalidSourceIds.Count,
             string.Join(",", invalidSourceIds));
+    }
+
+    // Fire-and-forget: discovers fallback URLs for a source whose primary URL is already valid.
+    // Runs after startup completes so it never delays capture.
+    private async Task DiscoverAndPersistFallbacksAsync(CaptureSource source, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var candidates = await sourceDiscoveryService
+                .DiscoverStreamUrlsAsync(source, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
+            var validationResults = await Task.WhenAll(candidates.Select(async candidate =>
+            {
+                var validation = await streamValidator.ValidateAsync(candidate, cancellationToken).ConfigureAwait(false);
+                return (Candidate: candidate, Validation: validation);
+            })).ConfigureAwait(false);
+
+            var fallbackUrls = validationResults
+                .Where(r => r.Validation.Succeeded
+                    && !string.Equals(r.Candidate, source.StreamUrl, StringComparison.OrdinalIgnoreCase))
+                .Select(r => r.Candidate)
+                .ToArray();
+
+            if (fallbackUrls.Length > 0)
+            {
+                await captureSourceProvider
+                    .PersistFallbackStreamUrlsAsync(source.SourceId, fallbackUrls, cancellationToken)
+                    .ConfigureAwait(false);
+
+                logger.LogInformation(
+                    "Discovered {Count} fallback URL(s) for source {SourceId}: {Urls}",
+                    fallbackUrls.Length,
+                    source.SourceId,
+                    string.Join(", ", fallbackUrls));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Fallback discovery failed silently for source {SourceId}.", source.SourceId);
+        }
     }
 }
