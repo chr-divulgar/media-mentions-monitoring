@@ -450,6 +450,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     ffmpeg.av_dict_set(&inputOptions, "probesize", "131072", 0);
                     ffmpeg.av_dict_set(&inputOptions, "analyzeduration", "1000000", 0);
                     ffmpeg.av_dict_set(&inputOptions, "stimeout", "5000000", 0);
+                    ffmpeg.av_dict_set(&inputOptions, "live_start_index", "-1", 0);
+                    ffmpeg.av_dict_set(&inputOptions, "fflags", "nobuffer+discardcorrupt", 0);
 
                     if (options.EnableDecoderReconnect)
                     {
@@ -471,7 +473,17 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
                 openResult.ThrowIfError("avformat_open_input");
                 inputContext = inputContextPtr;
-                ffmpeg.avformat_find_stream_info(inputContext, null).ThrowIfError("avformat_find_stream_info");
+
+                // Pass the same live-edge options to find_stream_info so the format probe
+                // does not buffer past audio before returning stream metadata.
+                AVDictionary* probeOptions = null;
+                if (isHttpStream)
+                {
+                    ffmpeg.av_dict_set(&probeOptions, "live_start_index", "-1", 0);
+                    ffmpeg.av_dict_set(&probeOptions, "fflags", "nobuffer+discardcorrupt", 0);
+                }
+                ffmpeg.avformat_find_stream_info(inputContext, isHttpStream ? &probeOptions : null).ThrowIfError("avformat_find_stream_info");
+                ffmpeg.av_dict_free(&probeOptions);
 
                 AVCodec* decoder = null;
                 var audioStreamIndex = ffmpeg.av_find_best_stream(inputContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, &decoder, 0);
