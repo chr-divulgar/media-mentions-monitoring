@@ -11,8 +11,7 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
     private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
     private readonly ISegmentCursorRepository segmentCursorRepository;
     private readonly IncrementalSegmentationOptions options;
-    private readonly Func<DateTimeOffset> utcNow;
-
+    private readonly Func<DateTimeOffset> nowProvider;
     private sealed record CaptureArtifactPayload(bool Succeeded);
 
     public IncrementalSegmentationUseCase(
@@ -24,7 +23,7 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
         this.monitoringArtifactRepository = monitoringArtifactRepository;
         this.segmentCursorRepository = segmentCursorRepository;
         this.options = options;
-        this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+        nowProvider = utcNow ?? (() => DateTimeOffset.UtcNow);
     }
 
     public async Task<IncrementalSegmentationResult> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -47,11 +46,12 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
 
         foreach (var captureArtifact in pendingCaptures)
         {
+            var generatedAt = nowProvider().ToOffset(captureArtifact.CapturedAtUtc.Offset);
             var segmentPayload = JsonSerializer.Serialize(new
             {
                 captureArtifactId = captureArtifact.Id,
                 options.SegmentDurationSeconds,
-                generatedAtUtc = utcNow()
+                generatedAt = generatedAt
             });
 
             var segmentArtifact = new MonitoringArtifact(
@@ -77,7 +77,7 @@ public sealed class IncrementalSegmentationUseCase : IIncrementalSegmentationUse
         var lagReference = newestProcessedCapture ?? lastProcessedAt;
         var pipelineLag = lagReference is null
             ? 0
-            : Math.Max(0, (utcNow() - lagReference.Value).TotalSeconds);
+            : Math.Max(0, (nowProvider().ToOffset(lagReference.Value.Offset) - lagReference.Value).TotalSeconds);
 
         return new IncrementalSegmentationResult(captureArtifacts.Length, generatedSegments, pipelineLag);
     }

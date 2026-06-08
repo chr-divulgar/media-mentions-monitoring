@@ -120,13 +120,13 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
     private async Task ReconcileExcludedAtScheduledMinutesAsync(CancellationToken cancellationToken)
     {
-        var nowUtc = DateTimeOffset.UtcNow;
-        if (!ScheduledReconciliationMinutes.Contains(nowUtc.Minute))
+        var configuredSources = await captureSourceProvider.ListConfiguredSourcesAsync(cancellationToken).ConfigureAwait(false);
+        var operationalNow = ResolveOperationalNow(configuredSources);
+        if (!ScheduledReconciliationMinutes.Contains(operationalNow.Minute))
         {
             return;
         }
 
-        var configuredSources = await captureSourceProvider.ListConfiguredSourcesAsync(cancellationToken).ConfigureAwait(false);
         var resolvedIds = captureSourceProvider
             .ListResolvedSources()
             .Select(source => source.SourceId)
@@ -138,7 +138,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
         if (excludedSources.Length == 0)
         {
-            logger.LogInformation("Scheduled excluded-source reconciliation at minute {Minute} finished. Recovered=0, StillExcluded=0.", nowUtc.Minute);
+            logger.LogInformation("Scheduled excluded-source reconciliation at minute {Minute} finished. Recovered=0, StillExcluded=0.", operationalNow.Minute);
             return;
         }
 
@@ -161,11 +161,22 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
         logger.LogInformation(
             "Scheduled excluded-source reconciliation at minute {Minute} finished. Recovered={RecoveredCount} [{RecoveredIds}] StillExcluded={StillExcludedCount} [{StillExcludedIds}]",
-            nowUtc.Minute,
+            operationalNow.Minute,
             recoveredIds.Count,
             string.Join(",", recoveredIds),
             stillExcludedIds.Count,
             string.Join(",", stillExcludedIds));
+    }
+
+    private static DateTimeOffset ResolveOperationalNow(IReadOnlyList<CaptureSource> configuredSources)
+    {
+        if (configuredSources.Count == 0)
+        {
+            return DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-5));
+        }
+
+        var offset = TimeSpan.FromMinutes(configuredSources[0].UtcOffsetMinutes);
+        return DateTimeOffset.UtcNow.ToOffset(offset);
     }
 
     private async Task TriggerCaptureAsync(CaptureSource source)

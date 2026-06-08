@@ -98,7 +98,7 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
             ? "unknown-source"
             : artifact.Source;
 
-        var captureHour = TruncateToUtcHour(artifact.CapturedAtUtc);
+        var captureHour = TruncateToSourceHour(artifact.CapturedAtUtc);
 
         while (true)
         {
@@ -124,9 +124,8 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
         }
     }
 
-    private static DateTimeOffset TruncateToUtcHour(DateTimeOffset value)
+    private static DateTimeOffset TruncateToSourceHour(DateTimeOffset value)
     {
-        var utc = value.ToUniversalTime();
-        return new DateTimeOffset(utc.Year, utc.Month, utc.Day, utc.Hour, 0, 0, TimeSpan.Zero);
+        return new DateTimeOffset(value.Year, value.Month, value.Day, value.Hour, 0, 0, value.Offset);
     }
 }

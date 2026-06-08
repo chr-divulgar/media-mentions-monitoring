@@ -17,7 +17,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         PropertyNameCaseInsensitive = true
     };
 
-    private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl, string? PrimaryUrl);
+    private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl, string? PrimaryUrl, string? Country);
 
     public StaticCaptureSourceProvider(OperationsWorkerOptions options)
     {
@@ -180,7 +180,14 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         }
 
         return items
-            .Select(item => new CaptureSource(item.SourceId, GlobalIngestionScopeId, item.Platform, item.Media, item.StreamUrl, item.PrimaryUrl))
+            .Select(item => new CaptureSource(
+                item.SourceId,
+                GlobalIngestionScopeId,
+                item.Platform,
+                item.Media,
+                item.StreamUrl,
+                item.PrimaryUrl,
+                item.Country))
             .ToArray();
     }
 

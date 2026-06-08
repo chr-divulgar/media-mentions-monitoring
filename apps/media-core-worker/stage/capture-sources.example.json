@@ -4,7 +4,8 @@
     "platform": "caracol",
     "media": "radio",
     "streamUrl": "https://stream.caracol.example/live",
-    "primaryUrl": "https://caracol.example/en-vivo"
+    "primaryUrl": "https://caracol.example/en-vivo",
+    "country": "colombia"
   },
   {
     "sourceId": "youtube-canal-noticias",

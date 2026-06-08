@@ -38,7 +38,7 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
         var attempts = 0;
         var succeeded = 0;
         var failed = 0;
-        var capturedAtUtcValues = new ConcurrentBag<DateTimeOffset>();
+        var capturedAtValues = new ConcurrentBag<DateTimeOffset>();
 
         await Parallel.ForEachAsync(
             sources,
@@ -50,7 +50,7 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
             async (source, ct) =>
             {
                 Interlocked.Increment(ref attempts);
-                var capturedAtUtc = DateTimeOffset.UtcNow;
+                var capturedAt = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromMinutes(source.UtcOffsetMinutes));
 
                 try
                 {
@@ -62,13 +62,13 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
                         .CaptureAsync(source, plan, ct)
                         .ConfigureAwait(false);
 
-                    var artifact = BuildArtifact(source, capturedAtUtc, captureResult);
+                    var artifact = BuildArtifact(source, capturedAt, captureResult);
                     await monitoringArtifactRepository.UpsertAsync(artifact, ct).ConfigureAwait(false);
 
                     if (captureResult.Succeeded)
                     {
                         Interlocked.Increment(ref succeeded);
-                        capturedAtUtcValues.Add(capturedAtUtc);
+                        capturedAtValues.Add(capturedAt);
                     }
                     else
                     {
@@ -93,9 +93,9 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
                 }
             }).ConfigureAwait(false);
 
-        DateTimeOffset? lastCapturedAtUtc = capturedAtUtcValues.Count == 0
+        DateTimeOffset? lastCapturedAtUtc = capturedAtValues.Count == 0
             ? (DateTimeOffset?)null
-            : capturedAtUtcValues.Max();
+            : capturedAtValues.Max();
 
         return new ContinuousCaptureResult(attempts, succeeded, failed, lastCapturedAtUtc);
     }
