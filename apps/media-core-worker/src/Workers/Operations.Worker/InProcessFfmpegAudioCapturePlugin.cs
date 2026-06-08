@@ -28,9 +28,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     // How many seconds before/after the target window cut to search for a silence boundary.
     // 0 disables VAD-aligned cuts (falls back to fixed-time windows).
     private static readonly int RecognitionVadSearchSeconds = ResolveConfiguredInt("MEDIA_RECOGNITION_VAD_SEARCH_SECONDS", 2, 0, 5);
-    // How many VAD windows to accumulate before writing a single JSON entry.
-    // e.g. 3 windows × 12-15 s each = ~36-45 s per JSON entry.
-    private static readonly int WindowsPerEntry = ResolveConfiguredInt("MEDIA_WINDOWS_PER_ENTRY", 3, 1, 10);
+    // Each VAD chunk becomes its own JSON entry (1:1). Set >1 via env only for special cases.
+    private static readonly int WindowsPerEntry = ResolveConfiguredInt("MEDIA_WINDOWS_PER_ENTRY", 1, 1, 10);
     // 20 ms analysis frame at 16 kHz / mono / s16 = 640 bytes
     private const int RmsAnalysisFrameBytes = AudioSampleRate * AudioChannels * AudioBytesPerSample * 20 / 1000;
     private const string DefaultHttpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Safari/537.36";
@@ -1289,6 +1288,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
             var bytesPerSecond = AudioSampleRate * AudioChannels * AudioBytesPerSample;
             var windowBytes = Math.Max(bytesPerSecond, RecognitionWindowSeconds * bytesPerSecond);
+
+            // Fast path: chunk fits in a single recognition window → one API call, no merge, no duplicates.
+            // Normal case for VAD chunks of 12-20 s with RecognitionWindowSeconds=12.
+            if (pcm.Length <= windowBytes)
+            {
+                var singleFlac = EncodeFlacChunkBytes(pcm);
+                return singleFlac.Length > 0 ? [singleFlac] : [];
+            }
+
             var overlapBytes = Math.Clamp(RecognitionWindowOverlapSeconds * bytesPerSecond, 0, windowBytes / 2);
             var stepBytes = Math.Max(1, windowBytes - overlapBytes);
             var searchBytes = RecognitionVadSearchSeconds * bytesPerSecond;
