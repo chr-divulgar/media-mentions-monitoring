@@ -12,6 +12,7 @@ dist-ssr
 .vs
 **/bin/
 **/obj/
+**/artifacts/
 TestResults/
 *.user
 *.suo
