@@ -18,7 +18,7 @@ public sealed class OperationsWorkerOptions
 
     public string AudioOutputRootPath { get; set; } = ".";
 
-    public int DefaultWavWindowDurationSeconds { get; set; } = 30;
+    public int DefaultFlacWindowDurationSeconds { get; set; } = 30;
 
     public int DefaultOpusFlushIntervalSeconds { get; set; } = 30;
 
@@ -32,17 +32,21 @@ public sealed class OperationsWorkerOptions
 
     public bool RtspPreferTcp { get; set; } = true;
 
-    public bool EnableWavSilenceChunking { get; set; } = true;
+    public bool EnableFlacSilenceChunking { get; set; } = true;
 
-    public int WavSilenceMinChunkSeconds { get; set; } = 20;
+    public int FlacSilenceMinChunkSeconds { get; set; } = 20;
 
-    public int WavSilenceMaxChunkSeconds { get; set; } = 30;
+    public int FlacSilenceMaxChunkSeconds { get; set; } = 30;
 
-    public int WavSilenceHoldMilliseconds { get; set; } = 300;
+    public int FlacSilenceHoldMilliseconds { get; set; } = 300;
 
-    public int WavSilenceAnalysisWindowMilliseconds { get; set; } = 20;
+    public int FlacSilenceAnalysisWindowMilliseconds { get; set; } = 20;
 
-    public double WavSilenceThresholdDb { get; set; } = -40;
+    public double FlacSilenceAdaptiveThresholdMultiplier { get; set; } = 1.7;
+
+    public double FlacSilenceNoiseFloorEmaAlpha { get; set; } = 0.08;
+
+    public double FlacSilenceHighPassCutoffHz { get; set; } = 120;
 
     public bool EnableCanaryMode { get; set; } = true;
 

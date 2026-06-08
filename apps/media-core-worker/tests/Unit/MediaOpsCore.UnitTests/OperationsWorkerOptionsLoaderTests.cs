@@ -42,19 +42,21 @@ public sealed class OperationsWorkerOptionsLoaderTests
               "canaryPlatformMaxPercent": 90,
               "canaryPlatformAllowList": "javeriana,colmundo",
                             "stageFilesystemRootPath": "stage-evidence-custom",
-                            "defaultWavWindowDurationSeconds": 15,
+                            "defaultFlacWindowDurationSeconds": 15,
                             "defaultOpusFlushIntervalSeconds": 20,
                             "defaultOpusRotationIntervalHours": 2,
                             "defaultOpusBitrateKbps": 96,
                             "enableDecoderReconnect": true,
                             "decoderReconnectDelayMaxSeconds": 8,
                             "rtspPreferTcp": true,
-                            "enableWavSilenceChunking": true,
-                            "wavSilenceMinChunkSeconds": 21,
-                            "wavSilenceMaxChunkSeconds": 31,
-                            "wavSilenceHoldMilliseconds": 350,
-                            "wavSilenceAnalysisWindowMilliseconds": 25,
-                            "wavSilenceThresholdDb": -38.5,
+                            "enableFlacSilenceChunking": true,
+                            "flacSilenceMinChunkSeconds": 21,
+                            "flacSilenceMaxChunkSeconds": 31,
+                            "flacSilenceHoldMilliseconds": 350,
+                            "flacSilenceAnalysisWindowMilliseconds": 25,
+                            "flacSilenceAdaptiveThresholdMultiplier": 1.8,
+                            "flacSilenceNoiseFloorEmaAlpha": 0.1,
+                            "flacSilenceHighPassCutoffHz": 140,
                             "enableStartupValidation": true,
                             "enableStartupDiscoveryOnFailedOnly": true,
                             "startupValidationTimeoutSeconds": 18,
@@ -74,19 +76,21 @@ public sealed class OperationsWorkerOptionsLoaderTests
             Assert.Equal(90, options.CanaryPlatformMaxPercent);
             Assert.Equal("javeriana,colmundo", options.CanaryPlatformAllowList);
             Assert.Equal("stage-evidence-custom", options.StageFilesystemRootPath);
-            Assert.Equal(15, options.DefaultWavWindowDurationSeconds);
+            Assert.Equal(15, options.DefaultFlacWindowDurationSeconds);
             Assert.Equal(20, options.DefaultOpusFlushIntervalSeconds);
             Assert.Equal(2, options.DefaultOpusRotationIntervalHours);
             Assert.Equal(96, options.DefaultOpusBitrateKbps);
             Assert.True(options.EnableDecoderReconnect);
             Assert.Equal(8, options.DecoderReconnectDelayMaxSeconds);
             Assert.True(options.RtspPreferTcp);
-            Assert.True(options.EnableWavSilenceChunking);
-            Assert.Equal(21, options.WavSilenceMinChunkSeconds);
-            Assert.Equal(31, options.WavSilenceMaxChunkSeconds);
-            Assert.Equal(350, options.WavSilenceHoldMilliseconds);
-            Assert.Equal(25, options.WavSilenceAnalysisWindowMilliseconds);
-            Assert.Equal(-38.5, options.WavSilenceThresholdDb);
+            Assert.True(options.EnableFlacSilenceChunking);
+            Assert.Equal(21, options.FlacSilenceMinChunkSeconds);
+            Assert.Equal(31, options.FlacSilenceMaxChunkSeconds);
+            Assert.Equal(350, options.FlacSilenceHoldMilliseconds);
+            Assert.Equal(25, options.FlacSilenceAnalysisWindowMilliseconds);
+            Assert.Equal(1.8, options.FlacSilenceAdaptiveThresholdMultiplier);
+            Assert.Equal(0.1, options.FlacSilenceNoiseFloorEmaAlpha);
+            Assert.Equal(140, options.FlacSilenceHighPassCutoffHz);
             Assert.True(options.EnableStartupValidation);
             Assert.True(options.EnableStartupDiscoveryOnFailedOnly);
             Assert.Equal(18, options.StartupValidationTimeoutSeconds);

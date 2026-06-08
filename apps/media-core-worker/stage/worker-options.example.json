@@ -12,18 +12,20 @@
   "canaryPlatformAllowList": "caracol,youtube",
   "stageFilesystemRootPath": "stage-evidence",
   "audioOutputRootPath": "D:\\",
-  "defaultWavWindowDurationSeconds": 30,
+  "defaultFlacWindowDurationSeconds": 12,
   "defaultOpusFlushIntervalSeconds": 30,
   "defaultOpusRotationIntervalHours": 1,
   "defaultOpusBitrateKbps": 64,
   "enableDecoderReconnect": true,
   "decoderReconnectDelayMaxSeconds": 5,
   "rtspPreferTcp": true,
-  "enableWavSilenceChunking": true,
-  "wavSilenceMinChunkSeconds": 20,
-  "wavSilenceMaxChunkSeconds": 30,
-  "wavSilenceHoldMilliseconds": 300,
-  "wavSilenceAnalysisWindowMilliseconds": 20,
-  "wavSilenceThresholdDb": -40
+  "enableFlacSilenceChunking": true,
+  "flacSilenceMinChunkSeconds": 12,
+  "flacSilenceMaxChunkSeconds": 15,
+  "flacSilenceHoldMilliseconds": 300,
+  "flacSilenceAnalysisWindowMilliseconds": 20,
+  "flacSilenceAdaptiveThresholdMultiplier": 1.7,
+  "flacSilenceNoiseFloorEmaAlpha": 0.08,
+  "flacSilenceHighPassCutoffHz": 120
 }
 

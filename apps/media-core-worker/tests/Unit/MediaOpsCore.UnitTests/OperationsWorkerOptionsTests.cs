@@ -25,7 +25,7 @@ public sealed class OperationsWorkerOptionsTests
     {
         var options = new MediaOpsCore.Workers.Operations.OperationsWorkerOptions();
 
-        Assert.Equal(30, options.DefaultWavWindowDurationSeconds);
+        Assert.Equal(30, options.DefaultFlacWindowDurationSeconds);
         Assert.Equal(30, options.DefaultOpusFlushIntervalSeconds);
         Assert.Equal(1, options.DefaultOpusRotationIntervalHours);
         Assert.Equal(64, options.DefaultOpusBitrateKbps);

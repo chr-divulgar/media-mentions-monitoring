@@ -27,19 +27,21 @@ public static class OperationsWorkerOptionsLoader
         string? StageFilesystemRootPath,
         int? SegmentDurationSeconds,
         string? AudioOutputRootPath,
-        int? DefaultWavWindowDurationSeconds,
+        int? DefaultFlacWindowDurationSeconds,
         int? DefaultOpusFlushIntervalSeconds,
         int? DefaultOpusRotationIntervalHours,
         int? DefaultOpusBitrateKbps,
         bool? EnableDecoderReconnect,
         int? DecoderReconnectDelayMaxSeconds,
         bool? RtspPreferTcp,
-        bool? EnableWavSilenceChunking,
-        int? WavSilenceMinChunkSeconds,
-        int? WavSilenceMaxChunkSeconds,
-        int? WavSilenceHoldMilliseconds,
-        int? WavSilenceAnalysisWindowMilliseconds,
-        double? WavSilenceThresholdDb,
+        bool? EnableFlacSilenceChunking,
+        int? FlacSilenceMinChunkSeconds,
+        int? FlacSilenceMaxChunkSeconds,
+        int? FlacSilenceHoldMilliseconds,
+        int? FlacSilenceAnalysisWindowMilliseconds,
+        double? FlacSilenceAdaptiveThresholdMultiplier,
+        double? FlacSilenceNoiseFloorEmaAlpha,
+        double? FlacSilenceHighPassCutoffHz,
         bool? EnableStartupValidation,
         bool? EnableStartupDiscoveryOnFailedOnly,
         int? StartupValidationTimeoutSeconds,
@@ -137,9 +139,9 @@ public static class OperationsWorkerOptionsLoader
             options.AudioOutputRootPath = model.AudioOutputRootPath;
         }
 
-        if (model.DefaultWavWindowDurationSeconds.HasValue)
+        if (model.DefaultFlacWindowDurationSeconds.HasValue)
         {
-            options.DefaultWavWindowDurationSeconds = model.DefaultWavWindowDurationSeconds.Value;
+            options.DefaultFlacWindowDurationSeconds = model.DefaultFlacWindowDurationSeconds.Value;
         }
 
         if (model.DefaultOpusFlushIntervalSeconds.HasValue)
@@ -172,34 +174,44 @@ public static class OperationsWorkerOptionsLoader
             options.RtspPreferTcp = model.RtspPreferTcp.Value;
         }
 
-        if (model.EnableWavSilenceChunking.HasValue)
+        if (model.EnableFlacSilenceChunking.HasValue)
         {
-            options.EnableWavSilenceChunking = model.EnableWavSilenceChunking.Value;
+            options.EnableFlacSilenceChunking = model.EnableFlacSilenceChunking.Value;
         }
 
-        if (model.WavSilenceMinChunkSeconds.HasValue)
+        if (model.FlacSilenceMinChunkSeconds.HasValue)
         {
-            options.WavSilenceMinChunkSeconds = model.WavSilenceMinChunkSeconds.Value;
+            options.FlacSilenceMinChunkSeconds = model.FlacSilenceMinChunkSeconds.Value;
         }
 
-        if (model.WavSilenceMaxChunkSeconds.HasValue)
+        if (model.FlacSilenceMaxChunkSeconds.HasValue)
         {
-            options.WavSilenceMaxChunkSeconds = model.WavSilenceMaxChunkSeconds.Value;
+            options.FlacSilenceMaxChunkSeconds = model.FlacSilenceMaxChunkSeconds.Value;
         }
 
-        if (model.WavSilenceHoldMilliseconds.HasValue)
+        if (model.FlacSilenceHoldMilliseconds.HasValue)
         {
-            options.WavSilenceHoldMilliseconds = model.WavSilenceHoldMilliseconds.Value;
+            options.FlacSilenceHoldMilliseconds = model.FlacSilenceHoldMilliseconds.Value;
         }
 
-        if (model.WavSilenceAnalysisWindowMilliseconds.HasValue)
+        if (model.FlacSilenceAnalysisWindowMilliseconds.HasValue)
         {
-            options.WavSilenceAnalysisWindowMilliseconds = model.WavSilenceAnalysisWindowMilliseconds.Value;
+            options.FlacSilenceAnalysisWindowMilliseconds = model.FlacSilenceAnalysisWindowMilliseconds.Value;
         }
 
-        if (model.WavSilenceThresholdDb.HasValue)
+        if (model.FlacSilenceAdaptiveThresholdMultiplier.HasValue)
         {
-            options.WavSilenceThresholdDb = model.WavSilenceThresholdDb.Value;
+            options.FlacSilenceAdaptiveThresholdMultiplier = model.FlacSilenceAdaptiveThresholdMultiplier.Value;
+        }
+
+        if (model.FlacSilenceNoiseFloorEmaAlpha.HasValue)
+        {
+            options.FlacSilenceNoiseFloorEmaAlpha = model.FlacSilenceNoiseFloorEmaAlpha.Value;
+        }
+
+        if (model.FlacSilenceHighPassCutoffHz.HasValue)
+        {
+            options.FlacSilenceHighPassCutoffHz = model.FlacSilenceHighPassCutoffHz.Value;
         }
 
         if (model.EnableStartupValidation.HasValue)
