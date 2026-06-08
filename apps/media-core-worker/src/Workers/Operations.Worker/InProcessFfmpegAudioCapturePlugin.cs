@@ -281,8 +281,16 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         public string CurrentOpusPath(DateTimeOffset now, TimeSpan rotationInterval)
         {
-            var sourceDirectory = ResolveSourceDirectory(now);
-            return Path.Combine(sourceDirectory, $"{sourceId}_{now:yyyy-MM-dd_HH-mm-ss}.opus");
+            // Use the rotation-aligned timestamp as the file name so that all files
+            // within the same rotation window share one consistent base name.
+            // Without alignment, a session started at 20:49 with 1 h rotation would
+            // produce "20-49-20.opus" while nextRotationAt points to "21-00-00",
+            // causing two separate files for what should be a single hour window.
+            var aligned = rotationInterval > TimeSpan.Zero
+                ? AlignWindow(now, rotationInterval)
+                : now;
+            var sourceDirectory = ResolveSourceDirectory(aligned);
+            return Path.Combine(sourceDirectory, $"{sourceId}_{aligned:yyyy-MM-dd_HH-mm-ss}.opus");
         }
 
         public string CurrentTranscriptionJsonPath(string opusPath)
@@ -2198,6 +2206,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         }
 
         // String-based overlap removal used both by StripChunkPrefixOverlap and MergeWindowTexts.
+        // Searches for the longest suffix of prevText that matches a contiguous sequence starting
+        // at position 0..maxPrefixSkip in newText. If found, returns newText with the duplicate
+        // removed (keeping any "skip" words before the match that represent new content the
+        // previous chunk missed, plus the remainder after the match).
         private static string StripTextPrefixOverlap(string prevText, string newText, int minOverlapWords = 5)
         {
             if (string.IsNullOrWhiteSpace(prevText) || string.IsNullOrWhiteSpace(newText))
@@ -2213,27 +2225,41 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 return newText;
             }
 
-            // Try to find the longest prefix of newWords that matches a suffix of prevWords,
-            // starting from the largest possible overlap down to minOverlapWords.
-            var maxOverlap = Math.Min(newWords.Length - 1, prevWords.Length);
-            for (var size = maxOverlap; size >= minOverlapWords; size--)
-            {
-                var match = true;
-                for (var k = 0; k < size; k++)
-                {
-                    if (!NormalizeWord(prevWords[prevWords.Length - size + k])
-                            .Equals(NormalizeWord(newWords[k]), StringComparison.Ordinal))
-                    {
-                        match = false;
-                        break;
-                    }
-                }
+            // Allow the overlap to start at position 0..maxSkip in the new text.
+            // skip=0 is the classic prefix strip.
+            // skip>0 handles cases where Speech prepends words from the overlap region that
+            // the previous chunk didn't capture (different context → different recognition).
+            var maxSkip = Math.Min(15, (newWords.Length - minOverlapWords) / 2);
 
-                if (match)
+            for (var skip = 0; skip <= maxSkip; skip++)
+            {
+                var maxOverlap = Math.Min(newWords.Length - skip - 1, prevWords.Length);
+                for (var size = maxOverlap; size >= minOverlapWords; size--)
                 {
-                    // Strip the overlapping prefix and return the remainder.
-                    var remainder = string.Join(' ', newWords.AsSpan(size));
-                    return string.IsNullOrWhiteSpace(remainder) ? newText : remainder;
+                    var match = true;
+                    for (var k = 0; k < size; k++)
+                    {
+                        if (!NormalizeWord(prevWords[prevWords.Length - size + k])
+                                .Equals(NormalizeWord(newWords[skip + k]), StringComparison.Ordinal))
+                        {
+                            match = false;
+                            break;
+                        }
+                    }
+
+                    if (match)
+                    {
+                        // Keep words before the overlap (they are new content the previous chunk
+                        // didn't catch), skip the duplicate, and keep the remainder after it.
+                        var before = skip > 0 ? string.Join(' ', newWords.AsSpan(0, skip)) : string.Empty;
+                        var after = string.Join(' ', newWords.AsSpan(skip + size));
+                        var result = string.IsNullOrWhiteSpace(before)
+                            ? after
+                            : string.IsNullOrWhiteSpace(after)
+                                ? before
+                                : before + " " + after;
+                        return string.IsNullOrWhiteSpace(result) ? newText : result;
+                    }
                 }
             }
 
