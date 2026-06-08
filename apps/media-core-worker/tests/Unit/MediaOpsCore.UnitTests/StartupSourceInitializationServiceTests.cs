@@ -225,6 +225,85 @@ public sealed class StartupSourceInitializationServiceTests
         }
     }
 
+    [Fact]
+    public async Task InitializeAsync_should_persist_all_valid_discovered_urls_as_fallbacks()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var payload = new[]
+            {
+                new
+                {
+                    sourceId = "failed",
+                    platform = "b",
+                    media = "radio",
+                    streamUrl = "https://bad.example.com/live.aac",
+                    primaryUrl = "https://site.example.com/failed"
+                }
+            };
+
+            await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
+
+            var options = new OperationsWorkerOptions
+            {
+                CaptureSourcesFilePath = tempFilePath,
+                EnableCanaryMode = false,
+                EnableStartupValidation = true,
+                EnableStartupDiscoveryOnFailedOnly = true
+            };
+
+            var provider = new StaticCaptureSourceProvider(options);
+            var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["https://bad.example.com/live.aac"] = false,
+                ["https://primary.example.com/live.m3u8"] = true,
+                ["https://fallback1.example.com/live.aac"] = true,
+                ["https://fallback2.example.com/stream"] = true,
+                ["https://invalid.example.com/live.aac"] = false
+            });
+            var discovery = new FakeDiscovery(
+            [
+                "https://primary.example.com/live.m3u8",
+                "https://fallback1.example.com/live.aac",
+                "https://invalid.example.com/live.aac",
+                "https://fallback2.example.com/stream"
+            ]);
+
+            var sut = new StartupSourceInitializationService(
+                options,
+                provider,
+                validator,
+                discovery,
+                NullLogger<StartupSourceInitializationService>.Instance);
+
+            await sut.InitializeAsync();
+
+            var active = await provider.ListActiveSourcesAsync();
+            Assert.Single(active);
+
+            var recovered = active[0];
+            Assert.Equal("https://primary.example.com/live.m3u8", recovered.StreamUrl);
+            Assert.Equal(2, recovered.FallbackStreamUrls.Count);
+            Assert.Contains("https://fallback1.example.com/live.aac", recovered.FallbackStreamUrls);
+            Assert.Contains("https://fallback2.example.com/stream", recovered.FallbackStreamUrls);
+
+            // Verify persisted to file
+            var configured = await provider.ListConfiguredSourcesAsync();
+            var persisted = configured.Single(s => s.SourceId == "failed");
+            Assert.Equal("https://primary.example.com/live.m3u8", persisted.StreamUrl);
+            Assert.Equal(2, persisted.FallbackStreamUrls.Count);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
     private sealed class FakeValidator : IStartupStreamValidator
     {
         private readonly Dictionary<string, bool> outcomes;

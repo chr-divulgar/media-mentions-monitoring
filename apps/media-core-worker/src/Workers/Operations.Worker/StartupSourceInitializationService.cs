@@ -80,8 +80,12 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
                 return (Candidate: candidate, Validation: validation);
             })).ConfigureAwait(false);
 
-            var successfulCandidate = validationResults.FirstOrDefault(result => result.Validation.Succeeded);
-            var discoveredStreamUrl = successfulCandidate.Candidate;
+            var succeededCandidates = validationResults
+                .Where(result => result.Validation.Succeeded)
+                .Select(result => result.Candidate)
+                .ToArray();
+
+            var discoveredStreamUrl = succeededCandidates.FirstOrDefault();
 
             if (string.IsNullOrWhiteSpace(discoveredStreamUrl))
             {
@@ -89,12 +93,21 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
                 continue;
             }
 
-            effectiveSources.Add(source.WithStreamUrl(discoveredStreamUrl));
+            var fallbackUrls = succeededCandidates.Skip(1).ToArray();
+
+            effectiveSources.Add(source.WithStreamUrl(discoveredStreamUrl).WithFallbackStreamUrls(fallbackUrls));
             validSourceIds.Add(source.SourceId);
 
             await captureSourceProvider
                 .PersistStreamUrlAsync(source.SourceId, discoveredStreamUrl, cancellationToken)
                 .ConfigureAwait(false);
+
+            if (fallbackUrls.Length > 0)
+            {
+                await captureSourceProvider
+                    .PersistFallbackStreamUrlsAsync(source.SourceId, fallbackUrls, cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
 
         captureSourceProvider.SetResolvedSources(effectiveSources);

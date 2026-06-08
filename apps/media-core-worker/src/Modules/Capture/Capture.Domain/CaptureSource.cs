@@ -30,7 +30,8 @@ public sealed class CaptureSource
         string streamUrl,
         string? primaryUrl = null,
         string? country = null,
-        int? utcOffsetMinutes = null)
+        int? utcOffsetMinutes = null,
+        IReadOnlyList<string>? fallbackStreamUrls = null)
     {
         SourceId = string.IsNullOrWhiteSpace(sourceId) ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(sourceId)) : sourceId;
         TenantId = string.IsNullOrWhiteSpace(tenantId) ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(tenantId)) : tenantId;
@@ -38,6 +39,9 @@ public sealed class CaptureSource
         Media = string.IsNullOrWhiteSpace(media) ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(media)) : media;
         StreamUrl = string.IsNullOrWhiteSpace(streamUrl) ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(streamUrl)) : streamUrl;
         PrimaryUrl = string.IsNullOrWhiteSpace(primaryUrl) ? null : primaryUrl;
+        FallbackStreamUrls = fallbackStreamUrls is { Count: > 0 }
+            ? fallbackStreamUrls.Where(u => !string.IsNullOrWhiteSpace(u)).ToArray()
+            : [];
 
         Country = string.IsNullOrWhiteSpace(country)
             ? DefaultCountry
@@ -58,13 +62,20 @@ public sealed class CaptureSource
 
     public string? PrimaryUrl { get; }
 
+    public IReadOnlyList<string> FallbackStreamUrls { get; }
+
     public string Country { get; }
 
     public int UtcOffsetMinutes { get; }
 
     public CaptureSource WithStreamUrl(string streamUrl)
     {
-        return new CaptureSource(SourceId, TenantId, Platform, Media, streamUrl, PrimaryUrl, Country, UtcOffsetMinutes);
+        return new CaptureSource(SourceId, TenantId, Platform, Media, streamUrl, PrimaryUrl, Country, UtcOffsetMinutes, FallbackStreamUrls);
+    }
+
+    public CaptureSource WithFallbackStreamUrls(IReadOnlyList<string> fallbackStreamUrls)
+    {
+        return new CaptureSource(SourceId, TenantId, Platform, Media, StreamUrl, PrimaryUrl, Country, UtcOffsetMinutes, fallbackStreamUrls);
     }
 
     private static int ResolveUtcOffsetMinutes(string country)
