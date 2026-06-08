@@ -84,6 +84,7 @@ public sealed class ContinuousCaptureUseCaseTests
             Assert.Equal(0, result.Failed);
             Assert.Single(artifacts);
             Assert.Equal("capture", artifacts[0].Kind);
+            Assert.Equal(TimeSpan.FromHours(-5), artifacts[0].CapturedAtUtc.Offset);
         }
         finally
         {
@@ -157,7 +158,7 @@ public sealed class ContinuousCaptureUseCaseTests
         {
             return Task.FromResult(new PluginExecutionPlan(
                 pluginId: "test-plugin",
-                wavWindowDuration: TimeSpan.FromSeconds(5),
+                flacWindowDuration: TimeSpan.FromSeconds(5),
                 opusFlushInterval: TimeSpan.FromSeconds(30),
                 opusRotationInterval: TimeSpan.FromHours(1)));
         }
@@ -178,7 +179,7 @@ public sealed class ContinuousCaptureUseCaseTests
 
             return Task.FromResult(new PluginExecutionPlan(
                 pluginId: "radio-plugin",
-                wavWindowDuration: TimeSpan.FromSeconds(5),
+                flacWindowDuration: TimeSpan.FromSeconds(5),
                 opusFlushInterval: TimeSpan.FromSeconds(30),
                 opusRotationInterval: TimeSpan.FromHours(1)));
         }

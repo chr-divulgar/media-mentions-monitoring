@@ -168,4 +168,45 @@ public sealed class StaticCaptureSourceProviderCanaryTests
             }
         }
     }
+
+    [Fact]
+    public async Task ListConfiguredSourcesAsync_should_default_country_to_colombia_when_missing()
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            var payload = new[]
+            {
+                new
+                {
+                    sourceId = "s1",
+                    platform = "caracol",
+                    media = "radio",
+                    streamUrl = "https://example.com/c1"
+                }
+            };
+
+            await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
+
+            var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions
+            {
+                EnableCanaryMode = false,
+                CaptureSourcesFilePath = tempFilePath
+            });
+
+            var sources = await provider.ListConfiguredSourcesAsync();
+
+            Assert.Single(sources);
+            Assert.Equal("colombia", sources[0].Country);
+            Assert.Equal(-300, sources[0].UtcOffsetMinutes);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
 }

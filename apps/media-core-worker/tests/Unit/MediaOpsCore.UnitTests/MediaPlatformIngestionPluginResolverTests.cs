@@ -17,7 +17,7 @@ public sealed class MediaPlatformIngestionPluginResolverTests
                 media: "video",
                 platform: null,
                 ingestionMode: IngestionMode.Continuous,
-                wavWindowDuration: TimeSpan.FromSeconds(10),
+                flacWindowDuration: TimeSpan.FromSeconds(10),
                 opusFlushInterval: TimeSpan.FromSeconds(30),
                 opusRotationInterval: TimeSpan.FromHours(1)),
             new PluginProfile(
@@ -25,7 +25,7 @@ public sealed class MediaPlatformIngestionPluginResolverTests
                 media: "video",
                 platform: "youtube",
                 ingestionMode: IngestionMode.Continuous,
-                wavWindowDuration: TimeSpan.FromSeconds(10),
+                flacWindowDuration: TimeSpan.FromSeconds(10),
                 opusFlushInterval: TimeSpan.FromSeconds(20),
                 opusRotationInterval: TimeSpan.FromHours(2))
         });
@@ -50,7 +50,7 @@ public sealed class MediaPlatformIngestionPluginResolverTests
                 media: "radio",
                 platform: null,
                 ingestionMode: IngestionMode.Continuous,
-                wavWindowDuration: TimeSpan.FromSeconds(10),
+                flacWindowDuration: TimeSpan.FromSeconds(10),
                 opusFlushInterval: TimeSpan.FromSeconds(30),
                 opusRotationInterval: TimeSpan.FromHours(1))
         });
