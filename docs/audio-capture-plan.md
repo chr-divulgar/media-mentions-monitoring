@@ -1,14 +1,58 @@
 # Plan de implementación: captura de audio con FFmpeg.AutoGen
 
-## Actualización implementada (2026-06-07)
+## Actualización implementada (2026-06-07) — Pipeline de transcripción v2
 
 Cambios aplicados en `apps/media-core-worker/src/Workers/Operations.Worker/InProcessFfmpegAudioCapturePlugin.cs`:
 
+### Compatibilidad WAV eliminada
+- Todo el código WAV eliminado. El pipeline es exclusivamente OPUS (captura) + FLAC (reconocimiento).
+
+### VAD de chunking dinámico (sin umbral fijo)
+- `ChunkingState.Observe()`: corte por silencio usando EMA del noise floor (`noiseFloorRms * adaptiveThresholdMultiplier`). Configurable vía `OperationsWorkerOptions`: `FlacSilenceMinChunkSeconds`, `FlacSilenceMaxChunkSeconds`, `FlacSilenceAdaptiveThresholdMultiplier`, `FlacSilenceNoiseFloorEmaAlpha`, `FlacSilenceHighPassCutoffHz`.
+- `FlacSilenceThresholdDb` eliminado completamente — umbral 100% dinámico.
+
+### Ventanas de reconocimiento alineadas a silencios (VAD-aligned)
+- `BuildFlacRecognitionWindows(byte[] pcm)`: calcula `ComputeDynamicSilenceFloor` una vez por buffer, luego busca `FindSilenceCutPoint` en ±`RecognitionVadSearchSeconds` alrededor de cada target. Si no hay silencio, usa el target original.
+- `ComputeDynamicSilenceFloor`: percentil 5 de RMS de frames de 20ms × 2.5. Sin `ArrayPool.Rent` para `double[]`.
+- `FindSilenceCutPoint`: prefiere frame con RMS ≤ silenceFloor más cercano al target; fallback al frame más silencioso.
+
+### Pipeline de transcripción por fuente (FIFO garantizado)
+- **Antes**: N workers comparten un canal global → race condition → entradas con timestamps desordenados y contenido mezclado.
+- **Ahora**: `ChunkTranscriptionPipeline` crea un `Channel<ChunkTranscriptionRequest>` + worker secuencial por `SourceId` al primer `Enqueue`. Cada fuente procesa sus ventanas en orden FIFO. `sourcePipelines: ConcurrentDictionary<string, SourcePipeline>`.
+
+### Acumulación de ventanas antes de escribir al JSON (WindowsPerEntry)
+- El worker secuencial de cada fuente acumula `WindowsPerEntry` (default 3, env `MEDIA_WINDOWS_PER_ENTRY`) ventanas VAD antes de escribir una entrada al JSON.
+- Duración por entry: ~36–45s (3 × 12–15s).
+- Flush forzado con `ForceFlush=true` en rotación OPUS y shutdown.
+- El buffer `PendingWindows` vive en `PathState` (bajo `SemaphoreSlim`), no en el worker.
+
+### Merge y dedup entre ventanas
+- `MergeWindowTexts`: concatena N ventanas stripeando el overlap PCM de 8s entre ellas (`StripTextPrefixOverlap`, min 8 palabras). **No** aplica `DeduplicateRepeatedPhrases` entre ventanas (eliminaría frases repetidas legítimas en radio en vivo).
+- `DeduplicateRepeatedPhrases` se mantiene solo dentro de `MergeTranscriptSegments` (dedup de ventanas FLAC internas al mismo chunk VAD).
+- `StripChunkPrefixOverlap` (min 8 palabras) al escribir la entrada final al JSON vs. la entrada anterior del mismo path.
+
+### Eliminación de duplicados entre entradas del JSON
+- `StripChunkPrefixOverlap(existingItems[^1], mergedText, minOverlapWords: 8)` dentro del lock de `PathState` antes de insertar en `CachedItems`.
+
+### Métricas y diagnóstico
+- `AppendBoundaryStatsAsync` escribe `.stats.json` al lado del `.json` cuando hay `SuspectedBoundaryLosses > 0`.
+- `PathState.StatsEntries` y `PathState.PendingWindows` se limpian en `EvictStalePathStates` (paths no activos en >2h).
+
+### Configuración de staging (`stage/worker-options.json`)
+```json
+"enableFlacSilenceChunking": true,
+"flacSilenceMinChunkSeconds": 12,
+"flacSilenceMaxChunkSeconds": 15,
+"flacSilenceAdaptiveThresholdMultiplier": 1.7,
+"flacSilenceNoiseFloorEmaAlpha": 0.08,
+"flacSilenceHighPassCutoffHz": 120
+```
+
+### Rotación OPUS y timestamps
 - Rotación de archivos OPUS por timeline de audio (no por reloj de pared) para mantener consistencia entre nombre de archivo, duración efectiva y timestamps de chunks.
-- Seguridad de transcripción: eliminación de API key hardcodeada. Ahora se resuelve por `GOOGLE_SPEECH_API_KEY` (entorno) y fallback a `.env`.
-- Pipeline de transcripción con cola bounded y concurrencia configurable (`MEDIA_TRANSCRIPTION_WORKERS`, `MEDIA_TRANSCRIPTION_QUEUE_CAPACITY`).
-- Mitigación de pérdida de contenido en fronteras de chunk: solape PCM entre chunks consecutivos.
-- Mitigación de omisión interna en chunks largos: cada chunk se transcribe por subventanas (`12s` con solape interno de `2s`) y luego se unifica con deduplicación por overlap léxico para conservar coherencia textual.
+- Seguridad de transcripción: API key por `GOOGLE_SPEECH_API_KEY` (entorno) y fallback a `.env`.
+
+---
 
 Archivos de configuración asociados:
 
