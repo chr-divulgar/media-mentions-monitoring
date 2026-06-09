@@ -28,8 +28,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     // How many seconds before/after the target window cut to search for a silence boundary.
     // 0 disables VAD-aligned cuts (falls back to fixed-time windows).
     private static readonly int RecognitionVadSearchSeconds = ResolveConfiguredInt("MEDIA_RECOGNITION_VAD_SEARCH_SECONDS", 2, 0, 5);
-    // Each VAD chunk becomes its own JSON entry (1:1). Set >1 via env only for special cases.
-    private static readonly int WindowsPerEntry = ResolveConfiguredInt("MEDIA_WINDOWS_PER_ENTRY", 1, 1, 10);
     // Must match flacSilenceMaxChunkSeconds in worker-options.json so the fast path covers all normal VAD chunks.
     private static readonly int FlacSilenceMaxChunkSeconds = ResolveConfiguredInt("MEDIA_FLAC_SILENCE_MAX_CHUNK_SECONDS", 20, 5, 120);
     // 20 ms analysis frame at 16 kHz / mono / s16 = 640 bytes
@@ -302,13 +300,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             return Path.ChangeExtension(opusPath, ".json");
         }
 
-        public static string StatsJsonPath(string transcriptionJsonPath)
-        {
-            var dir = Path.GetDirectoryName(transcriptionJsonPath) ?? string.Empty;
-            var name = Path.GetFileNameWithoutExtension(transcriptionJsonPath);
-            return Path.Combine(dir, name + ".stats.json");
-        }
-
         private string ResolveSourceDirectory(DateTimeOffset timestamp)
         {
             var sourceDirectory = Path.Combine(
@@ -538,36 +529,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 ffmpeg.av_opt_set_sample_fmt(swrContext, "out_sample_fmt", AVSampleFormat.AV_SAMPLE_FMT_S16, 0).ThrowIfError("av_opt_set_sample_fmt(out_sample_fmt)");
                 ffmpeg.swr_init(swrContext).ThrowIfError("swr_init");
 
-                AVCodec* encoder = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_OPUS);
-                if (encoder is null)
-                {
-                    throw new InvalidOperationException("OPUS encoder not found.");
-                }
-
-                encoderContext = ffmpeg.avcodec_alloc_context3(encoder);
-                if (encoderContext is null)
-                {
-                    throw new InvalidOperationException("Unable to allocate OPUS encoder context.");
-                }
-
-                encoderContext->sample_rate = AudioSampleRate;
-                try
-                {
-                    ffmpeg.av_channel_layout_default(&encoderContext->ch_layout, AudioChannels);
-                }
-                catch (NotSupportedException exception)
-                {
-                    throw new InvalidOperationException("av_channel_layout_default(encoder) is not supported by the loaded FFmpeg bindings.", exception);
-                }
-                encoderContext->sample_fmt = AVSampleFormat.AV_SAMPLE_FMT_S16;
-                encoderContext->time_base = new AVRational { num = 1, den = AudioSampleRate };
-                encoderContext->bit_rate = Math.Max(6, options.DefaultOpusBitrateKbps) * 1000L;
-                if (encoderContext->priv_data is not null)
-                {
-                    ffmpeg.av_opt_set(encoderContext->priv_data, "compression_level", "0", 0);
-                }
-
-                ffmpeg.avcodec_open2(encoderContext, encoder, null).ThrowIfError("avcodec_open2(encoder)");
+                encoderContext = CreateOpusEncoderContext(Math.Max(6, options.DefaultOpusBitrateKbps));
                 encoderFrameSize = encoderContext->frame_size > 0 ? encoderContext->frame_size : AudioSampleRate / 2;
                 pendingOpusPcm = new PcmByteQueue();
                 pendingFlacPcm = new PcmByteQueue();
@@ -751,7 +713,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                                 chunkingState?.ResetAfterFlush();
                             }
 
-                            RotateOutput(ref outputContext, ref outputStream, encoderContext, outputPacket, nextRotationAt, effectiveOpusRotationInterval);
+                            RotateOutput(ref outputContext, ref outputStream, ref encoderContext, outputPacket, nextRotationAt, effectiveOpusRotationInterval, ref encoderSampleCursor);
                             currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
                             currentOpusStartedAt = nextRotationAt;
                             currentOpusSampleCursor = 0;
@@ -878,6 +840,41 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
+        private static AVCodecContext* CreateOpusEncoderContext(int bitrateKbps)
+        {
+            AVCodec* encoder = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_OPUS);
+            if (encoder is null)
+            {
+                throw new InvalidOperationException("OPUS encoder not found.");
+            }
+
+            AVCodecContext* encoderContext = ffmpeg.avcodec_alloc_context3(encoder);
+            if (encoderContext is null)
+            {
+                throw new InvalidOperationException("Unable to allocate OPUS encoder context.");
+            }
+
+            encoderContext->sample_rate = AudioSampleRate;
+            try
+            {
+                ffmpeg.av_channel_layout_default(&encoderContext->ch_layout, AudioChannels);
+            }
+            catch (NotSupportedException exception)
+            {
+                throw new InvalidOperationException("av_channel_layout_default(encoder) is not supported by the loaded FFmpeg bindings.", exception);
+            }
+            encoderContext->sample_fmt = AVSampleFormat.AV_SAMPLE_FMT_S16;
+            encoderContext->time_base = new AVRational { num = 1, den = AudioSampleRate };
+            encoderContext->bit_rate = bitrateKbps * 1000L;
+            if (encoderContext->priv_data is not null)
+            {
+                ffmpeg.av_opt_set(encoderContext->priv_data, "compression_level", "0", 0);
+            }
+
+            ffmpeg.avcodec_open2(encoderContext, encoder, null).ThrowIfError("avcodec_open2(encoder)");
+            return encoderContext;
+        }
+
         private AVFormatContext* OpenOutputContext(string outputPath, AVCodecContext* encoderContext, ref AVStream* outputStream)
         {
             AVFormatContext* context = null;
@@ -911,7 +908,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             return $"Referer: {referer}\r\nOrigin: {origin}\r\nAccept: */*\r\n";
         }
 
-        private void RotateOutput(ref AVFormatContext* outputContext, ref AVStream* outputStream, AVCodecContext* encoderContext, AVPacket* packet, DateTimeOffset now, TimeSpan rotationInterval)
+        private void RotateOutput(ref AVFormatContext* outputContext, ref AVStream* outputStream, ref AVCodecContext* encoderContext, AVPacket* packet, DateTimeOffset now, TimeSpan rotationInterval, ref long encoderSampleCursor)
         {
             if (outputContext is null)
             {
@@ -923,7 +920,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 ffmpeg.avio_flush(outputContext->pb);
             }
 
-            // Drain pending frames from encoder to current output file before closing
+            // Drain pending frames from the encoder into the file being closed. This sends a null
+            // frame, which leaves the encoder in the EOF/draining state.
             DrainEncoder(encoderContext, outputContext, outputStream, packet);
 
             ffmpeg.av_write_trailer(outputContext);
@@ -934,6 +932,24 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
 
             ffmpeg.avformat_free_context(outputContext);
+
+            // Replace the encoder with a fresh instance for the next file.
+            // After DrainEncoder sends the null frame, the Opus encoder is left in the EOF/draining
+            // state and rejects every subsequent frame. avcodec_flush_buffers does NOT reliably clear
+            // that state for the Opus encoder, so reusing it produced header-only (~1 KB) files at every
+            // hour boundary; the session then aborted after repeated send_frame failures and restarted,
+            // losing all audio between the boundary and the restart. Creating a new encoder guarantees a
+            // clean, encodable state. The drained samples were already written to the file just closed,
+            // so no audio is lost across the rotation.
+            AVCodecContext* encoderToFree = encoderContext;
+            ffmpeg.avcodec_free_context(&encoderToFree);
+            encoderContext = CreateOpusEncoderContext(Math.Max(6, options.DefaultOpusBitrateKbps));
+
+            // Reset PTS so each rotated file starts from timestamp 0.
+            // Without this, files after the first rotation have non-zero start PTS equal to the cumulative
+            // sample count, causing downstream tools to report incorrect file-relative timestamps.
+            encoderSampleCursor = 0;
+
             activeOpusPath = CurrentOpusPath(now, rotationInterval);
             outputContext = OpenOutputContext(activeOpusPath, encoderContext, ref outputStream);
         }
@@ -1005,12 +1021,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
             chunkTranscriptionPipeline.Enqueue(new ChunkTranscriptionRequest(
                 transcriptionJsonPath,
-                CaptureSession.StatsJsonPath(transcriptionJsonPath),
                 chunkStartedAt,
                 chunkEndedAt,
                 flacWindows,
-                sourceId,
-                ForceFlush: !preserveOverlapForNextChunk));
+                sourceId));
 
             if (preserveOverlapForNextChunk)
             {
@@ -1937,12 +1951,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
     private readonly record struct ChunkTranscriptionRequest(
         string JsonPath,
-        string StatsPath,
         DateTimeOffset StartTime,
         DateTimeOffset EndTime,
         IReadOnlyList<byte[]> FlacWindows,
-        string SourceId,
-        bool ForceFlush);
+        string SourceId);
 
     private sealed record ChunkTranscriptionItem(string Text, string StartTime, string EndTime);
 
@@ -1950,12 +1962,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     {
         private const string DefaultLanguage = "es-CO";
         private const string NoSpeechFallback = "M\u00fasica-NoEspa\u00f1ol.";
-        private const int RecognitionMaxOverlapWords = 24;
         private static readonly Meter TranscriptionMeter = new("MediaOpsCore.Workers.Operations.Transcription", "1.0.0");
         private static readonly Counter<long> TranscriptionChunksProcessed = TranscriptionMeter.CreateCounter<long>("media_transcription_chunks_processed");
         private static readonly Counter<long> TranscriptionWindowsProcessed = TranscriptionMeter.CreateCounter<long>("media_transcription_windows_processed");
-        private static readonly Counter<long> TranscriptionBoundaryComparisons = TranscriptionMeter.CreateCounter<long>("media_transcription_boundary_comparisons");
-        private static readonly Counter<long> TranscriptionBoundaryLossSuspicions = TranscriptionMeter.CreateCounter<long>("media_transcription_boundary_loss_suspicions");
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -2071,29 +2080,14 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 await foreach (var request in sourceChannel.Reader.ReadAllAsync(cancellationTokenSource.Token).ConfigureAwait(false))
                 {
                     var entryText = string.Empty;
-                    var recognitionResult = MergeOutcome.Empty;
 
                     try
                     {
-                        recognitionResult = await RecognizeWindowedAsync(request.FlacWindows, DefaultLanguage).ConfigureAwait(false);
-                        entryText = string.IsNullOrWhiteSpace(recognitionResult.Text) ? NoSpeechFallback : recognitionResult.Text;
+                        var recognizedText = await RecognizeWindowedAsync(request.FlacWindows, DefaultLanguage).ConfigureAwait(false);
+                        entryText = string.IsNullOrWhiteSpace(recognizedText) ? NoSpeechFallback : recognizedText;
 
                         TranscriptionChunksProcessed.Add(1, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
                         TranscriptionWindowsProcessed.Add(request.FlacWindows.Count, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
-                        TranscriptionBoundaryComparisons.Add(recognitionResult.BoundaryComparisons, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
-
-                        if (recognitionResult.SuspectedBoundaryLosses > 0)
-                        {
-                            TranscriptionBoundaryLossSuspicions.Add(recognitionResult.SuspectedBoundaryLosses, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
-                            await AppendBoundaryStatsAsync(
-                                request.StatsPath,
-                                request.SourceId,
-                                request.StartTime,
-                                request.EndTime,
-                                recognitionResult.SuspectedBoundaryLosses,
-                                recognitionResult.BoundaryComparisons,
-                                request.FlacWindows.Count).ConfigureAwait(false);
-                        }
                     }
                     catch (OperationCanceledException)
                     {
@@ -2113,7 +2107,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                             request.StartTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
                             request.EndTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"));
 
-                        await AppendOrderedAsync(request.JsonPath, windowEntry, request.ForceFlush).ConfigureAwait(false);
+                        await AppendOrderedAsync(request.JsonPath, windowEntry).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     {
@@ -2130,24 +2124,26 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private async Task<MergeOutcome> RecognizeWindowedAsync(IReadOnlyList<byte[]> flacWindows, string language)
+        private async Task<string> RecognizeWindowedAsync(IReadOnlyList<byte[]> flacWindows, string language)
         {
             if (flacWindows.Count == 0)
             {
-                return MergeOutcome.Empty;
+                return string.Empty;
             }
 
+            // One chunk normally produces a single FLAC window. If more than one is present, join the
+            // recognized text plainly — no overlap merge or boundary-loss detection.
             var segments = new List<string>(flacWindows.Count);
             foreach (var window in flacWindows)
             {
                 var segment = await RecognizeSingleAsync(window, language).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(segment))
                 {
-                    segments.Add(segment);
+                    segments.Add(segment.Trim());
                 }
             }
 
-            return MergeTranscriptSegments(segments);
+            return string.Join(" ", segments);
         }
 
         private async Task<string> RecognizeSingleAsync(byte[] flacBytes, string language)
@@ -2168,7 +2164,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             using var response = await httpClient.PostAsync(url, content, cancellationTokenSource.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
-            var body = await response.Content.ReadAsStringAsync(cancellationTokenSource.Token).ConfigureAwait(false);
+            // Read raw bytes and decode as UTF-8 explicitly. The Google speech endpoint returns UTF-8
+            // JSON but its response frequently omits (or misreports) the charset, so ReadAsStringAsync
+            // falls back to ISO-8859-1 and mangles accented characters (café → cafÃ©, señor → seÃ±or).
+            var bodyBytes = await response.Content.ReadAsByteArrayAsync(cancellationTokenSource.Token).ConfigureAwait(false);
+            var body = System.Text.Encoding.UTF8.GetString(bodyBytes);
             foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 using var document = JsonDocument.Parse(line);
@@ -2185,37 +2185,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
 
             return string.Empty;
-        }
-
-        private static MergeOutcome MergeTranscriptSegments(IReadOnlyList<string> segments)
-        {
-            if (segments.Count == 0)
-            {
-                return MergeOutcome.Empty;
-            }
-
-            var merged = segments[0].Trim();
-            var suspectedBoundaryLosses = 0;
-            var boundaryComparisons = 0;
-            for (var i = 1; i < segments.Count; i++)
-            {
-                var next = segments[i].Trim();
-                if (string.IsNullOrWhiteSpace(next))
-                {
-                    continue;
-                }
-
-                boundaryComparisons++;
-                var pair = MergePairByWordOverlap(merged, next);
-                merged = pair.MergedText;
-                if (pair.SuspectedBoundaryLoss)
-                {
-                    suspectedBoundaryLosses++;
-                }
-            }
-
-            merged = DeduplicateRepeatedPhrases(merged);
-            return new MergeOutcome(merged, suspectedBoundaryLosses, boundaryComparisons);
         }
 
         // Removes repeated phrases of ≥5 words that appear more than once in the merged text.
@@ -2298,154 +2267,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
             return newText;
         }
-
-        // Merges N buffered window texts into a single string by stripping the cross-window
-        // overlap (produced by TranscriptionChunkOverlapSeconds) between consecutive windows.
-        // Each window text is already internally deduplicated by MergeTranscriptSegments.
-        // We only strip the PCM-overlap boundary prefix here — no phrase dedup across windows,
-        // to avoid removing legitimate repetitions common in live radio/sports commentary.
-        private static string MergeWindowTexts(List<ChunkTranscriptionItem> windows)
-        {
-            if (windows.Count == 0)
-            {
-                return string.Empty;
-            }
-
-            if (windows.Count == 1)
-            {
-                return windows[0].Text;
-            }
-
-            var combined = windows[0].Text;
-            for (var i = 1; i < windows.Count; i++)
-            {
-                var stripped = StripTextPrefixOverlap(combined, windows[i].Text, minOverlapWords: 8);
-                if (!string.IsNullOrWhiteSpace(stripped))
-                {
-                    combined = combined + " " + stripped;
-                }
-            }
-
-            return combined;
-        }
-
-        // Removes repeated phrases of ≥5 words that appear more than once in the merged text.
-        // Catches duplicates from overlapping recognition windows where the API returns
-        // the same content from adjacent windows that share an overlap region.
-        private static string DeduplicateRepeatedPhrases(string text, int minPhraseWords = 5)
-        {
-            var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length <= minPhraseWords * 2)
-            {
-                return text;
-            }
-
-            var result = new List<string>(words.Length);
-            var i = 0;
-            while (i < words.Length)
-            {
-                var skipped = false;
-                var maxLen = Math.Min(minPhraseWords + 20, words.Length - i);
-                for (var phraseLen = maxLen; phraseLen >= minPhraseWords; phraseLen--)
-                {
-                    var lookbackStart = Math.Max(0, result.Count - 120);
-                    for (var j = lookbackStart; j <= result.Count - phraseLen; j++)
-                    {
-                        var match = true;
-                        for (var k = 0; k < phraseLen; k++)
-                        {
-                            if (!NormalizeWord(result[j + k]).Equals(NormalizeWord(words[i + k]), StringComparison.Ordinal))
-                            {
-                                match = false;
-                                break;
-                            }
-                        }
-
-                        if (match)
-                        {
-                            i += phraseLen;
-                            skipped = true;
-                            break;
-                        }
-                    }
-
-                    if (skipped)
-                    {
-                        break;
-                    }
-                }
-
-                if (!skipped)
-                {
-                    result.Add(words[i]);
-                    i++;
-                }
-            }
-
-            return string.Join(' ', result);
-        }
-
-        private static MergePairOutcome MergePairByWordOverlap(string left, string right)
-        {
-            var leftTokens = left.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var rightTokens = right.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (leftTokens.Length == 0)
-            {
-                return new MergePairOutcome(right, 0, false);
-            }
-
-            if (rightTokens.Length == 0)
-            {
-                return new MergePairOutcome(left, 0, false);
-            }
-
-            var maxOverlap = Math.Min(RecognitionMaxOverlapWords, Math.Min(leftTokens.Length, rightTokens.Length));
-            var overlapWords = 0;
-
-            for (var size = maxOverlap; size >= 1; size--)
-            {
-                var equal = true;
-                for (var i = 0; i < size; i++)
-                {
-                    var leftWord = NormalizeWord(leftTokens[leftTokens.Length - size + i]);
-                    var rightWord = NormalizeWord(rightTokens[i]);
-                    if (!leftWord.Equals(rightWord, StringComparison.Ordinal))
-                    {
-                        equal = false;
-                        break;
-                    }
-                }
-
-                if (equal)
-                {
-                    overlapWords = size;
-                    break;
-                }
-            }
-
-            if (overlapWords >= rightTokens.Length)
-            {
-                return new MergePairOutcome(left, overlapWords, false);
-            }
-
-            var remainder = string.Join(' ', rightTokens.Skip(overlapWords));
-            var mergedText = string.IsNullOrWhiteSpace(remainder)
-                ? left
-                : string.Concat(left.TrimEnd(), " ", remainder);
-
-            var suspectedBoundaryLoss = overlapWords == 0
-                && leftTokens.Length >= 3
-                && rightTokens.Length >= 3;
-
-            return new MergePairOutcome(mergedText, overlapWords, suspectedBoundaryLoss);
-        }
-
-        private readonly record struct MergeOutcome(string Text, int SuspectedBoundaryLosses, int BoundaryComparisons)
-        {
-            public static MergeOutcome Empty => new(string.Empty, 0, 0);
-        }
-
-        private readonly record struct MergePairOutcome(string MergedText, int OverlapWords, bool SuspectedBoundaryLoss);
 
         private static string NormalizeWord(string token)
         {
@@ -2537,7 +2358,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             return Math.Clamp(parsed, min, max);
         }
 
-        private async Task AppendOrderedAsync(string jsonPath, ChunkTranscriptionItem windowEntry, bool forceFlush)
+        private async Task AppendOrderedAsync(string jsonPath, ChunkTranscriptionItem windowEntry)
         {
             var directory = Path.GetDirectoryName(jsonPath);
             if (!string.IsNullOrWhiteSpace(directory))
@@ -2549,27 +2370,16 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             await state.Lock.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
             try
             {
-                // Buffer this window; only flush when we have enough or are forced.
-                state.PendingWindows ??= [];
-                state.PendingWindows.Add(windowEntry);
-
-                if (state.PendingWindows.Count < WindowsPerEntry && !forceFlush)
+                // One chunk = one window = one JSON entry. No buffering or joining of several
+                // windows into a single entry: each recognized window is written as its own entry,
+                // with its own timestamps, so the output is consistent and nothing is held back
+                // waiting to fill a multi-window buffer.
+                if (string.IsNullOrWhiteSpace(windowEntry.Text))
                 {
                     return;
                 }
 
-                // Merge buffered windows into one entry.
-                var mergedText = MergeWindowTexts(state.PendingWindows);
-                var firstStart = state.PendingWindows[0].StartTime;
-                var lastEnd = state.PendingWindows[^1].EndTime;
-                state.PendingWindows.Clear();
-
-                if (string.IsNullOrWhiteSpace(mergedText))
-                {
-                    return;
-                }
-
-                var entry = new ChunkTranscriptionItem(mergedText, firstStart, lastEnd);
+                var entry = windowEntry;
 
                 if (state.CachedItems is null)
                 {
@@ -2612,61 +2422,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private async Task AppendBoundaryStatsAsync(
-            string statsPath,
-            string sourceId,
-            DateTimeOffset chunkStart,
-            DateTimeOffset chunkEnd,
-            int suspicions,
-            int boundariesCompared,
-            int windows)
-        {
-            var directory = Path.GetDirectoryName(statsPath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            var state = pathStates.GetOrAdd(statsPath, _ => new PathState());
-            await state.Lock.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
-            try
-            {
-                List<BoundaryStatsEntry> entries;
-                if (state.StatsEntries is null)
-                {
-                    entries = File.Exists(statsPath)
-                        ? JsonSerializer.Deserialize<List<BoundaryStatsEntry>>(
-                            await File.ReadAllTextAsync(statsPath, cancellationTokenSource.Token).ConfigureAwait(false),
-                            JsonOptions) ?? []
-                        : [];
-                    state.StatsEntries = entries;
-                }
-                else
-                {
-                    entries = state.StatsEntries;
-                }
-
-                entries.Add(new BoundaryStatsEntry(
-                    sourceId,
-                    chunkStart.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
-                    chunkEnd.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
-                    suspicions,
-                    boundariesCompared,
-                    windows));
-
-                await File.WriteAllTextAsync(
-                    statsPath,
-                    JsonSerializer.Serialize(entries, JsonOptions),
-                    cancellationTokenSource.Token).ConfigureAwait(false);
-
-                state.LastWriteAt = DateTimeOffset.UtcNow;
-            }
-            finally
-            {
-                state.Lock.Release();
-            }
-        }
-
         private void EvictStalePathStates()
         {
             var cutoff = DateTimeOffset.UtcNow.AddHours(-2);
@@ -2680,8 +2435,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         if (state.LastWriteAt < cutoff)
                         {
                             state.CachedItems = null;
-                            state.PendingWindows = null;
-                            state.StatsEntries = null;
                         }
                     }
                     finally
@@ -2711,19 +2464,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         {
             public readonly SemaphoreSlim Lock = new(1, 1);
             public List<ChunkTranscriptionItem>? CachedItems;
-            public List<ChunkTranscriptionItem>? PendingWindows;
-            public List<BoundaryStatsEntry>? StatsEntries;
             public DateTimeOffset LastWriteAt = DateTimeOffset.UtcNow;
         }
     }
-
-    private sealed record BoundaryStatsEntry(
-        string SourceId,
-        string ChunkStart,
-        string ChunkEnd,
-        int Suspicions,
-        int BoundariesCompared,
-        int Windows);
 
 }
 
