@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MediaOpsCore.Modules.Capture.Domain;
 
 namespace MediaOpsCore.Workers.Operations;
 
@@ -59,7 +60,63 @@ public static class StartupStreamUrlHeuristics
             return true;
         }
 
+        // Omny podcast CDN: traffic.omny.fm/d/clips/ — never a live stream
+        if (uri.Host.Equals("traffic.omny.fm", StringComparison.OrdinalIgnoreCase)
+            && path.Contains("/d/clips/", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         return false;
+    }
+
+    /// <summary>
+    /// Returns the fallback URLs that are structural variants of the current streamUrl and
+    /// therefore safe candidates to try when the primary stream fails.
+    /// Only two cases justify changing the streamUrl:
+    ///   1. Same host+path+query, different scheme (http↔https).
+    ///   2. Same host+path, different querystring (e.g. rotated token or updated params).
+    /// Fallbacks with a different host are stored for mapping purposes but are never used
+    /// for recovery — they could be VOD/podcast URLs unrelated to the live stream.
+    /// </summary>
+    public static IReadOnlyList<string> BuildConservativeCandidates(CaptureSource source)
+    {
+        if (!Uri.TryCreate(source.StreamUrl, UriKind.Absolute, out var current))
+        {
+            return [];
+        }
+
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { source.StreamUrl };
+
+        foreach (var url in source.FallbackStreamUrls)
+        {
+            if (string.IsNullOrWhiteSpace(url) || !seen.Add(url))
+            {
+                continue;
+            }
+
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var fallback))
+            {
+                continue;
+            }
+
+            // Must be the same host
+            if (!string.Equals(fallback.Host, current.Host, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Must be the same path (covers both http↔https toggle and token-rotated variants)
+            if (!string.Equals(fallback.AbsolutePath, current.AbsolutePath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            result.Add(url);
+        }
+
+        return result;
     }
 
     public static bool IsLikelyEphemeral(string streamUrl)

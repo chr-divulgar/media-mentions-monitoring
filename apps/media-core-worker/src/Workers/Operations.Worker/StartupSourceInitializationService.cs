@@ -51,72 +51,65 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
         {
             var source = configuredSources[index];
             var initialValidation = initialValidationResults[index];
+
+            // Always run fallback discovery in the background for sources with a primaryUrl,
+            // regardless of whether they already have fallbacks or their validation status.
+            // This keeps the fallbackStreamUrls list up to date without blocking capture.
+            if (!string.IsNullOrWhiteSpace(source.PrimaryUrl))
+            {
+                _ = DiscoverAndPersistFallbacksAsync(source, cancellationToken);
+            }
+
             if (initialValidation.Succeeded)
             {
-                // Primary URL is valid. If fallbacks are not yet populated and discovery is enabled,
-                // run discovery silently to find alternate URLs and persist them — without blocking capture.
-                if (source.FallbackStreamUrls.Count == 0
-                    && options.EnableStartupDiscoveryOnFailedOnly
-                    && !string.IsNullOrWhiteSpace(source.PrimaryUrl))
+                // Primary streamUrl is valid and capture can start immediately.
+                // If the source was previously excluded, clear the flag now that it is reachable.
+                if (source.IsExcluded)
                 {
-                    _ = DiscoverAndPersistFallbacksAsync(source, cancellationToken);
+                    await captureSourceProvider
+                        .PersistExclusionAsync(source.SourceId, false, cancellationToken)
+                        .ConfigureAwait(false);
                 }
 
-                effectiveSources.Add(source);
+                effectiveSources.Add(source.WithExcluded(false));
                 validSourceIds.Add(source.SourceId);
                 continue;
             }
 
-            if (!options.EnableStartupDiscoveryOnFailedOnly || string.IsNullOrWhiteSpace(source.PrimaryUrl))
+            // streamUrl failed — try conservative structural variants from fallbackStreamUrls.
+            // Only fallbacks with the same host+path as the current streamUrl are considered safe
+            // (scheme toggle or token rotation). Different-host fallbacks are skipped.
+            var candidates = StartupStreamUrlHeuristics.BuildConservativeCandidates(source);
+
+            if (candidates.Count > 0)
             {
-                invalidSourceIds.Add(source.SourceId);
-                continue;
+                var validationResults = await Task.WhenAll(candidates.Select(async candidate =>
+                {
+                    var validation = await streamValidator.ValidateAsync(candidate, cancellationToken).ConfigureAwait(false);
+                    return (Candidate: candidate, Validation: validation);
+                })).ConfigureAwait(false);
+
+                var first = validationResults.FirstOrDefault(r => r.Validation.Succeeded);
+                if (!string.IsNullOrWhiteSpace(first.Candidate))
+                {
+                    effectiveSources.Add(source.WithStreamUrl(first.Candidate).WithExcluded(false));
+                    validSourceIds.Add(source.SourceId);
+                    await captureSourceProvider
+                        .PersistStreamUrlAsync(source.SourceId, first.Candidate, cancellationToken)
+                        .ConfigureAwait(false);
+                    await captureSourceProvider
+                        .PersistExclusionAsync(source.SourceId, false, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
             }
 
-            var discoveredCandidates = await sourceDiscoveryService
-                .DiscoverStreamUrlsAsync(source, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (discoveredCandidates.Count == 0)
-            {
-                invalidSourceIds.Add(source.SourceId);
-                continue;
-            }
-
-            var validationResults = await Task.WhenAll(discoveredCandidates.Select(async candidate =>
-            {
-                var validation = await streamValidator.ValidateAsync(candidate, cancellationToken).ConfigureAwait(false);
-                return (Candidate: candidate, Validation: validation);
-            })).ConfigureAwait(false);
-
-            var succeededCandidates = validationResults
-                .Where(result => result.Validation.Succeeded)
-                .Select(result => result.Candidate)
-                .ToArray();
-
-            var discoveredStreamUrl = succeededCandidates.FirstOrDefault();
-
-            if (string.IsNullOrWhiteSpace(discoveredStreamUrl))
-            {
-                invalidSourceIds.Add(source.SourceId);
-                continue;
-            }
-
-            var fallbackUrls = succeededCandidates.Skip(1).ToArray();
-
-            effectiveSources.Add(source.WithStreamUrl(discoveredStreamUrl).WithFallbackStreamUrls(fallbackUrls));
-            validSourceIds.Add(source.SourceId);
-
+            // No structural variant works — mark as excluded so it is skipped on the next
+            // restart and is visible in the JSON for diagnosis and manual correction.
             await captureSourceProvider
-                .PersistStreamUrlAsync(source.SourceId, discoveredStreamUrl, cancellationToken)
+                .PersistExclusionAsync(source.SourceId, true, cancellationToken)
                 .ConfigureAwait(false);
-
-            if (fallbackUrls.Length > 0)
-            {
-                await captureSourceProvider
-                    .PersistFallbackStreamUrlsAsync(source.SourceId, fallbackUrls, cancellationToken)
-                    .ConfigureAwait(false);
-            }
+            invalidSourceIds.Add(source.SourceId);
         }
 
         captureSourceProvider.SetResolvedSources(effectiveSources);

@@ -31,7 +31,8 @@ public sealed class CaptureSource
         string? primaryUrl = null,
         string? country = null,
         int? utcOffsetMinutes = null,
-        IReadOnlyList<string>? fallbackStreamUrls = null)
+        IReadOnlyList<string>? fallbackStreamUrls = null,
+        bool isExcluded = false)
     {
         SourceId = string.IsNullOrWhiteSpace(sourceId) ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(sourceId)) : sourceId;
         TenantId = string.IsNullOrWhiteSpace(tenantId) ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(tenantId)) : tenantId;
@@ -48,6 +49,7 @@ public sealed class CaptureSource
             : country.Trim().ToLowerInvariant();
 
         UtcOffsetMinutes = utcOffsetMinutes ?? ResolveUtcOffsetMinutes(Country);
+        IsExcluded = isExcluded;
     }
 
     public string SourceId { get; }
@@ -68,14 +70,21 @@ public sealed class CaptureSource
 
     public int UtcOffsetMinutes { get; }
 
+    public bool IsExcluded { get; }
+
     public CaptureSource WithStreamUrl(string streamUrl)
     {
-        return new CaptureSource(SourceId, TenantId, Platform, Media, streamUrl, PrimaryUrl, Country, UtcOffsetMinutes, FallbackStreamUrls);
+        return new CaptureSource(SourceId, TenantId, Platform, Media, streamUrl, PrimaryUrl, Country, UtcOffsetMinutes, FallbackStreamUrls, IsExcluded);
     }
 
     public CaptureSource WithFallbackStreamUrls(IReadOnlyList<string> fallbackStreamUrls)
     {
-        return new CaptureSource(SourceId, TenantId, Platform, Media, StreamUrl, PrimaryUrl, Country, UtcOffsetMinutes, fallbackStreamUrls);
+        return new CaptureSource(SourceId, TenantId, Platform, Media, StreamUrl, PrimaryUrl, Country, UtcOffsetMinutes, fallbackStreamUrls, IsExcluded);
+    }
+
+    public CaptureSource WithExcluded(bool isExcluded)
+    {
+        return new CaptureSource(SourceId, TenantId, Platform, Media, StreamUrl, PrimaryUrl, Country, UtcOffsetMinutes, FallbackStreamUrls, isExcluded);
     }
 
     private static int ResolveUtcOffsetMinutes(string country)

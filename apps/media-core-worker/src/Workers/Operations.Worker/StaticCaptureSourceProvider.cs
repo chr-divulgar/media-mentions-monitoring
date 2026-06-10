@@ -17,7 +17,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         PropertyNameCaseInsensitive = true
     };
 
-    private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl, string? PrimaryUrl, string? Country, IReadOnlyList<string>? FallbackStreamUrls = null);
+    private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl, string? PrimaryUrl, string? Country, IReadOnlyList<string>? FallbackStreamUrls = null, bool? Excluded = null);
 
     public StaticCaptureSourceProvider(OperationsWorkerOptions options)
     {
@@ -52,7 +52,9 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         {
             if (resolvedSources is null)
             {
-                resolvedSources = LoadSources();
+                // Excluded sources are loaded into configuredSources (visible for reconciliation)
+                // but must not start capturing — skip them in the initial resolved set.
+                resolvedSources = LoadSources().Where(s => !s.IsExcluded).ToArray();
             }
 
             return resolvedSources.ToArray();
@@ -191,6 +193,45 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         return Task.FromResult(true);
     }
 
+    public Task<bool> PersistExclusionAsync(string sourceId, bool excluded, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId))
+        {
+            return Task.FromResult(false);
+        }
+
+        var json = File.ReadAllText(options.CaptureSourcesFilePath);
+        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
+        if (items is null || items.Count == 0)
+        {
+            return Task.FromResult(false);
+        }
+
+        var sourceIndex = items.FindIndex(item => string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+        if (sourceIndex < 0)
+        {
+            return Task.FromResult(false);
+        }
+
+        var current = items[sourceIndex].Excluded ?? false;
+        if (current == excluded)
+        {
+            return Task.FromResult(false);
+        }
+
+        items[sourceIndex] = items[sourceIndex] with { Excluded = excluded ? true : null };
+
+        var updatedJson = JsonSerializer.Serialize(items, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        });
+
+        File.WriteAllText(options.CaptureSourcesFilePath, updatedJson);
+        return Task.FromResult(true);
+    }
+
     private IReadOnlyList<CaptureSource> ApplyContinuousMediaFilter(IReadOnlyList<CaptureSource> sources)
     {
         var allowList = ParseAllowList(options.ContinuousMediaAllowList);
@@ -232,7 +273,8 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
                 item.StreamUrl,
                 item.PrimaryUrl,
                 item.Country,
-                fallbackStreamUrls: item.FallbackStreamUrls))
+                fallbackStreamUrls: item.FallbackStreamUrls,
+                isExcluded: item.Excluded ?? false))
             .ToArray();
     }
 

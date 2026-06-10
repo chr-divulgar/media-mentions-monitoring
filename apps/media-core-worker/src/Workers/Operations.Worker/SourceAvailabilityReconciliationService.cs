@@ -11,10 +11,8 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     private static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(1);
     private static readonly HashSet<int> ScheduledReconciliationMinutes = [1, 30, 59];
 
-    private readonly OperationsWorkerOptions options;
     private readonly StaticCaptureSourceProvider captureSourceProvider;
     private readonly IStartupStreamValidator streamValidator;
-    private readonly IStartupSourceDiscoveryService sourceDiscoveryService;
     private readonly IIngestionPluginResolver pluginResolver;
     private readonly IAudioCapturePlugin audioCapturePlugin;
     private readonly ILogger<SourceAvailabilityReconciliationService> logger;
@@ -22,18 +20,14 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     private readonly ConcurrentDictionary<string, byte> inFlightHotRecovery = new(StringComparer.OrdinalIgnoreCase);
 
     public SourceAvailabilityReconciliationService(
-        OperationsWorkerOptions options,
         StaticCaptureSourceProvider captureSourceProvider,
         IStartupStreamValidator streamValidator,
-        IStartupSourceDiscoveryService sourceDiscoveryService,
         IIngestionPluginResolver pluginResolver,
         IAudioCapturePlugin audioCapturePlugin,
         ILogger<SourceAvailabilityReconciliationService> logger)
     {
-        this.options = options;
         this.captureSourceProvider = captureSourceProvider;
         this.streamValidator = streamValidator;
-        this.sourceDiscoveryService = sourceDiscoveryService;
         this.pluginResolver = pluginResolver;
         this.audioCapturePlugin = audioCapturePlugin;
         this.logger = logger;
@@ -95,11 +89,20 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             var recovered = await TryRecoverSourceAsync(failedSource, CancellationToken.None).ConfigureAwait(false);
             if (recovered is null)
             {
+                // TryRecoverSourceAsync already persisted excluded=true when no candidate worked.
+                logger.LogWarning(
+                    "Hot recovery exhausted all structural candidates for source {SourceId}. Source marked excluded.",
+                    failedSource.SourceId);
                 return;
             }
 
             captureSourceProvider.AddOrUpdateResolvedSource(recovered);
-            await PersistRecoveredStreamUrlAsync(failedSource, recovered.StreamUrl, CancellationToken.None).ConfigureAwait(false);
+            await captureSourceProvider
+                .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, CancellationToken.None)
+                .ConfigureAwait(false);
+            await captureSourceProvider
+                .PersistExclusionAsync(recovered.SourceId, false, CancellationToken.None)
+                .ConfigureAwait(false);
 
             logger.LogInformation(
                 "Hot recovery succeeded for source {SourceId}. StreamUrl={StreamUrl}",
@@ -155,7 +158,12 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             }
 
             captureSourceProvider.AddOrUpdateResolvedSource(recovered);
-            await PersistRecoveredStreamUrlAsync(source, recovered.StreamUrl, cancellationToken).ConfigureAwait(false);
+            await captureSourceProvider
+                .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, cancellationToken)
+                .ConfigureAwait(false);
+            await captureSourceProvider
+                .PersistExclusionAsync(recovered.SourceId, false, cancellationToken)
+                .ConfigureAwait(false);
             recoveredIds.Add(source.SourceId);
         }
 
@@ -199,39 +207,23 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
     private async Task<CaptureSource?> TryRecoverSourceAsync(CaptureSource source, CancellationToken cancellationToken)
     {
-        if (!options.EnableStartupDiscoveryOnFailedOnly || string.IsNullOrWhiteSpace(source.PrimaryUrl))
-        {
-            return null;
-        }
+        var candidates = StartupStreamUrlHeuristics.BuildConservativeCandidates(source);
 
-        var discoveredCandidates = await sourceDiscoveryService
-            .DiscoverStreamUrlsAsync(source, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (discoveredCandidates.Count == 0)
-        {
-            return null;
-        }
-
-        var validationResults = await Task.WhenAll(discoveredCandidates.Select(async candidate =>
+        foreach (var candidate in candidates)
         {
             var validation = await streamValidator.ValidateAsync(candidate, cancellationToken).ConfigureAwait(false);
-            return (Candidate: candidate, Validation: validation);
-        })).ConfigureAwait(false);
-
-        var successfulCandidate = validationResults.FirstOrDefault(result => result.Validation.Succeeded);
-        if (!string.IsNullOrWhiteSpace(successfulCandidate.Candidate))
-        {
-            return source.WithStreamUrl(successfulCandidate.Candidate);
+            if (validation.Succeeded)
+            {
+                return source.WithStreamUrl(candidate).WithExcluded(false);
+            }
         }
 
-        return null;
-    }
-
-    private async Task PersistRecoveredStreamUrlAsync(CaptureSource originalSource, string recoveredStreamUrl, CancellationToken cancellationToken)
-    {
+        // No structural variant worked — persist exclusion so the source is visible in the JSON
+        // and does not keep attempting capture on every cycle.
         await captureSourceProvider
-            .PersistStreamUrlAsync(originalSource.SourceId, recoveredStreamUrl, cancellationToken)
+            .PersistExclusionAsync(source.SourceId, true, cancellationToken)
             .ConfigureAwait(false);
+
+        return null;
     }
 }
