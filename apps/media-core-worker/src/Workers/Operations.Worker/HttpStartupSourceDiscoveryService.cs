@@ -55,6 +55,30 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
         "\"(?:station|callSign|tritonStation|mountPoint|stationMount|tritonCallsign)[A-Za-z0-9]*\"\\s*:\\s*\"([A-Z][A-Z0-9_-]{2,19})\"",
         RegexOptions.Compiled);
 
+    // Captures the Prisa Radio / Caracol "id_m2" station identifier embedded in the page JSON.
+    // This is used to look up the Triton callsign when the callsign is not present in the HTML
+    // (dynamically loaded by the player at runtime) but the station id IS rendered server-side.
+    private static readonly Regex PrisaRadioStationIdRegex = new(
+        "\"id_m2\"\\s*:\\s*\"(\\d{6})\"",
+        RegexOptions.Compiled);
+
+    // Mapping from Prisa Radio / Caracol Colombia "id_m2" station identifier to the
+    // Triton streamtheworld callsign used by that station.
+    // These were verified by testing https://playerservices.streamtheworld.com/api/livestream-redirect/{callsign}.aac
+    // Each entry was confirmed to return a 302 redirect to a live.streamtheworld.com server.
+    // id_m2 values come from the "id_m2" key embedded in the server-rendered page JSON config.
+    private static readonly IReadOnlyDictionary<string, string> PrisaRadioCallsignByStationId =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["013097"] = "CARACOL_RADIOAAC",   // Bogotá / nacional
+            ["013105"] = "CR_BARRANQ",         // Barranquilla
+            ["013279"] = "CR_AM_CARTAGENAAAC", // Cartagena
+            ["013103"] = "CR_BUCARAMAAAC",     // Bucaramanga
+            ["013095"] = "CR_MEDELLINAAC",     // Medellín
+            ["013102"] = "CR_CALIAAC",         // Cali
+            ["013278"] = "CR_TUNJAAAC",        // Tunja
+        };
+
     private readonly HttpClient httpClient;
     private readonly OperationsWorkerOptions options;
 
@@ -178,7 +202,7 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
         }
     }
 
-    // Two strategies for Triton streamtheworld stations:
+    // Three strategies for Triton streamtheworld stations:
     //
     // 1. Full redirect URL already present in the source (HTML or JS):
     //    e.g. "https://playerservices.streamtheworld.com/api/livestream-redirect/CR_BARRANQ.mp3"
@@ -189,8 +213,13 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
     //    Some pages embed the base redirect URL ("livestreamMountURL") and the station callsign
     //    in the same JSON configuration blob. When both are present within a 2000-char window,
     //    the full redirect URL is reconstructed.
-    //    This does NOT help when the callsign is assembled dynamically by JS at runtime, but
-    //    does help for stations that embed both keys in their server-rendered HTML/JSON config.
+    //    This does NOT help when the callsign is assembled dynamically by JS at runtime.
+    //
+    // 3. Prisa Radio / Caracol Colombia station id_m2 → callsign lookup table:
+    //    These pages render an "id_m2" identifier server-side even though the Triton callsign
+    //    is assembled by the player JS at runtime. The static map in PrisaRadioCallsignByStationId
+    //    covers the known Colombian Caracol Radio stations. When a "livestreamMountURL" is found
+    //    alongside an id_m2 whose callsign is in the map, the full redirect URL is constructed.
     private static IEnumerable<string> ExtractTritonCandidatesFromHtml(string html)
     {
         // Strategy 1: full URL already present
@@ -199,7 +228,7 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
             yield return m.Value;
         }
 
-        // Strategy 2: reconstruct from "livestreamMountURL" + nearby callsign key
+        // Strategies 2 and 3 both need a livestreamMountURL base — extract it once.
         foreach (Match mountMatch in TritonMountUrlJsonRegex.Matches(html))
         {
             var mountBase = mountMatch.Groups[1].Value.TrimEnd('/');
@@ -208,23 +237,42 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
                 continue;
             }
 
-            // Search within ±1000 chars of the mount URL key for a callsign key.
+            var yielded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Strategy 2: nearby callsign key in the same JSON blob
             var windowStart = Math.Max(0, mountMatch.Index - 1000);
             var windowEnd = Math.Min(html.Length, mountMatch.Index + mountMatch.Length + 1000);
             var window = html[windowStart..windowEnd];
 
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (Match callsignMatch in TritonCallsignJsonRegex.Matches(window))
             {
                 var callsign = callsignMatch.Groups[1].Value;
-                if (!seen.Add(callsign))
+                if (!yielded.Add(callsign))
                 {
                     continue;
                 }
 
-                // mp3 is the most widely supported; aac is common on mobile/HLS stacks.
                 yield return $"{mountBase}/{callsign}.mp3";
                 yield return $"{mountBase}/{callsign}.aac";
+            }
+
+            // Strategy 3: id_m2 → callsign lookup (Prisa Radio / Caracol Colombia)
+            foreach (Match idMatch in PrisaRadioStationIdRegex.Matches(html))
+            {
+                var stationId = idMatch.Groups[1].Value;
+                if (!PrisaRadioCallsignByStationId.TryGetValue(stationId, out var callsign))
+                {
+                    continue;
+                }
+
+                if (!yielded.Add(callsign))
+                {
+                    continue;
+                }
+
+                // AAC is the Triton-preferred codec for these stations; also yield MP3 as fallback.
+                yield return $"{mountBase}/{callsign}.aac";
+                yield return $"{mountBase}/{callsign}.mp3";
             }
         }
     }
