@@ -36,6 +36,25 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
         "<meta[^>]*name\\s*=\\s*[\"']appUrl[\"'][^>]*content\\s*=\\s*[\"'](?<url>[^\"']+)[\"'][^>]*>",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // Full Triton streamtheworld live-redirect URL with station callsign already present.
+    // Catches the stable redirect form: /api/livestream-redirect/CALLSIGN.mp3|aac|m3u8
+    // DirectStreamRegex also catches these (they end in .mp3/.aac), but this regex is
+    // explicit and anchored to the known Triton host pattern.
+    private static readonly Regex TritonRedirectUrlRegex = new(
+        "https?://(?:[a-z0-9-]+\\.)?(?:playerservices|eu-playerservices)\\.streamtheworld\\.com/api/livestream-redirect/[A-Z][A-Z0-9_-]{2,20}\\.(?:mp3|aac|m3u8)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Captures the base Triton redirect URL from a "livestreamMountURL" JSON key.
+    private static readonly Regex TritonMountUrlJsonRegex = new(
+        "\"livestreamMountURL\"\\s*:\\s*\"(https?://[^\"]+/livestream-redirect)\"",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // Captures a Triton station callsign from known JSON key names.
+    // Callsigns are uppercase alphanumeric with optional underscore/hyphen, 3-20 chars.
+    private static readonly Regex TritonCallsignJsonRegex = new(
+        "\"(?:station|callSign|tritonStation|mountPoint|stationMount|tritonCallsign)[A-Za-z0-9]*\"\\s*:\\s*\"([A-Z][A-Z0-9_-]{2,19})\"",
+        RegexOptions.Compiled);
+
     private readonly HttpClient httpClient;
     private readonly OperationsWorkerOptions options;
 
@@ -110,6 +129,12 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
 
     private static IEnumerable<string> EnumerateRawCandidates(string html)
     {
+        // Triton full redirect URLs (with callsign) are checked first — they are unambiguous.
+        foreach (var candidate in ExtractTritonCandidatesFromHtml(html))
+        {
+            yield return candidate;
+        }
+
         foreach (Match match in ZenoStreamRegex.Matches(html))
         {
             yield return match.Value;
@@ -150,6 +175,57 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
             }
 
             yield return value;
+        }
+    }
+
+    // Two strategies for Triton streamtheworld stations:
+    //
+    // 1. Full redirect URL already present in the source (HTML or JS):
+    //    e.g. "https://playerservices.streamtheworld.com/api/livestream-redirect/CR_BARRANQ.mp3"
+    //    Caught by TritonRedirectUrlRegex and also by DirectStreamRegex (ends in .mp3).
+    //    Both are kept so they surface early before other candidates.
+    //
+    // 2. Reconstructed from JSON pair ("livestreamMountURL" base URL + nearby callsign key):
+    //    Some pages embed the base redirect URL ("livestreamMountURL") and the station callsign
+    //    in the same JSON configuration blob. When both are present within a 2000-char window,
+    //    the full redirect URL is reconstructed.
+    //    This does NOT help when the callsign is assembled dynamically by JS at runtime, but
+    //    does help for stations that embed both keys in their server-rendered HTML/JSON config.
+    private static IEnumerable<string> ExtractTritonCandidatesFromHtml(string html)
+    {
+        // Strategy 1: full URL already present
+        foreach (Match m in TritonRedirectUrlRegex.Matches(html))
+        {
+            yield return m.Value;
+        }
+
+        // Strategy 2: reconstruct from "livestreamMountURL" + nearby callsign key
+        foreach (Match mountMatch in TritonMountUrlJsonRegex.Matches(html))
+        {
+            var mountBase = mountMatch.Groups[1].Value.TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(mountBase))
+            {
+                continue;
+            }
+
+            // Search within ±1000 chars of the mount URL key for a callsign key.
+            var windowStart = Math.Max(0, mountMatch.Index - 1000);
+            var windowEnd = Math.Min(html.Length, mountMatch.Index + mountMatch.Length + 1000);
+            var window = html[windowStart..windowEnd];
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match callsignMatch in TritonCallsignJsonRegex.Matches(window))
+            {
+                var callsign = callsignMatch.Groups[1].Value;
+                if (!seen.Add(callsign))
+                {
+                    continue;
+                }
+
+                // mp3 is the most widely supported; aac is common on mobile/HLS stacks.
+                yield return $"{mountBase}/{callsign}.mp3";
+                yield return $"{mountBase}/{callsign}.aac";
+            }
         }
     }
 
@@ -658,6 +734,21 @@ public sealed class HttpStartupSourceDiscoveryService : IStartupSourceDiscoveryS
                 || absoluteUri.Host.Contains("listen2myradio", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
+            }
+
+            // Triton streamtheworld live-redirect URL: host is *.streamtheworld.com and the path
+            // has a segment after /livestream-redirect/ (the callsign). The base URL without a
+            // callsign (".../api/livestream-redirect") is intentionally excluded — it is not a
+            // valid stream on its own.
+            if (absoluteUri.Host.EndsWith(".streamtheworld.com", StringComparison.OrdinalIgnoreCase)
+                || absoluteUri.Host.Equals("streamtheworld.com", StringComparison.OrdinalIgnoreCase))
+            {
+                var path = absoluteUri.AbsolutePath;
+                var redirectIndex = path.IndexOf("/livestream-redirect/", StringComparison.OrdinalIgnoreCase);
+                if (redirectIndex >= 0 && path.Length > redirectIndex + "/livestream-redirect/".Length)
+                {
+                    return true;
+                }
             }
         }
 
