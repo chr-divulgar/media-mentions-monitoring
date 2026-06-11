@@ -537,9 +537,16 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     ? ChunkingState.Create(options, logger, sourceId)
                     : null;
 
-                activeOpusPath = CurrentOpusPath(SourceNow(), effectiveOpusRotationInterval);
+                // Use the aligned window start (e.g. 13:00:00) as the file timestamp so that
+                // every opus file is named after the clock-hour it belongs to, regardless of
+                // when the capture session actually started within that hour.
+                // Subsequent rotations already use nextRotationAt (which is aligned), so only
+                // the initial file name needs this correction.
+                var sessionStartNow = SourceNow();
+                var alignedSessionStart = AlignWindow(sessionStartNow, effectiveOpusRotationInterval);
+                activeOpusPath = CurrentOpusPath(alignedSessionStart, effectiveOpusRotationInterval);
                 currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
-                currentOpusStartedAt = SourceNow();
+                currentOpusStartedAt = alignedSessionStart;
                 currentOpusSampleCursor = 0;
                 outputContext = OpenOutputContext(activeOpusPath, encoderContext, ref outputStream);
                 startupCompletionSource.TrySetResult(new AudioCaptureExecutionResult(true, activeOpusPath));
@@ -1956,15 +1963,28 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         IReadOnlyList<byte[]> FlacWindows,
         string SourceId);
 
-    private sealed record ChunkTranscriptionItem(string Text, string StartTime, string EndTime);
+    private sealed record ChunkTranscriptionItem(string Text, string StartTime, string EndTime, string Status);
+
+    private enum RecognitionStatus
+    {
+        Recognized,
+        NoSpeech,
+        InvalidAudio,
+        RateLimited,
+        HttpError,
+        Timeout,
+        NetworkError,
+    }
+
+    private readonly record struct RecognitionResult(RecognitionStatus Status, string Text);
 
     private sealed class ChunkTranscriptionPipeline : IDisposable
     {
         private const string DefaultLanguage = "es-CO";
-        private const string NoSpeechFallback = "M\u00fasica-NoEspa\u00f1ol.";
         private static readonly Meter TranscriptionMeter = new("MediaOpsCore.Workers.Operations.Transcription", "1.0.0");
         private static readonly Counter<long> TranscriptionChunksProcessed = TranscriptionMeter.CreateCounter<long>("media_transcription_chunks_processed");
         private static readonly Counter<long> TranscriptionWindowsProcessed = TranscriptionMeter.CreateCounter<long>("media_transcription_windows_processed");
+        private static readonly Counter<long> TranscriptionRateLimited = TranscriptionMeter.CreateCounter<long>("media_transcription_rate_limited");
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -2080,14 +2100,22 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 await foreach (var request in sourceChannel.Reader.ReadAllAsync(cancellationTokenSource.Token).ConfigureAwait(false))
                 {
                     var entryText = string.Empty;
+                    var entryStatus = "error";
 
                     try
                     {
-                        var recognizedText = await RecognizeWindowedAsync(request.FlacWindows, DefaultLanguage).ConfigureAwait(false);
-                        entryText = string.IsNullOrWhiteSpace(recognizedText) ? NoSpeechFallback : recognizedText;
+                        var recognition = await RecognizeWindowedAsync(request.FlacWindows, DefaultLanguage).ConfigureAwait(false);
+                        entryStatus = StatusLabel(recognition.Status);
+                        entryText = recognition.Status == RecognitionStatus.Recognized
+                            ? recognition.Text
+                            : DisplayTextFor(recognition.Status);
 
                         TranscriptionChunksProcessed.Add(1, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
                         TranscriptionWindowsProcessed.Add(request.FlacWindows.Count, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
+                        if (recognition.Status == RecognitionStatus.RateLimited)
+                        {
+                            TranscriptionRateLimited.Add(1, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
+                        }
                     }
                     catch (OperationCanceledException)
                     {
@@ -2095,9 +2123,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     }
                     catch (Exception exception)
                     {
-                        // On transcription failures, still write the entry with empty text.
+                        // Unexpected failure: still write the entry, flagged so it is not mistaken for silence.
                         logger.LogWarning(exception, "Chunk transcription failed for source {SourceId}.", request.SourceId);
-                        entryText = string.Empty;
+                        entryText = "[error de transcripción]";
+                        entryStatus = "error";
                     }
 
                     try
@@ -2105,7 +2134,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         var windowEntry = new ChunkTranscriptionItem(
                             entryText,
                             request.StartTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
-                            request.EndTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"));
+                            request.EndTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
+                            entryStatus);
 
                         await AppendOrderedAsync(request.JsonPath, windowEntry).ConfigureAwait(false);
                     }
@@ -2124,33 +2154,42 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private async Task<string> RecognizeWindowedAsync(IReadOnlyList<byte[]> flacWindows, string language)
+        private async Task<RecognitionResult> RecognizeWindowedAsync(IReadOnlyList<byte[]> flacWindows, string language)
         {
             if (flacWindows.Count == 0)
             {
-                return string.Empty;
+                return new RecognitionResult(RecognitionStatus.NoSpeech, string.Empty);
             }
 
             // One chunk normally produces a single FLAC window. If more than one is present, join the
-            // recognized text plainly — no overlap merge or boundary-loss detection.
-            var segments = new List<string>(flacWindows.Count);
+            // recognized text plainly. When nothing is recognized, report the most informative failure
+            // status across the windows so the cause (no speech / rate limit / audio error / ...) stays
+            // visible downstream instead of collapsing into a single ambiguous "no text".
+            var recognized = new List<string>(flacWindows.Count);
+            var worst = RecognitionStatus.NoSpeech;
             foreach (var window in flacWindows)
             {
-                var segment = await RecognizeSingleAsync(window, language).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(segment))
+                var result = await RecognizeSingleAsync(window, language).ConfigureAwait(false);
+                if (result.Status == RecognitionStatus.Recognized && !string.IsNullOrWhiteSpace(result.Text))
                 {
-                    segments.Add(segment.Trim());
+                    recognized.Add(result.Text.Trim());
+                }
+                else if (StatusSeverity(result.Status) > StatusSeverity(worst))
+                {
+                    worst = result.Status;
                 }
             }
 
-            return string.Join(" ", segments);
+            return recognized.Count > 0
+                ? new RecognitionResult(RecognitionStatus.Recognized, string.Join(" ", recognized))
+                : new RecognitionResult(worst, string.Empty);
         }
 
-        private async Task<string> RecognizeSingleAsync(byte[] flacBytes, string language)
+        private async Task<RecognitionResult> RecognizeSingleAsync(byte[] flacBytes, string language)
         {
             if (flacBytes.Length < 4 || flacBytes[0] != (byte)'f' || flacBytes[1] != (byte)'L' || flacBytes[2] != (byte)'a' || flacBytes[3] != (byte)'C')
             {
-                return string.Empty;
+                return new RecognitionResult(RecognitionStatus.InvalidAudio, string.Empty);
             }
 
             var sampleRate = ReadFlacSampleRate(flacBytes);
@@ -2161,31 +2200,130 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             using var content = new ByteArrayContent(flacBytes);
             content.Headers.TryAddWithoutValidation("Content-Type", $"audio/x-flac; rate={sampleRate}");
 
-            using var response = await httpClient.PostAsync(url, content, cancellationTokenSource.Token).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-
-            // Read raw bytes and decode as UTF-8 explicitly. The Google speech endpoint returns UTF-8
-            // JSON but its response frequently omits (or misreports) the charset, so ReadAsStringAsync
-            // falls back to ISO-8859-1 and mangles accented characters (café → cafÃ©, señor → seÃ±or).
-            var bodyBytes = await response.Content.ReadAsByteArrayAsync(cancellationTokenSource.Token).ConfigureAwait(false);
-            var body = System.Text.Encoding.UTF8.GetString(bodyBytes);
-            foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            HttpResponseMessage response;
+            try
             {
-                using var document = JsonDocument.Parse(line);
-                if (!document.RootElement.TryGetProperty("result", out var result) || result.GetArrayLength() == 0)
-                {
-                    continue;
-                }
-
-                var alternatives = result[0].GetProperty("alternative");
-                if (alternatives.GetArrayLength() > 0 && alternatives[0].TryGetProperty("transcript", out var transcriptProperty))
-                {
-                    return transcriptProperty.GetString() ?? string.Empty;
-                }
+                response = await httpClient.PostAsync(url, content, cancellationTokenSource.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
+            {
+                throw; // pipeline is shutting down — let the worker loop stop
+            }
+            catch (OperationCanceledException)
+            {
+                return new RecognitionResult(RecognitionStatus.Timeout, string.Empty); // HttpClient.Timeout elapsed
+            }
+            catch (HttpRequestException)
+            {
+                return new RecognitionResult(RecognitionStatus.NetworkError, string.Empty);
             }
 
-            return string.Empty;
+            using (response)
+            {
+                // Distinguish rate limiting / quota from other server errors so it is never silently
+                // treated as "no speech". Essential for the free endpoint and for scaling out sources.
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                    || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    return new RecognitionResult(RecognitionStatus.RateLimited, string.Empty);
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new RecognitionResult(RecognitionStatus.HttpError, string.Empty);
+                }
+
+                byte[] bodyBytes;
+                try
+                {
+                    bodyBytes = await response.Content.ReadAsByteArrayAsync(cancellationTokenSource.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    return new RecognitionResult(RecognitionStatus.Timeout, string.Empty);
+                }
+
+                // Read raw bytes and decode as UTF-8 explicitly. The Google speech endpoint returns UTF-8
+                // JSON but its response frequently omits (or misreports) the charset, so ReadAsStringAsync
+                // falls back to ISO-8859-1 and mangles accented characters (café → cafÃ©, señor → seÃ±or).
+                var body = System.Text.Encoding.UTF8.GetString(bodyBytes);
+                foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    JsonDocument document;
+                    try
+                    {
+                        document = JsonDocument.Parse(line);
+                    }
+                    catch (JsonException)
+                    {
+                        continue;
+                    }
+
+                    using (document)
+                    {
+                        if (!document.RootElement.TryGetProperty("result", out var result) || result.GetArrayLength() == 0)
+                        {
+                            continue;
+                        }
+
+                        var alternatives = result[0].GetProperty("alternative");
+                        if (alternatives.GetArrayLength() > 0 && alternatives[0].TryGetProperty("transcript", out var transcriptProperty))
+                        {
+                            var text = transcriptProperty.GetString();
+                            if (!string.IsNullOrWhiteSpace(text))
+                            {
+                                return new RecognitionResult(RecognitionStatus.Recognized, text);
+                            }
+                        }
+                    }
+                }
+
+                // 2xx with no transcript = the API ran and detected no speech (music / silence / non-Spanish).
+                return new RecognitionResult(RecognitionStatus.NoSpeech, string.Empty);
+            }
         }
+
+        // Higher = more informative / more actionable failure when no window was recognized.
+        private static int StatusSeverity(RecognitionStatus status) => status switch
+        {
+            RecognitionStatus.RateLimited => 6,
+            RecognitionStatus.HttpError => 5,
+            RecognitionStatus.NetworkError => 4,
+            RecognitionStatus.Timeout => 3,
+            RecognitionStatus.InvalidAudio => 2,
+            RecognitionStatus.NoSpeech => 1,
+            _ => 0,
+        };
+
+        // Machine-readable status written to the JSON entry's "status" field.
+        private static string StatusLabel(RecognitionStatus status) => status switch
+        {
+            RecognitionStatus.Recognized => "recognized",
+            RecognitionStatus.NoSpeech => "no_speech",
+            RecognitionStatus.InvalidAudio => "audio_error",
+            RecognitionStatus.RateLimited => "rate_limited",
+            RecognitionStatus.HttpError => "api_error",
+            RecognitionStatus.Timeout => "timeout",
+            RecognitionStatus.NetworkError => "network_error",
+            _ => "unknown",
+        };
+
+        // Human-readable placeholder text shown for non-recognized windows (the UI renders "text").
+        // NoSpeech (genuine silence / music / non-Spanish) falls through to empty text, which the
+        // ordered writer skips — silent windows no longer produce a filler entry in the JSON.
+        private static string DisplayTextFor(RecognitionStatus status) => status switch
+        {
+            RecognitionStatus.InvalidAudio => "[audio inválido]",
+            RecognitionStatus.RateLimited => "[límite de API]",
+            RecognitionStatus.HttpError => "[error de API]",
+            RecognitionStatus.Timeout => "[timeout de API]",
+            RecognitionStatus.NetworkError => "[error de red]",
+            _ => string.Empty,
+        };
 
         // Removes repeated phrases of ≥5 words that appear more than once in the merged text.
         // Cross-chunk overlap removal: if the first N words of the incoming chunk already appear
@@ -2207,7 +2345,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             return StripTextPrefixOverlap(prev.Text, newText, minOverlapWords);
         }
 
-        // String-based overlap removal used both by StripChunkPrefixOverlap and MergeWindowTexts.
+        // String-based overlap removal used by StripChunkPrefixOverlap.
         // Searches for the longest suffix of prevText that matches a contiguous sequence starting
         // at position 0..maxPrefixSkip in newText. If found, returns newText with the duplicate
         // removed (keeping any "skip" words before the match that represent new content the
