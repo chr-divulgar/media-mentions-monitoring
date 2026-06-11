@@ -620,6 +620,19 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 logger.LogInformation("Capture started for source {SourceId}. Reconnect={ReconnectEnabled}, RtspTcp={RtspPreferTcp}, SilenceChunking={SilenceChunkingEnabled}, OpusBitrateKbps={OpusBitrateKbps}.", sourceId, options.EnableDecoderReconnect, options.RtspPreferTcp, chunkingState is not null, options.DefaultOpusBitrateKbps);
                 logger.LogInformation("OPUS rotation interval for source {SourceId}: profile={ProfileRotationMinutes} min, effective={EffectiveRotationMinutes} min.", sourceId, plan.OpusRotationInterval.TotalMinutes, effectiveOpusRotationInterval.TotalMinutes);
 
+                // Allocate FFmpeg packets and frames before any silence fill so they are
+                // available when FillSilencePcm calls EncodeBufferedSamples.
+                inputPacket = ffmpeg.av_packet_alloc();
+                inputFrame = ffmpeg.av_frame_alloc();
+                resampledFrame = ffmpeg.av_frame_alloc();
+                encoderFrame = ffmpeg.av_frame_alloc();
+                outputPacket = ffmpeg.av_packet_alloc();
+
+                if (inputPacket is null || inputFrame is null || resampledFrame is null || encoderFrame is null || outputPacket is null)
+                {
+                    throw new InvalidOperationException("Unable to allocate FFmpeg packets or frames.");
+                }
+
                 // Fill the silence gap (time between end of existing recording and now)
                 // before the first real audio packet arrives.
                 if (silenceGap > TimeSpan.FromSeconds(1))
@@ -633,25 +646,14 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         pendingOpusPcm!,
                         encoderFrameSize,
                         encoderContext,
-                        encoderFrame!,
+                        encoderFrame,
                         outputContext,
                         outputStream,
-                        outputPacket!,
+                        outputPacket,
                         ref encoderSampleCursor,
                         ref consecutiveEncoderFrameSendFailures,
                         maxConsecutiveEncoderFrameSendFailures);
                     currentOpusSampleCursor += (long)(silenceGap.TotalSeconds * AudioSampleRate);
-                }
-
-                inputPacket = ffmpeg.av_packet_alloc();
-                inputFrame = ffmpeg.av_frame_alloc();
-                resampledFrame = ffmpeg.av_frame_alloc();
-                encoderFrame = ffmpeg.av_frame_alloc();
-                outputPacket = ffmpeg.av_packet_alloc();
-
-                if (inputPacket is null || inputFrame is null || resampledFrame is null || encoderFrame is null || outputPacket is null)
-                {
-                    throw new InvalidOperationException("Unable to allocate FFmpeg packets or frames.");
                 }
 
                 while (!cancellationTokenSource.IsCancellationRequested)
@@ -861,12 +863,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
             catch (Exception exception)
             {
-                // Best-effort: if the session crashed mid-resume, append whatever was written.
-                if (resumeTempPath is not null)
-                {
-                    FinalizeResumeOutput(activeOpusPath ?? string.Empty, resumeTempPath);
-                }
-
                 var detailedError = exception.ToString();
                 SetFailure(detailedError);
                 operationalMetrics.RecordCaptureRuntimeFailure(sourceId);
@@ -897,6 +893,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     }
 
                     ffmpeg.avformat_free_context(outputContext);
+                }
+
+                // Finalize resume AFTER FFmpeg has fully closed and released the temp file.
+                // Doing it in the catch block caused IOException because the output context
+                // still held the file handle at that point.
+                if (resumeTempPath is not null)
+                {
+                    FinalizeResumeOutput(activeOpusPath ?? string.Empty, resumeTempPath);
+                    resumeTempPath = null;
                 }
 
                 if (outputPacket is not null)
