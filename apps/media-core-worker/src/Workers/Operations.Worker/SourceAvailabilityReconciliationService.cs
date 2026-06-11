@@ -9,7 +9,9 @@ namespace MediaOpsCore.Workers.Operations;
 public sealed class SourceAvailabilityReconciliationService : BackgroundService, ICaptureAttemptObserver
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(1);
-    private static readonly HashSet<int> ScheduledReconciliationMinutes = [1, 30, 59];
+    // Minute 0 is included so that sources excluded at :59 are retried at the very
+    // start of the next hour rather than waiting until :01 or :30.
+    private static readonly HashSet<int> ScheduledReconciliationMinutes = [0, 1, 30, 59];
 
     private readonly StaticCaptureSourceProvider captureSourceProvider;
     private readonly IStartupStreamValidator streamValidator;
@@ -82,9 +84,9 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         }
     }
 
-    // Retries recovery every minute until the source comes back OR the current rotation
-    // window (clock-hour) ends without success. On timeout, marks the source excluded
-    // and hands it off to the scheduled reconciliation (min 1/30/59).
+    // Retries recovery at each exact minute mark (:23:00, :24:00, ...) until the source
+    // comes back OR minute :59 of the current hour is reached. At :59 marks excluded and
+    // stops — scheduled reconciliation at :00 of the next hour picks it up immediately.
     private async Task TryHotRecoverUntilRotationAsync(CaptureSource failedSource)
     {
         try
@@ -92,14 +94,13 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             captureSourceProvider.RemoveResolvedSource(failedSource.SourceId);
 
             var sourceOffset = TimeSpan.FromMinutes(failedSource.UtcOffsetMinutes);
-            var failureHour = DateTimeOffset.UtcNow.ToOffset(sourceOffset).Hour;
             var attempt = 0;
 
             while (!serviceStopping.IsCancellationRequested)
             {
                 attempt++;
 
-                // Validate conservative fallbacks (no exclusion persisted on each failed attempt).
+                // Validate conservative fallbacks — no exclusion persisted on each failed attempt.
                 var recovered = await TryRecoverSourceAsync(failedSource, CancellationToken.None, persistExclusionOnFailure: false)
                     .ConfigureAwait(false);
 
@@ -121,29 +122,32 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                     return;
                 }
 
-                // If we've crossed into a new clock-hour the rotation window is gone —
-                // the silence-fill gap feature won't be able to produce a clean file anymore.
-                // Give up and let scheduled reconciliation (min 1/30/59) handle it.
-                var currentHour = DateTimeOffset.UtcNow.ToOffset(sourceOffset).Hour;
-                if (currentHour != failureHour)
+                var sourceNow = DateTimeOffset.UtcNow.ToOffset(sourceOffset);
+
+                // Minute :59 is the last retry slot for this rotation window.
+                // Mark excluded so the reconciliation at :00 of the next hour can pick it up.
+                if (sourceNow.Minute == 59)
                 {
                     await captureSourceProvider
                         .PersistExclusionAsync(failedSource.SourceId, true, CancellationToken.None)
                         .ConfigureAwait(false);
 
                     logger.LogWarning(
-                        "Hot recovery exhausted for source {SourceId} after {Attempt} attempt(s) — hour boundary reached. Source marked excluded; scheduled reconciliation will retry.",
+                        "Hot recovery exhausted for source {SourceId} after {Attempt} attempt(s) at minute :59. Marked excluded; reconciliation at :00 will retry.",
                         failedSource.SourceId, attempt);
                     return;
                 }
 
+                // Wait until the next exact minute boundary (:XX:00) rather than a relative delay.
+                // Example: failed at 13:22:30 → next attempt at 13:23:00 (30 s wait).
+                var delay = DelayUntilNextMinuteBoundary(sourceNow);
                 logger.LogDebug(
-                    "Hot recovery attempt {Attempt} failed for source {SourceId}. Retrying in 1 minute.",
-                    attempt, failedSource.SourceId);
+                    "Hot recovery attempt {Attempt} failed for source {SourceId}. Next attempt at :{NextMinute:D2}.",
+                    attempt, failedSource.SourceId, sourceNow.Minute + 1);
 
                 try
                 {
-                    await Task.Delay(TimeSpan.FromMinutes(1), serviceStopping).ConfigureAwait(false);
+                    await Task.Delay(delay, serviceStopping).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -159,6 +163,16 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         {
             inFlightHotRecovery.TryRemove(failedSource.SourceId, out _);
         }
+    }
+
+    // Returns the time remaining until the next :00 second of the next minute.
+    // E.g. now=13:22:30 → 30 s; now=13:22:00 → 60 s.
+    private static TimeSpan DelayUntilNextMinuteBoundary(DateTimeOffset now)
+    {
+        var next = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, now.Offset)
+            .AddMinutes(1);
+        var delay = next - now;
+        return delay.TotalSeconds < 1 ? TimeSpan.FromMinutes(1) : delay;
     }
 
     private async Task ReconcileExcludedAtScheduledMinutesAsync(CancellationToken cancellationToken)
