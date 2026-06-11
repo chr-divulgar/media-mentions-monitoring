@@ -18,6 +18,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     private readonly ILogger<SourceAvailabilityReconciliationService> logger;
 
     private readonly ConcurrentDictionary<string, byte> inFlightHotRecovery = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationToken serviceStopping = CancellationToken.None;
 
     public SourceAvailabilityReconciliationService(
         StaticCaptureSourceProvider captureSourceProvider,
@@ -46,12 +47,13 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             return Task.CompletedTask;
         }
 
-        _ = Task.Run(() => TryHotRecoverOnceAsync(source), CancellationToken.None);
+        _ = Task.Run(() => TryHotRecoverUntilRotationAsync(source), CancellationToken.None);
         return Task.CompletedTask;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        serviceStopping = stoppingToken;
         logger.LogInformation("Source availability reconciliation service started. Scheduled checks at minutes {Minutes}.", string.Join(",", ScheduledReconciliationMinutes.OrderBy(value => value)));
 
         while (!stoppingToken.IsCancellationRequested)
@@ -80,40 +82,78 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         }
     }
 
-    private async Task TryHotRecoverOnceAsync(CaptureSource failedSource)
+    // Retries recovery every minute until the source comes back OR the current rotation
+    // window (clock-hour) ends without success. On timeout, marks the source excluded
+    // and hands it off to the scheduled reconciliation (min 1/30/59).
+    private async Task TryHotRecoverUntilRotationAsync(CaptureSource failedSource)
     {
         try
         {
             captureSourceProvider.RemoveResolvedSource(failedSource.SourceId);
 
-            var recovered = await TryRecoverSourceAsync(failedSource, CancellationToken.None).ConfigureAwait(false);
-            if (recovered is null)
+            var sourceOffset = TimeSpan.FromMinutes(failedSource.UtcOffsetMinutes);
+            var failureHour = DateTimeOffset.UtcNow.ToOffset(sourceOffset).Hour;
+            var attempt = 0;
+
+            while (!serviceStopping.IsCancellationRequested)
             {
-                // TryRecoverSourceAsync already persisted excluded=true when no candidate worked.
-                logger.LogWarning(
-                    "Hot recovery exhausted all structural candidates for source {SourceId}. Source marked excluded.",
-                    failedSource.SourceId);
-                return;
+                attempt++;
+
+                // Validate conservative fallbacks (no exclusion persisted on each failed attempt).
+                var recovered = await TryRecoverSourceAsync(failedSource, CancellationToken.None, persistExclusionOnFailure: false)
+                    .ConfigureAwait(false);
+
+                if (recovered is not null)
+                {
+                    captureSourceProvider.AddOrUpdateResolvedSource(recovered);
+                    await captureSourceProvider
+                        .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    await captureSourceProvider
+                        .PersistExclusionAsync(recovered.SourceId, false, CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    logger.LogInformation(
+                        "Hot recovery succeeded for source {SourceId} on attempt {Attempt}. StreamUrl={StreamUrl}",
+                        recovered.SourceId, attempt, recovered.StreamUrl);
+
+                    _ = Task.Run(() => TriggerCaptureAsync(recovered), CancellationToken.None);
+                    return;
+                }
+
+                // If we've crossed into a new clock-hour the rotation window is gone —
+                // the silence-fill gap feature won't be able to produce a clean file anymore.
+                // Give up and let scheduled reconciliation (min 1/30/59) handle it.
+                var currentHour = DateTimeOffset.UtcNow.ToOffset(sourceOffset).Hour;
+                if (currentHour != failureHour)
+                {
+                    await captureSourceProvider
+                        .PersistExclusionAsync(failedSource.SourceId, true, CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    logger.LogWarning(
+                        "Hot recovery exhausted for source {SourceId} after {Attempt} attempt(s) — hour boundary reached. Source marked excluded; scheduled reconciliation will retry.",
+                        failedSource.SourceId, attempt);
+                    return;
+                }
+
+                logger.LogDebug(
+                    "Hot recovery attempt {Attempt} failed for source {SourceId}. Retrying in 1 minute.",
+                    attempt, failedSource.SourceId);
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), serviceStopping).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
-
-            captureSourceProvider.AddOrUpdateResolvedSource(recovered);
-            await captureSourceProvider
-                .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, CancellationToken.None)
-                .ConfigureAwait(false);
-            await captureSourceProvider
-                .PersistExclusionAsync(recovered.SourceId, false, CancellationToken.None)
-                .ConfigureAwait(false);
-
-            logger.LogInformation(
-                "Hot recovery succeeded for source {SourceId}. StreamUrl={StreamUrl}",
-                recovered.SourceId,
-                recovered.StreamUrl);
-
-            _ = Task.Run(() => TriggerCaptureAsync(recovered), CancellationToken.None);
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Hot recovery failed unexpectedly for source {SourceId}.", failedSource.SourceId);
+            logger.LogError(exception, "Hot recovery loop failed unexpectedly for source {SourceId}.", failedSource.SourceId);
         }
         finally
         {
@@ -135,8 +175,10 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             .Select(source => source.SourceId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Skip sources that already have a hot-recovery loop running to avoid double-recovery.
         var excludedSources = configuredSources
-            .Where(source => !resolvedIds.Contains(source.SourceId))
+            .Where(source => !resolvedIds.Contains(source.SourceId)
+                          && !inFlightHotRecovery.ContainsKey(source.SourceId))
             .ToArray();
 
         if (excludedSources.Length == 0)
@@ -205,7 +247,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         }
     }
 
-    private async Task<CaptureSource?> TryRecoverSourceAsync(CaptureSource source, CancellationToken cancellationToken)
+    private async Task<CaptureSource?> TryRecoverSourceAsync(CaptureSource source, CancellationToken cancellationToken, bool persistExclusionOnFailure = true)
     {
         var candidates = StartupStreamUrlHeuristics.BuildConservativeCandidates(source);
 
@@ -218,11 +260,12 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             }
         }
 
-        // No structural variant worked — persist exclusion so the source is visible in the JSON
-        // and does not keep attempting capture on every cycle.
-        await captureSourceProvider
-            .PersistExclusionAsync(source.SourceId, true, cancellationToken)
-            .ConfigureAwait(false);
+        if (persistExclusionOnFailure)
+        {
+            await captureSourceProvider
+                .PersistExclusionAsync(source.SourceId, true, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         return null;
     }
