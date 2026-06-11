@@ -390,6 +390,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             var consecutiveEncoderFrameSendFailures = 0;
             const int maxConsecutivePacketSendErrors = 8;
             const int maxConsecutiveEncoderFrameSendFailures = 48;
+            string? resumeTempPath = null;
 
             try
             {
@@ -540,18 +541,77 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 // Use the aligned window start (e.g. 13:00:00) as the file timestamp so that
                 // every opus file is named after the clock-hour it belongs to, regardless of
                 // when the capture session actually started within that hour.
-                // Subsequent rotations already use nextRotationAt (which is aligned), so only
-                // the initial file name needs this correction.
                 var sessionStartNow = SourceNow();
                 var alignedSessionStart = AlignWindow(sessionStartNow, effectiveOpusRotationInterval);
                 activeOpusPath = CurrentOpusPath(alignedSessionStart, effectiveOpusRotationInterval);
                 currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
-                currentOpusStartedAt = alignedSessionStart;
+
+                // Resume detection: if the aligned file already exists a previous session
+                // recorded part of this hour before failing. We:
+                //   1. Probe the existing file to find where it ended.
+                //   2. Write new content (silence gap + real audio) to a temp file.
+                //   3. At rotation time, OGG-chain the temp file onto the original so the
+                //      final file covers the complete clock-hour with no silent void in it.
+                TimeSpan silenceGap = TimeSpan.Zero;
+                if (File.Exists(activeOpusPath))
+                {
+                    var existingDuration = ProbeAudioDuration(activeOpusPath);
+                    if (existingDuration > TimeSpan.Zero)
+                    {
+                        var elapsed = sessionStartNow - alignedSessionStart;
+                        silenceGap = elapsed - existingDuration;
+                        if (silenceGap < TimeSpan.Zero)
+                        {
+                            silenceGap = TimeSpan.Zero;
+                        }
+
+                        // currentOpusStartedAt marks where in the hour the new segment begins,
+                        // so the rotation check (currentAudioTimeline >= nextRotationAt) fires
+                        // at the correct wall-clock time even though sampleCursor starts at 0.
+                        currentOpusStartedAt = alignedSessionStart + existingDuration;
+                        resumeTempPath = activeOpusPath + ".resume";
+                        logger.LogInformation(
+                            "Resuming mid-hour capture for source {SourceId}. ExistingDuration={ExistingDuration:g}, Gap={Gap:g}, TempPath={TempPath}",
+                            sourceId, existingDuration, silenceGap, resumeTempPath);
+                    }
+                    else
+                    {
+                        currentOpusStartedAt = alignedSessionStart;
+                    }
+                }
+                else
+                {
+                    currentOpusStartedAt = alignedSessionStart;
+                }
+
                 currentOpusSampleCursor = 0;
-                outputContext = OpenOutputContext(activeOpusPath, encoderContext, ref outputStream);
+                var actualOutputPath = resumeTempPath ?? activeOpusPath;
+                outputContext = OpenOutputContext(actualOutputPath, encoderContext, ref outputStream);
                 startupCompletionSource.TrySetResult(new AudioCaptureExecutionResult(true, activeOpusPath));
                 logger.LogInformation("Capture started for source {SourceId}. Reconnect={ReconnectEnabled}, RtspTcp={RtspPreferTcp}, SilenceChunking={SilenceChunkingEnabled}, OpusBitrateKbps={OpusBitrateKbps}.", sourceId, options.EnableDecoderReconnect, options.RtspPreferTcp, chunkingState is not null, options.DefaultOpusBitrateKbps);
                 logger.LogInformation("OPUS rotation interval for source {SourceId}: profile={ProfileRotationMinutes} min, effective={EffectiveRotationMinutes} min.", sourceId, plan.OpusRotationInterval.TotalMinutes, effectiveOpusRotationInterval.TotalMinutes);
+
+                // Fill the silence gap (time between end of existing recording and now)
+                // before the first real audio packet arrives.
+                if (silenceGap > TimeSpan.FromSeconds(1))
+                {
+                    logger.LogInformation(
+                        "Filling {Gap:g} of silence for source {SourceId} to bridge recording gap.",
+                        silenceGap, sourceId);
+                    FillSilencePcm(
+                        silenceGap,
+                        pendingOpusPcm!,
+                        encoderFrameSize,
+                        encoderContext,
+                        encoderFrame!,
+                        outputContext,
+                        outputStream,
+                        outputPacket!,
+                        ref encoderSampleCursor,
+                        ref consecutiveEncoderFrameSendFailures,
+                        maxConsecutiveEncoderFrameSendFailures);
+                    currentOpusSampleCursor += (long)(silenceGap.TotalSeconds * AudioSampleRate);
+                }
 
                 inputPacket = ffmpeg.av_packet_alloc();
                 inputFrame = ffmpeg.av_frame_alloc();
@@ -720,7 +780,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                                 chunkingState?.ResetAfterFlush();
                             }
 
-                            RotateOutput(ref outputContext, ref outputStream, ref encoderContext, outputPacket, nextRotationAt, effectiveOpusRotationInterval, ref encoderSampleCursor);
+                            RotateOutput(ref outputContext, ref outputStream, ref encoderContext, outputPacket, nextRotationAt, effectiveOpusRotationInterval, ref encoderSampleCursor, resumeTempPath, activeOpusPath);
+                            resumeTempPath = null; // rotation consumed the resume, next file is clean
                             currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
                             currentOpusStartedAt = nextRotationAt;
                             currentOpusSampleCursor = 0;
@@ -755,12 +816,26 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
                     EnqueueChunkTranscription(pendingFlacPcm, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: false);
                 }
+                // If the session ends before the next rotation (EOF or clean stop),
+                // finalize any pending resume file so the partial audio is still appended.
+                if (resumeTempPath is not null)
+                {
+                    FinalizeResumeOutput(activeOpusPath, resumeTempPath);
+                    resumeTempPath = null;
+                }
+
                 isRunning = false;
                 logger.LogInformation("Capture completed for source {SourceId}.", sourceId);
                 return Task.CompletedTask;
             }
             catch (Exception exception)
             {
+                // Best-effort: if the session crashed mid-resume, append whatever was written.
+                if (resumeTempPath is not null)
+                {
+                    FinalizeResumeOutput(activeOpusPath ?? string.Empty, resumeTempPath);
+                }
+
                 var detailedError = exception.ToString();
                 SetFailure(detailedError);
                 operationalMetrics.RecordCaptureRuntimeFailure(sourceId);
@@ -847,6 +922,121 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
+        // Returns the audio duration of an existing opus file by probing it with FFmpeg.
+        // Returns Zero on any failure so callers can treat it as "no existing content".
+        private static unsafe TimeSpan ProbeAudioDuration(string path)
+        {
+            AVFormatContext* ctx = null;
+            try
+            {
+                if (ffmpeg.avformat_open_input(&ctx, path, null, null) < 0)
+                {
+                    return TimeSpan.Zero;
+                }
+
+                if (ffmpeg.avformat_find_stream_info(ctx, null) < 0)
+                {
+                    return TimeSpan.Zero;
+                }
+
+                if (ctx->duration == ffmpeg.AV_NOPTS_VALUE || ctx->duration <= 0)
+                {
+                    return TimeSpan.Zero;
+                }
+
+                return TimeSpan.FromSeconds(ctx->duration / (double)ffmpeg.AV_TIME_BASE);
+            }
+            catch
+            {
+                return TimeSpan.Zero;
+            }
+            finally
+            {
+                if (ctx is not null)
+                {
+                    ffmpeg.avformat_close_input(&ctx);
+                }
+            }
+        }
+
+        // Injects silence into the encoder pipeline for the given duration.
+        // Used to fill the gap between the end of a partial recording and the moment
+        // the current session resumed, so the final file covers a contiguous time range.
+        private unsafe void FillSilencePcm(
+            TimeSpan duration,
+            PcmByteQueue pcmQueue,
+            int encoderFrameSize,
+            AVCodecContext* encoderContext,
+            AVFrame* encoderFrame,
+            AVFormatContext* outputContext,
+            AVStream* outputStream,
+            AVPacket* packet,
+            ref long encoderSampleCursor,
+            ref int consecutiveEncoderFrameSendFailures,
+            int maxConsecutiveEncoderFrameSendFailures)
+        {
+            var totalSilenceBytes = (int)(duration.TotalSeconds * AudioSampleRate) * AudioChannels * AudioBytesPerSample;
+            if (totalSilenceBytes <= 0)
+            {
+                return;
+            }
+
+            const int chunkBytes = 64 * 1024;
+            var silence = ArrayPool<byte>.Shared.Rent(chunkBytes);
+            Array.Clear(silence, 0, chunkBytes);
+            try
+            {
+                var remaining = totalSilenceBytes;
+                while (remaining > 0)
+                {
+                    var toWrite = Math.Min(remaining, chunkBytes);
+                    pcmQueue.AppendBytes(silence, 0, toWrite);
+                    EncodeBufferedSamples(
+                        pcmQueue,
+                        encoderFrameSize,
+                        encoderContext,
+                        encoderFrame,
+                        outputContext,
+                        outputStream,
+                        packet,
+                        ref encoderSampleCursor,
+                        ref consecutiveEncoderFrameSendFailures,
+                        maxConsecutiveEncoderFrameSendFailures);
+                    remaining -= toWrite;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(silence);
+            }
+        }
+
+        // Appends the content of resumeTempPath to originalPath (OGG chaining) and deletes
+        // the temp file. Chained OGG/Opus files play as a single continuous stream in FFmpeg,
+        // VLC, and most compliant players, producing a complete-hour file from two segments.
+        private void FinalizeResumeOutput(string originalPath, string resumeTempPath)
+        {
+            try
+            {
+                using (var original = new FileStream(originalPath, FileMode.Append, FileAccess.Write, FileShare.None))
+                using (var resume = new FileStream(resumeTempPath, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    resume.CopyTo(original);
+                }
+
+                File.Delete(resumeTempPath);
+                logger.LogInformation(
+                    "Resume gap filled for source {SourceId}. Original={OriginalPath}",
+                    sourceId, originalPath);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "Failed to finalize resume output for source {SourceId}. Temp file kept at {TempPath}.",
+                    sourceId, resumeTempPath);
+            }
+        }
+
         private static AVCodecContext* CreateOpusEncoderContext(int bitrateKbps)
         {
             AVCodec* encoder = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_OPUS);
@@ -915,7 +1105,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             return $"Referer: {referer}\r\nOrigin: {origin}\r\nAccept: */*\r\n";
         }
 
-        private void RotateOutput(ref AVFormatContext* outputContext, ref AVStream* outputStream, ref AVCodecContext* encoderContext, AVPacket* packet, DateTimeOffset now, TimeSpan rotationInterval, ref long encoderSampleCursor)
+        private void RotateOutput(ref AVFormatContext* outputContext, ref AVStream* outputStream, ref AVCodecContext* encoderContext, AVPacket* packet, DateTimeOffset now, TimeSpan rotationInterval, ref long encoderSampleCursor, string? resumeTempPath = null, string? resumeOriginalPath = null)
         {
             if (outputContext is null)
             {
@@ -939,6 +1129,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
 
             ffmpeg.avformat_free_context(outputContext);
+
+            // If this rotation closes a resume temp file, OGG-chain it onto the original
+            // now that it is fully written and closed.
+            if (resumeTempPath is not null && resumeOriginalPath is not null)
+            {
+                FinalizeResumeOutput(resumeOriginalPath, resumeTempPath);
+            }
 
             // Replace the encoder with a fresh instance for the next file.
             // After DrainEncoder sends the null frame, the Opus encoder is left in the EOF/draining
@@ -1706,6 +1903,18 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 EnsureWritable(bytesToAppend);
                 Marshal.Copy((IntPtr)frame->data[0], buffer, startOffset + length, bytesToAppend);
                 length += bytesToAppend;
+            }
+
+            public void AppendBytes(byte[] source, int offset, int count)
+            {
+                if (count <= 0)
+                {
+                    return;
+                }
+
+                EnsureWritable(count);
+                Buffer.BlockCopy(source, offset, buffer, startOffset + length, count);
+                length += count;
             }
 
             public void CopyToAndConsume(IntPtr destination, int count)
