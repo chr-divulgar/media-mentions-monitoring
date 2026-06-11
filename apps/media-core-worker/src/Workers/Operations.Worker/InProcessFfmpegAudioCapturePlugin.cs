@@ -546,6 +546,17 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 activeOpusPath = CurrentOpusPath(alignedSessionStart, effectiveOpusRotationInterval);
                 currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
 
+                // Previous-window gap fill: if the source was excluded for the rest of the
+                // previous hour (e.g. failed at 13:22, recovered at 14:00), the file
+                // _13-00-00.opus is left with only partial audio. Fill the remainder with
+                // silence now so that every past file covers a complete rotation window.
+                var previousWindowStart = alignedSessionStart - effectiveOpusRotationInterval;
+                var previousWindowPath = CurrentOpusPath(previousWindowStart, effectiveOpusRotationInterval);
+                if (File.Exists(previousWindowPath))
+                {
+                    FillFileWithTrailingSilence(previousWindowPath, effectiveOpusRotationInterval);
+                }
+
                 // Resume detection: if the aligned file already exists a previous session
                 // recorded part of this hour before failing. We:
                 //   1. Probe the existing file to find where it ended.
@@ -1008,6 +1019,92 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             finally
             {
                 ArrayPool<byte>.Shared.Return(silence);
+            }
+        }
+
+        // Fills the tail of an existing opus file with silence up to targetDuration.
+        // Used when a source was excluded for the rest of an hour: the partial file
+        // (e.g. _13-00-00.opus with 22 min) is completed to a full rotation window
+        // (60 min) so every file on disk covers a contiguous, predictable time range.
+        private unsafe void FillFileWithTrailingSilence(string filePath, TimeSpan targetDuration)
+        {
+            var existingDuration = ProbeAudioDuration(filePath);
+            var gap = targetDuration - existingDuration;
+            if (gap <= TimeSpan.FromSeconds(1))
+            {
+                return;
+            }
+
+            var tempPath = filePath + ".silpad";
+            AVCodecContext* enc = null;
+            AVFormatContext* outCtx = null;
+            AVStream* outStream = null;
+            AVFrame* encFrame = null;
+            AVPacket* pkt = null;
+
+            try
+            {
+                enc = CreateOpusEncoderContext(Math.Max(6, options.DefaultOpusBitrateKbps));
+                outCtx = OpenOutputContext(tempPath, enc, ref outStream);
+                encFrame = ffmpeg.av_frame_alloc();
+                pkt = ffmpeg.av_packet_alloc();
+
+                if (encFrame is null || pkt is null)
+                {
+                    throw new InvalidOperationException("Unable to allocate FFmpeg resources for trailing silence pad.");
+                }
+
+                var pcmQueue = new PcmByteQueue();
+                var sampleCursor = 0L;
+                var dummyErrors = 0;
+                var frameSize = enc->frame_size > 0 ? enc->frame_size : AudioSampleRate / 2;
+
+                FillSilencePcm(gap, pcmQueue, frameSize, enc, encFrame, outCtx, outStream, pkt,
+                    ref sampleCursor, ref dummyErrors, 8);
+
+                EncodeBufferedSamples(pcmQueue, int.MaxValue, enc, encFrame, outCtx, outStream, pkt,
+                    ref sampleCursor, ref dummyErrors, 8, flushFinal: true);
+
+                DrainEncoder(enc, outCtx, outStream, pkt);
+
+                ffmpeg.av_write_trailer(outCtx);
+                ffmpeg.avio_closep(&outCtx->pb);
+                ffmpeg.avformat_free_context(outCtx);
+                outCtx = null;
+
+                FinalizeResumeOutput(filePath, tempPath);
+
+                logger.LogInformation(
+                    "Trailing silence {Gap:g} appended to previous-window file for source {SourceId}: {Path}",
+                    gap, sourceId, filePath);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "Failed to fill trailing silence for source {SourceId}, file {Path}.",
+                    sourceId, filePath);
+                try { File.Delete(tempPath); } catch { }
+            }
+            finally
+            {
+                if (outCtx is not null)
+                {
+                    try
+                    {
+                        if (outCtx->pb is not null) ffmpeg.avio_closep(&outCtx->pb);
+                        ffmpeg.avformat_free_context(outCtx);
+                    }
+                    catch { }
+                }
+
+                if (enc is not null)
+                {
+                    AVCodecContext* toFree = enc;
+                    ffmpeg.avcodec_free_context(&toFree);
+                }
+
+                if (encFrame is not null) ffmpeg.av_frame_free(&encFrame);
+                if (pkt is not null) ffmpeg.av_packet_free(&pkt);
             }
         }
 
