@@ -574,6 +574,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 TimeSpan silenceGap = TimeSpan.Zero;
                 if (File.Exists(activeOpusPath))
                 {
+                    // Resume: a previous session recorded part of this hour and failed.
+                    // Fill the gap between the end of existing content and now.
                     var existingDuration = ProbeAudioDuration(activeOpusPath);
                     if (existingDuration > TimeSpan.Zero)
                     {
@@ -584,9 +586,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                             silenceGap = TimeSpan.Zero;
                         }
 
-                        // currentOpusStartedAt marks where in the hour the new segment begins,
-                        // so the rotation check (currentAudioTimeline >= nextRotationAt) fires
-                        // at the correct wall-clock time even though sampleCursor starts at 0.
                         currentOpusStartedAt = alignedSessionStart + existingDuration;
                         resumeTempPath = activeOpusPath + ".resume";
                         logger.LogInformation(
@@ -600,7 +599,18 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 }
                 else
                 {
+                    // Fresh file: worker started mid-hour. Fill silence from the aligned start
+                    // (e.g. 14:00:00) to the actual start time (e.g. 14:33:12) so the file
+                    // represents the complete clock-hour with an accurate timestamp.
                     currentOpusStartedAt = alignedSessionStart;
+                    silenceGap = sessionStartNow - alignedSessionStart;
+                    if (silenceGap < TimeSpan.Zero) silenceGap = TimeSpan.Zero;
+                    if (silenceGap > TimeSpan.FromSeconds(1))
+                    {
+                        logger.LogInformation(
+                            "Fresh mid-hour start for source {SourceId}. Filling {Gap:g} of silence from {AlignedStart:HH:mm:ss} to {ActualStart:HH:mm:ss}.",
+                            sourceId, silenceGap, alignedSessionStart, sessionStartNow);
+                    }
                 }
 
                 currentOpusSampleCursor = 0;

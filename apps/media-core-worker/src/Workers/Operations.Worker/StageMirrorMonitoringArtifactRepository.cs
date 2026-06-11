@@ -74,14 +74,12 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
         var currentHourKey = ToHourKey(artifact.CapturedAtUtc);
         var sourceId = string.IsNullOrWhiteSpace(artifact.Source) ? "unknown" : artifact.Source;
 
-        // Parse payload with case-insensitive options — the payload is serialized in PascalCase
-        // by the default JsonSerializer but we cannot rely on any specific casing.
-        var (succeeded, opusFilePath, silenceFilledSeconds) = ParseCapturePayload(artifact.PayloadJson);
+        var (succeeded, opusFilePath, silenceFilledSeconds, heartbeatIntervalSeconds) = ParseCapturePayload(artifact.PayloadJson);
 
         // Accumulate in the current hour's in-memory bucket
         hourlySummaries
             .GetOrAdd(currentHourKey, key => new HourlySummary(key))
-            .Upsert(sourceId, succeeded, opusFilePath, silenceFilledSeconds, artifact.CapturedAtUtc);
+            .Upsert(sourceId, succeeded, opusFilePath, silenceFilledSeconds, heartbeatIntervalSeconds, artifact.CapturedAtUtc);
 
         // When a source crosses into a new hour, the previous hour is now complete for that source.
         // Write the summary for the previous hour (may be called multiple times as sources transition
@@ -100,15 +98,15 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
         lastHourKeyBySource[sourceId] = currentHourKey;
     }
 
-    private static (bool Succeeded, string OpusFilePath, double SilenceFilledSeconds) ParseCapturePayload(string payloadJson)
+    private static (bool Succeeded, string OpusFilePath, double SilenceFilledSeconds, double HeartbeatIntervalSeconds) ParseCapturePayload(string payloadJson)
     {
         var succeeded = false;
         var opusFilePath = string.Empty;
         var silenceFilledSeconds = 0.0;
+        var heartbeatIntervalSeconds = 60.0; // safe fallback
 
         try
         {
-            // Case-insensitive options to handle PascalCase/camelCase inconsistencies
             using var doc = JsonDocument.Parse(payloadJson);
             foreach (var prop in doc.RootElement.EnumerateObject())
             {
@@ -118,11 +116,13 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
                     opusFilePath = prop.Value.GetString() ?? string.Empty;
                 else if (prop.Name.Equals("silenceFilledSeconds", StringComparison.OrdinalIgnoreCase))
                     silenceFilledSeconds = prop.Value.GetDouble();
+                else if (prop.Name.Equals("heartbeatIntervalSeconds", StringComparison.OrdinalIgnoreCase))
+                    heartbeatIntervalSeconds = prop.Value.GetDouble();
             }
         }
         catch { }
 
-        return (succeeded, opusFilePath, silenceFilledSeconds);
+        return (succeeded, opusFilePath, silenceFilledSeconds, heartbeatIntervalSeconds);
     }
 
     private async Task WriteSummaryFileAsync(string hourKey, HourlySummary summary, CancellationToken cancellationToken)
@@ -148,7 +148,7 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
         private readonly object syncRoot = new();
         private readonly Dictionary<string, SourceEntry> entries = new(StringComparer.OrdinalIgnoreCase);
 
-        public void Upsert(string sourceId, bool succeeded, string opusFilePath, double silenceFilledSeconds, DateTimeOffset capturedAt)
+        public void Upsert(string sourceId, bool succeeded, string opusFilePath, double silenceFilledSeconds, double heartbeatIntervalSeconds, DateTimeOffset capturedAt)
         {
             lock (syncRoot)
             {
@@ -159,14 +159,22 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
                 }
 
                 entry.CaptureCount++;
-                if (succeeded) entry.SucceededCount++;
+                if (succeeded)
+                {
+                    entry.SucceededCount++;
+                    // Track exact interval so capturedSeconds reflects real recording time
+                    entry.TotalSucceededSeconds += heartbeatIntervalSeconds;
+                }
+
                 if (!string.IsNullOrWhiteSpace(opusFilePath)) entry.OpusFilePath = opusFilePath;
-                // Take the maximum seen — silence only grows within a window
+                // Take the maximum seen — silence accumulates and never decreases within a window
                 if (silenceFilledSeconds > entry.SilenceFilledSeconds)
                     entry.SilenceFilledSeconds = silenceFilledSeconds;
                 entry.LastCaptureAt = capturedAt;
             }
         }
+
+        private const double RotationWindowSeconds = 3600.0; // 1-hour rotation
 
         public object ToSnapshot()
         {
@@ -176,18 +184,19 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
                     .OrderBy(e => e.SourceId, StringComparer.OrdinalIgnoreCase)
                     .Select(e =>
                     {
-                        var silenceSec = Math.Round(e.SilenceFilledSeconds, 0);
-                        // CaptureCount × 1-minute heartbeat ≈ captured minutes.
-                        // Each heartbeat corresponds to ~1 min of active recording.
-                        var capturedSec = (double)e.SucceededCount * 60;
-                        var coveragePct = Math.Round(capturedSec / 3600.0 * 100, 1);
+                        var silenceSec = (int)Math.Round(e.SilenceFilledSeconds, 0);
+                        // Cap captured seconds at the rotation window — prevents values > 3600
+                        // that could appear if a bucket accumulated heartbeats from multiple
+                        // hours due to timing edge cases.
+                        var capturedSec = (int)Math.Min(Math.Round(e.TotalSucceededSeconds, 0), RotationWindowSeconds);
+                        var coveragePct = Math.Round(capturedSec / RotationWindowSeconds * 100.0, 1);
 
                         return new
                         {
                             e.SourceId,
                             OpusFile = e.OpusFilePath is not null ? Path.GetFileName(e.OpusFilePath) : null,
-                            CapturedSeconds = (int)capturedSec,
-                            SilenceSeconds = (int)silenceSec,
+                            CapturedSeconds = capturedSec,
+                            SilenceSeconds = silenceSec,
                             CoveragePercent = coveragePct,
                             Status = ResolveStatus(e),
                             LastCaptureAt = e.LastCaptureAt?.ToString("HH:mm:ss zzz")
@@ -212,6 +221,7 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
             public string? OpusFilePath { get; set; }
             public int CaptureCount { get; set; }
             public int SucceededCount { get; set; }
+            public double TotalSucceededSeconds { get; set; }
             public double SilenceFilledSeconds { get; set; }
             public DateTimeOffset? LastCaptureAt { get; set; }
         }
