@@ -112,6 +112,7 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
             source.StreamUrl,
             captureResult.Succeeded,
             captureResult.OpusFilePath,
+            captureResult.SilenceFilledSeconds,
             captureResult.ErrorMessage
         });
 

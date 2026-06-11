@@ -95,13 +95,16 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         {
             if (session.CompletedByEndOfInput && string.IsNullOrWhiteSpace(session.LastError))
             {
-                return new AudioCaptureExecutionResult(true, session.LastOpusPath ?? session.CurrentOpusPath());
+                return new AudioCaptureExecutionResult(true, session.LastOpusPath ?? session.CurrentOpusPath(),
+                    silenceFilledSeconds: session.SilenceFilledThisWindowSeconds);
             }
 
-            return new AudioCaptureExecutionResult(false, session.CurrentOpusPath(), session.LastError);
+            return new AudioCaptureExecutionResult(false, session.CurrentOpusPath(), session.LastError,
+                silenceFilledSeconds: session.SilenceFilledThisWindowSeconds);
         }
 
-        return new AudioCaptureExecutionResult(true, startupResult.OpusFilePath);
+        return new AudioCaptureExecutionResult(true, startupResult.OpusFilePath,
+            silenceFilledSeconds: session.SilenceFilledThisWindowSeconds);
     }
 
     public void Dispose()
@@ -237,6 +240,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         private volatile bool completedByEndOfInput;
         private volatile bool isRunning;
         private volatile string? lastError;
+        // Silence injected into the current rotation window (milliseconds, accumulated as long for thread safety).
+        private long silenceFilledThisWindowMs;
 
         private CaptureSession(
             CaptureSource source,
@@ -281,6 +286,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         public string? LastError => lastError;
 
         public string? LastOpusPath => activeOpusPath;
+
+        public double SilenceFilledThisWindowSeconds =>
+            Interlocked.Read(ref silenceFilledThisWindowMs) / 1000.0;
 
         public string CurrentOpusPath() => CurrentOpusPath(SourceNow());
 
@@ -609,6 +617,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     logger.LogInformation(
                         "Filling {Gap:g} of silence for source {SourceId} to bridge recording gap.",
                         silenceGap, sourceId);
+                    Interlocked.Add(ref silenceFilledThisWindowMs, (long)silenceGap.TotalMilliseconds);
                     FillSilencePcm(
                         silenceGap,
                         pendingOpusPcm!,
@@ -793,6 +802,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
                             RotateOutput(ref outputContext, ref outputStream, ref encoderContext, outputPacket, nextRotationAt, effectiveOpusRotationInterval, ref encoderSampleCursor, resumeTempPath, activeOpusPath);
                             resumeTempPath = null; // rotation consumed the resume, next file is clean
+                            Interlocked.Exchange(ref silenceFilledThisWindowMs, 0); // reset for the new window
                             currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
                             currentOpusStartedAt = nextRotationAt;
                             currentOpusSampleCursor = 0;
