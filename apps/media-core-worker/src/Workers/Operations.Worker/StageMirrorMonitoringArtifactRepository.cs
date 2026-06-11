@@ -180,8 +180,7 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
                         // CaptureCount × 1-minute heartbeat ≈ captured minutes.
                         // Each heartbeat corresponds to ~1 min of active recording.
                         var capturedSec = (double)e.SucceededCount * 60;
-                        var totalSec = capturedSec + silenceSec;
-                        var coveragePct = totalSec > 0 ? Math.Round(totalSec / 3600.0 * 100, 1) : 0.0;
+                        var coveragePct = Math.Round(capturedSec / 3600.0 * 100, 1);
 
                         return new
                         {
