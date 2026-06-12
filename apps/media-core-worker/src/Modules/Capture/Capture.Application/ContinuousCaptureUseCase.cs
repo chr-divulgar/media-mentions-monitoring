@@ -14,7 +14,6 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
     private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
     private readonly ICaptureAttemptObserver captureAttemptObserver;
     private readonly int maxDegreeOfParallelism;
-    private readonly double heartbeatIntervalSeconds;
 
     public ContinuousCaptureUseCase(
         ICaptureSourceProvider captureSourceProvider,
@@ -22,8 +21,7 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
         IAudioCapturePlugin audioCapturePlugin,
         IMonitoringArtifactRepository monitoringArtifactRepository,
         int maxDegreeOfParallelism,
-        ICaptureAttemptObserver? captureAttemptObserver = null,
-        double heartbeatIntervalSeconds = 60)
+        ICaptureAttemptObserver? captureAttemptObserver = null)
     {
         this.captureSourceProvider = captureSourceProvider;
         this.pluginResolver = pluginResolver;
@@ -31,7 +29,6 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
         this.monitoringArtifactRepository = monitoringArtifactRepository;
         this.maxDegreeOfParallelism = Math.Max(1, maxDegreeOfParallelism);
         this.captureAttemptObserver = captureAttemptObserver ?? NullCaptureAttemptObserver.Instance;
-        this.heartbeatIntervalSeconds = heartbeatIntervalSeconds > 0 ? heartbeatIntervalSeconds : 60;
     }
 
     public async Task<ContinuousCaptureResult> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -115,10 +112,8 @@ public sealed class ContinuousCaptureUseCase : IContinuousCaptureUseCase
             source.StreamUrl,
             captureResult.Succeeded,
             captureResult.OpusFilePath,
+            captureResult.CapturedSeconds,
             captureResult.SilenceFilledSeconds,
-            // Included so the summary repository can compute capturedSeconds accurately
-            // regardless of the heartbeat interval configured in worker-options.json.
-            HeartbeatIntervalSeconds = heartbeatIntervalSeconds,
             captureResult.ErrorMessage
         });
 

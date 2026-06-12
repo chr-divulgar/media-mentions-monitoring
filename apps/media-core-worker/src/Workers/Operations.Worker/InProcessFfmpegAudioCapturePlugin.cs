@@ -96,15 +96,18 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             if (session.CompletedByEndOfInput && string.IsNullOrWhiteSpace(session.LastError))
             {
                 return new AudioCaptureExecutionResult(true, session.LastOpusPath ?? session.CurrentOpusPath(),
-                    silenceFilledSeconds: session.SilenceFilledThisWindowSeconds);
+                    silenceFilledSeconds: session.SilenceFilledThisWindowSeconds,
+                    capturedSeconds: session.CapturedThisWindowSeconds);
             }
 
             return new AudioCaptureExecutionResult(false, session.CurrentOpusPath(), session.LastError,
-                silenceFilledSeconds: session.SilenceFilledThisWindowSeconds);
+                silenceFilledSeconds: session.SilenceFilledThisWindowSeconds,
+                capturedSeconds: session.CapturedThisWindowSeconds);
         }
 
         return new AudioCaptureExecutionResult(true, startupResult.OpusFilePath,
-            silenceFilledSeconds: session.SilenceFilledThisWindowSeconds);
+            silenceFilledSeconds: session.SilenceFilledThisWindowSeconds,
+            capturedSeconds: session.CapturedThisWindowSeconds);
     }
 
     public void Dispose()
@@ -240,8 +243,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         private volatile bool completedByEndOfInput;
         private volatile bool isRunning;
         private volatile string? lastError;
-        // Silence injected into the current rotation window (milliseconds, accumulated as long for thread safety).
+        // Silence injected into the current rotation window (milliseconds).
         private long silenceFilledThisWindowMs;
+        // Real audio samples encoded this window (excludes silence fill).
+        private long realCapturedSamplesThisWindow;
 
         private CaptureSession(
             CaptureSource source,
@@ -289,6 +294,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         public double SilenceFilledThisWindowSeconds =>
             Interlocked.Read(ref silenceFilledThisWindowMs) / 1000.0;
+
+        public double CapturedThisWindowSeconds =>
+            Interlocked.Read(ref realCapturedSamplesThisWindow) / (double)AudioSampleRate;
 
         public string CurrentOpusPath() => CurrentOpusPath(SourceNow());
 
@@ -757,6 +765,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         }
 
                         currentOpusSampleCursor += frameSampleCount;
+                        Interlocked.Add(ref realCapturedSamplesThisWindow, frameSampleCount);
                         var currentAudioTimeline = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
 
                         if (chunkingState is not null)
@@ -814,7 +823,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
                             RotateOutput(ref outputContext, ref outputStream, ref encoderContext, outputPacket, nextRotationAt, effectiveOpusRotationInterval, ref encoderSampleCursor, resumeTempPath, activeOpusPath);
                             resumeTempPath = null; // rotation consumed the resume, next file is clean
-                            Interlocked.Exchange(ref silenceFilledThisWindowMs, 0); // reset for the new window
+                            Interlocked.Exchange(ref silenceFilledThisWindowMs, 0);
+                            Interlocked.Exchange(ref realCapturedSamplesThisWindow, 0); // reset for the new window
                             currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
                             currentOpusStartedAt = nextRotationAt;
                             currentOpusSampleCursor = 0;

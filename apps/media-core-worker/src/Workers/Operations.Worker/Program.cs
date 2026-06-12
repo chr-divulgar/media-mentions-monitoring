@@ -37,8 +37,7 @@ builder.Services.AddSingleton<IContinuousCaptureUseCase>(sp => new ContinuousCap
 	sp.GetRequiredService<IAudioCapturePlugin>(),
 	sp.GetRequiredService<IMonitoringArtifactRepository>(),
 	options.CaptureMaxDegreeOfParallelism,
-	sp.GetRequiredService<ICaptureAttemptObserver>(),
-	heartbeatIntervalSeconds: options.HeartbeatInterval.TotalSeconds));
+	sp.GetRequiredService<ICaptureAttemptObserver>()));
 builder.Services.AddSingleton<IIncrementalSegmentationUseCase, IncrementalSegmentationUseCase>();
 builder.Services.AddSingleton<IContinuousIngestionOrchestrator, ContinuousIngestionOrchestrator>();
 builder.Services.AddSingleton<IDiscreteIngestionOrchestrator, DiscreteIngestionOrchestrator>();
