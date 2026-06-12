@@ -1341,6 +1341,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             var flacWindows = BuildFlacRecognitionWindows(preprocessedPcm);
             if (flacWindows.Count == 0)
             {
+                logger.LogWarning(
+                    "FLAC encoding produced 0 windows for source {SourceId} chunk [{Start:HH:mm:ss}–{End:HH:mm:ss}]. Chunk dropped without SR.",
+                    sourceId, chunkStartedAt, chunkEndedAt);
                 pcmBuffer.ResetAfterWrite();
                 return;
             }
@@ -2441,6 +2444,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                             ? recognition.Text
                             : DisplayTextFor(recognition.Status);
 
+                        if (recognition.Status == RecognitionStatus.NoSpeech)
+                        {
+                            logger.LogDebug(
+                                "SR no_speech for source {SourceId} [{Start}–{End}].",
+                                request.SourceId,
+                                request.StartTime.ToString("HH:mm:ss"),
+                                request.EndTime.ToString("HH:mm:ss"));
+                        }
+
                         TranscriptionChunksProcessed.Add(1, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
                         TranscriptionWindowsProcessed.Add(request.FlacWindows.Count, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
                         if (recognition.Status == RecognitionStatus.RateLimited)
@@ -2839,10 +2851,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             await state.Lock.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
             try
             {
-                // Every chunk produces one JSON entry regardless of recognition outcome.
-                // Writing "no_speech" / "timeout" / "error" entries with empty text preserves
-                // the time coverage of the transcription file: a gap in the JSON always means
-                // the audio was never submitted, not that it was submitted and returned no speech.
+                // One chunk = one window = one JSON entry. No buffering or joining of several
+                // windows into a single entry: each recognized window is written as its own entry,
+                // with its own timestamps, so the output is consistent and nothing is held back
+                // waiting to fill a multi-window buffer.
+                if (string.IsNullOrWhiteSpace(windowEntry.Text))
+                {
+                    return;
+                }
+
                 var entry = windowEntry;
 
                 if (state.CachedItems is null)
