@@ -40,17 +40,23 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     private readonly OperationsWorkerOptions options;
     private readonly ILogger<InProcessFfmpegAudioCapturePlugin> logger;
     private readonly IOperationalMetrics operationalMetrics;
+    private readonly ICaptureAttemptObserver captureAttemptObserver;
+    private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
     private readonly ChunkTranscriptionPipeline chunkTranscriptionPipeline;
     private readonly ConcurrentDictionary<string, CaptureSession> sessions = new(StringComparer.Ordinal);
 
     public InProcessFfmpegAudioCapturePlugin(
         OperationsWorkerOptions options,
         ILogger<InProcessFfmpegAudioCapturePlugin> logger,
-        IOperationalMetrics operationalMetrics)
+        IOperationalMetrics operationalMetrics,
+        ICaptureAttemptObserver captureAttemptObserver,
+        IMonitoringArtifactRepository monitoringArtifactRepository)
     {
         this.options = options;
         this.logger = logger;
         this.operationalMetrics = operationalMetrics;
+        this.captureAttemptObserver = captureAttemptObserver;
+        this.monitoringArtifactRepository = monitoringArtifactRepository;
         chunkTranscriptionPipeline = new ChunkTranscriptionPipeline(logger);
         EnsureFfmpegInitialized();
     }
@@ -73,13 +79,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         // simultaneous capture sessions writing to different filenames for the same source.
         // Use GetOrAdd with a lazy sentinel to ensure Start is called at most once per sourceId.
         var session = sessions.GetOrAdd(source.SourceId, static (id, ctx) =>
-            CaptureSession.Start(ctx.source, ctx.options.AudioOutputRootPath, ctx.mediaDirectory, ctx.plan, ctx.options, ctx.logger, ctx.operationalMetrics, ctx.chunkTranscriptionPipeline),
-            (source, options, mediaDirectory, plan, logger, operationalMetrics, chunkTranscriptionPipeline));
+            CaptureSession.Start(ctx.source, ctx.options.AudioOutputRootPath, ctx.mediaDirectory, ctx.plan, ctx.options, ctx.logger, ctx.operationalMetrics, ctx.chunkTranscriptionPipeline, ctx.captureAttemptObserver, ctx.monitoringArtifactRepository),
+            (source, options, mediaDirectory, plan, logger, operationalMetrics, chunkTranscriptionPipeline, captureAttemptObserver, monitoringArtifactRepository));
 
         // If the existing session stopped (error or end-of-input), replace it atomically.
         if (!session.IsRunning && !session.CompletedByEndOfInput)
         {
-            var replacement = CaptureSession.Start(source, options.AudioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline);
+            var replacement = CaptureSession.Start(source, options.AudioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline, captureAttemptObserver, monitoringArtifactRepository);
             // Only replace if the stored value is still the stale one we just read.
             sessions.TryUpdate(source.SourceId, replacement, session);
             session = sessions[source.SourceId];
@@ -225,6 +231,25 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         return safeChars.Length == 0 ? "unknown" : new string(safeChars);
     }
 
+    // Static async helper — CaptureSession is an unsafe class and cannot contain methods
+    // that use await. Any async work that needs to be fired from the session is dispatched
+    // here (outside the unsafe context) via _ = EmitArtifactAsync(...).
+    private static async Task EmitArtifactAsync(
+        IMonitoringArtifactRepository repository,
+        MediaOpsCore.BuildingBlocks.Domain.MonitoringArtifact artifact,
+        ILogger logger,
+        string sourceId)
+    {
+        try
+        {
+            await repository.UpsertAsync(artifact, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to emit coverage artifact for source {SourceId}.", sourceId);
+        }
+    }
+
     private sealed unsafe class CaptureSession : IDisposable
     {
         private readonly TaskCompletionSource<AudioCaptureExecutionResult> startupCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -239,6 +264,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         private readonly ILogger logger;
         private readonly IOperationalMetrics operationalMetrics;
         private readonly ChunkTranscriptionPipeline chunkTranscriptionPipeline;
+        private readonly ICaptureAttemptObserver captureAttemptObserver;
+        private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
         private volatile string? activeOpusPath;
         private volatile bool completedByEndOfInput;
         private volatile bool isRunning;
@@ -256,7 +283,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             OperationsWorkerOptions options,
             ILogger logger,
             IOperationalMetrics operationalMetrics,
-            ChunkTranscriptionPipeline chunkTranscriptionPipeline)
+            ChunkTranscriptionPipeline chunkTranscriptionPipeline,
+            ICaptureAttemptObserver captureAttemptObserver,
+            IMonitoringArtifactRepository monitoringArtifactRepository)
         {
             this.source = source;
             this.audioOutputRootPath = audioOutputRootPath;
@@ -266,6 +295,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             this.logger = logger;
             this.operationalMetrics = operationalMetrics;
             this.chunkTranscriptionPipeline = chunkTranscriptionPipeline;
+            this.captureAttemptObserver = captureAttemptObserver;
+            this.monitoringArtifactRepository = monitoringArtifactRepository;
             sourceId = source.SourceId;
             isRunning = true;
             captureTask = Task.Run(RunAsync);
@@ -279,9 +310,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             OperationsWorkerOptions options,
             ILogger logger,
             IOperationalMetrics operationalMetrics,
-            ChunkTranscriptionPipeline chunkTranscriptionPipeline)
+            ChunkTranscriptionPipeline chunkTranscriptionPipeline,
+            ICaptureAttemptObserver captureAttemptObserver,
+            IMonitoringArtifactRepository monitoringArtifactRepository)
         {
-            return new CaptureSession(source, audioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline);
+            return new CaptureSession(source, audioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline, captureAttemptObserver, monitoringArtifactRepository);
         }
 
         public bool IsRunning => isRunning && !captureTask.IsCompleted;
@@ -363,11 +396,45 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
+        private void EmitWindowCoverageArtifact(DateTimeOffset windowStart, string? opusPath)
+        {
+            var payload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                source.Platform,
+                source.Media,
+                source.StreamUrl,
+                Succeeded = true,
+                OpusFilePath = opusPath ?? string.Empty,
+                CapturedSeconds = CapturedThisWindowSeconds,
+                SilenceFilledSeconds = SilenceFilledThisWindowSeconds
+            });
+            var artifact = new MediaOpsCore.BuildingBlocks.Domain.MonitoringArtifact(
+                id: $"capture-{sourceId}-{windowStart:yyyyMMddHHmmssfff}",
+                tenantId: source.TenantId,
+                source: sourceId,
+                kind: "capture",
+                payloadJson: payload,
+                capturedAtUtc: windowStart);
+            EmitArtifactFireAndForget(artifact);
+        }
+
+        // Fire-and-forget via the outer class static helper — async methods with await
+        // are not allowed inside an unsafe class in C#.
+        private void EmitArtifactFireAndForget(MediaOpsCore.BuildingBlocks.Domain.MonitoringArtifact artifact)
+        {
+            _ = InProcessFfmpegAudioCapturePlugin.EmitArtifactAsync(monitoringArtifactRepository, artifact, logger, sourceId);
+        }
+
         private void SetFailure(string message)
         {
             lastError = message;
             completedByEndOfInput = false;
             isRunning = false;
+            // Notify the observer directly — no heartbeat poll needed to detect the failure.
+            _ = captureAttemptObserver.ReportAsync(
+                source,
+                new AudioCaptureExecutionResult(false, activeOpusPath ?? string.Empty, message),
+                CancellationToken.None);
         }
 
         private Task RunAsync()
@@ -625,6 +692,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 var actualOutputPath = resumeTempPath ?? activeOpusPath;
                 outputContext = OpenOutputContext(actualOutputPath, encoderContext, ref outputStream);
                 startupCompletionSource.TrySetResult(new AudioCaptureExecutionResult(true, activeOpusPath));
+                // Clear any in-flight hot recovery flag — session started successfully.
+                _ = captureAttemptObserver.ReportAsync(
+                    source,
+                    new AudioCaptureExecutionResult(true, activeOpusPath ?? string.Empty),
+                    CancellationToken.None);
                 logger.LogInformation("Capture started for source {SourceId}. Reconnect={ReconnectEnabled}, RtspTcp={RtspPreferTcp}, SilenceChunking={SilenceChunkingEnabled}, OpusBitrateKbps={OpusBitrateKbps}.", sourceId, options.EnableDecoderReconnect, options.RtspPreferTcp, chunkingState is not null, options.DefaultOpusBitrateKbps);
                 logger.LogInformation("OPUS rotation interval for source {SourceId}: profile={ProfileRotationMinutes} min, effective={EffectiveRotationMinutes} min.", sourceId, plan.OpusRotationInterval.TotalMinutes, effectiveOpusRotationInterval.TotalMinutes);
 
@@ -821,11 +893,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                                 chunkingState?.ResetAfterFlush();
                             }
 
+                            // Emit coverage artifact for the window being closed before resetting counters.
+                            EmitWindowCoverageArtifact(currentOpusStartedAt, activeOpusPath);
                             RotateOutput(ref outputContext, ref outputStream, ref encoderContext, outputPacket, nextRotationAt, effectiveOpusRotationInterval, ref encoderSampleCursor, resumeTempPath, activeOpusPath);
                             resumeTempPath = null; // rotation consumed the resume, next file is clean
                             Interlocked.Exchange(ref silenceFilledThisWindowMs, 0);
                             Interlocked.Exchange(ref realCapturedSamplesThisWindow, 0); // reset for the new window
-                            currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
+                            currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath ?? string.Empty);
                             currentOpusStartedAt = nextRotationAt;
                             currentOpusSampleCursor = 0;
                             nextRotationAt = AlignWindow(currentOpusStartedAt, effectiveOpusRotationInterval).Add(effectiveOpusRotationInterval);
@@ -863,7 +937,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 // finalize any pending resume file so the partial audio is still appended.
                 if (resumeTempPath is not null)
                 {
-                    FinalizeResumeOutput(activeOpusPath, resumeTempPath);
+                    FinalizeResumeOutput(activeOpusPath ?? string.Empty, resumeTempPath);
                     resumeTempPath = null;
                 }
 

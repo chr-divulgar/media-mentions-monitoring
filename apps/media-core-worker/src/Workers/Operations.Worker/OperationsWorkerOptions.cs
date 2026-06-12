@@ -2,9 +2,9 @@
 
 public sealed class OperationsWorkerOptions
 {
-    public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(30);
-
     public TimeSpan DiscreteWorkerInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+    public TimeSpan SegmentationInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     public string PluginProfilesFilePath { get; set; } = "stage/plugin-profiles.json";
 

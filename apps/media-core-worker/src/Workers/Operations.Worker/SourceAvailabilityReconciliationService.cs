@@ -221,6 +221,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                 .PersistExclusionAsync(recovered.SourceId, false, cancellationToken)
                 .ConfigureAwait(false);
             recoveredIds.Add(source.SourceId);
+            _ = Task.Run(() => TriggerCaptureAsync(recovered), CancellationToken.None);
         }
 
         logger.LogInformation(

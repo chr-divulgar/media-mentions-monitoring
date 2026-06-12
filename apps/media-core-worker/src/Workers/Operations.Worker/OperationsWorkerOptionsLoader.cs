@@ -13,7 +13,7 @@ public static class OperationsWorkerOptionsLoader
     };
 
     private sealed record WorkerOptionsFileModel(
-        int? HeartbeatIntervalSeconds,
+        int? SegmentationIntervalSeconds,
         int? DiscreteWorkerIntervalSeconds,
         string? CaptureSourcesFilePath,
         string? PluginProfilesFilePath,
@@ -69,9 +69,9 @@ public static class OperationsWorkerOptionsLoader
             return options;
         }
 
-        if (model.HeartbeatIntervalSeconds.HasValue)
+        if (model.SegmentationIntervalSeconds.HasValue)
         {
-            options.HeartbeatInterval = TimeSpan.FromSeconds(model.HeartbeatIntervalSeconds.Value);
+            options.SegmentationInterval = TimeSpan.FromSeconds(model.SegmentationIntervalSeconds.Value);
         }
 
         if (model.DiscreteWorkerIntervalSeconds.HasValue)
