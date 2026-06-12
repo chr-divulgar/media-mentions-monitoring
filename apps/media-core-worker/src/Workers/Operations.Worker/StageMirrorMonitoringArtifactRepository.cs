@@ -185,10 +185,10 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
                     .Select(e =>
                     {
                         var silenceSec = (int)Math.Round(e.SilenceFilledSeconds, 0);
-                        // Cap captured seconds at the rotation window — prevents values > 3600
-                        // that could appear if a bucket accumulated heartbeats from multiple
-                        // hours due to timing edge cases.
-                        var capturedSec = (int)Math.Min(Math.Round(e.TotalSucceededSeconds, 0), RotationWindowSeconds);
+                        // Real captured audio = successful heartbeat time minus silence fills.
+                        // Silence is injected into the opus file but was not live-captured audio.
+                        var rawCaptured = Math.Round(e.TotalSucceededSeconds - e.SilenceFilledSeconds, 0);
+                        var capturedSec = (int)Math.Clamp(rawCaptured, 0, RotationWindowSeconds);
                         var coveragePct = Math.Round(capturedSec / RotationWindowSeconds * 100.0, 1);
 
                         return new
