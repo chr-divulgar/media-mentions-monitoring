@@ -12,6 +12,11 @@ public sealed class ContinuousIngestionOrchestrator : IContinuousIngestionOrches
     private readonly IIncrementalSegmentationUseCase incrementalSegmentationUseCase;
     private readonly IOperationalMetrics operationalMetrics;
 
+    private int lastAttempts = -1;
+    private int lastStarted = -1;
+    private int lastFailed = -1;
+    private int lastSegments = -1;
+
     public ContinuousIngestionOrchestrator(
         ILogger<ContinuousIngestionOrchestrator> logger,
         IContinuousCaptureUseCase continuousCaptureUseCase,
@@ -32,12 +37,25 @@ public sealed class ContinuousIngestionOrchestrator : IContinuousIngestionOrches
         var segmentationResult = await incrementalSegmentationUseCase.ExecuteAsync(cancellationToken).ConfigureAwait(false);
         operationalMetrics.RecordSegmentationRun(segmentationResult.SegmentsGenerated, segmentationResult.PipelineLagSeconds);
 
-        logger.LogInformation(
-            "Continuous ingestion cycle completed. capture_attempts={CaptureAttempts} capture_started={CaptureStarted} capture_not_started={CaptureNotStarted} segments_generated={SegmentsGenerated} pipeline_lag_seconds={PipelineLagSeconds}.",
-            captureResult.Attempts,
-            captureResult.Succeeded,
-            captureResult.Failed,
-            segmentationResult.SegmentsGenerated,
-            segmentationResult.PipelineLagSeconds);
+        var changed = captureResult.Attempts != lastAttempts
+            || captureResult.Succeeded != lastStarted
+            || captureResult.Failed != lastFailed
+            || segmentationResult.SegmentsGenerated != lastSegments;
+
+        if (changed)
+        {
+            logger.LogInformation(
+                "Continuous ingestion cycle completed. capture_attempts={CaptureAttempts} capture_started={CaptureStarted} capture_not_started={CaptureNotStarted} segments_generated={SegmentsGenerated} pipeline_lag_seconds={PipelineLagSeconds}.",
+                captureResult.Attempts,
+                captureResult.Succeeded,
+                captureResult.Failed,
+                segmentationResult.SegmentsGenerated,
+                segmentationResult.PipelineLagSeconds);
+
+            lastAttempts = captureResult.Attempts;
+            lastStarted = captureResult.Succeeded;
+            lastFailed = captureResult.Failed;
+            lastSegments = segmentationResult.SegmentsGenerated;
+        }
     }
 }
