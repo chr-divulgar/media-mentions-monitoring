@@ -2839,15 +2839,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             await state.Lock.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
             try
             {
-                // One chunk = one window = one JSON entry. No buffering or joining of several
-                // windows into a single entry: each recognized window is written as its own entry,
-                // with its own timestamps, so the output is consistent and nothing is held back
-                // waiting to fill a multi-window buffer.
-                if (string.IsNullOrWhiteSpace(windowEntry.Text))
-                {
-                    return;
-                }
-
+                // Every chunk produces one JSON entry regardless of recognition outcome.
+                // Writing "no_speech" / "timeout" / "error" entries with empty text preserves
+                // the time coverage of the transcription file: a gap in the JSON always means
+                // the audio was never submitted, not that it was submitted and returned no speech.
                 var entry = windowEntry;
 
                 if (state.CachedItems is null)
