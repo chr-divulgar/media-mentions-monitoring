@@ -67,5 +67,15 @@ public sealed class OperationsWorkerOptions
     public int StartupValidationTimeoutSeconds { get; set; } = 12;
 
     public int StartupDiscoveryRequestTimeoutSeconds { get; set; } = 10;
+
+    public string YtdlpBinDirectory { get; set; } = "bin";
+
+    public int YtdlpResolutionTimeoutSeconds { get; set; } = 60;
+
+    public string? YoutubeCookiesFilePath { get; set; }
+
+    public string YoutubeCookiesAlertFilePath { get; set; } = "stage/cookies/youtube-auth-required.flag";
+
+    public FirebaseCaptureSourceRepositoryOptions? FirebaseDatabase { get; set; }
 }
 

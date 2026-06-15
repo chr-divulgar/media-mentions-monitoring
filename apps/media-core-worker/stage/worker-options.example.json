@@ -1,15 +1,15 @@
 ﻿{
-  "heartbeatIntervalSeconds": 30,
+  "segmentationIntervalSeconds": 30,
   "discreteWorkerIntervalSeconds": 300,
   "captureSourcesFilePath": "stage/capture-sources.json",
   "pluginProfilesFilePath": "stage/plugin-profiles.json",
-  "continuousMediaAllowList": "radio,video",
+  "continuousMediaAllowList": "radio,television",
   "captureMaxDegreeOfParallelism": 64,
-  "enableCanaryMode": true,
-  "canaryPlatformPercent": 20,
+  "enableCanaryMode": false,
+  "canaryPlatformPercent": 100,
   "canaryPlatformMinPercent": 10,
   "canaryPlatformMaxPercent": 100,
-  "canaryPlatformAllowList": "caracol,youtube",
+  "canaryPlatformAllowList": null,
   "stageFilesystemRootPath": "stage-evidence",
   "audioOutputRootPath": "D:\\",
   "defaultFlacWindowDurationSeconds": 12,
@@ -20,12 +20,23 @@
   "decoderReconnectDelayMaxSeconds": 5,
   "rtspPreferTcp": true,
   "enableFlacSilenceChunking": true,
-  "flacSilenceMinChunkSeconds": 12,
-  "flacSilenceMaxChunkSeconds": 15,
-  "flacSilenceHoldMilliseconds": 300,
+  "flacSilenceMinChunkSeconds": 8,
+  "flacSilenceMaxChunkSeconds": 14,
+  "flacSilenceHoldMilliseconds": 250,
   "flacSilenceAnalysisWindowMilliseconds": 20,
   "flacSilenceAdaptiveThresholdMultiplier": 1.7,
   "flacSilenceNoiseFloorEmaAlpha": 0.08,
-  "flacSilenceHighPassCutoffHz": 120
+  "flacSilenceHighPassCutoffHz": 120,
+  "ytdlpBinDirectory": "bin",
+  "ytdlpResolutionTimeoutSeconds": 60,
+  "youtubeCookiesFilePath": "stage/cookies/youtube-cookies.txt",
+  "youtubeCookiesAlertFilePath": "stage/cookies/youtube-auth-required.flag",
+
+  "firebaseDatabase": {
+    "baseUrl": "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+    "platformsPath": "platforms",
+    "authToken": "YOUR_FIREBASE_DATABASE_SECRET_OR_AUTH_TOKEN",
+    "requestTimeoutSeconds": 15
+  }
 }
 

@@ -45,7 +45,18 @@ public static class OperationsWorkerOptionsLoader
         bool? EnableStartupValidation,
         bool? EnableStartupDiscoveryOnFailedOnly,
         int? StartupValidationTimeoutSeconds,
-        int? StartupDiscoveryRequestTimeoutSeconds);
+        int? StartupDiscoveryRequestTimeoutSeconds,
+        string? YtdlpBinDirectory,
+        int? YtdlpResolutionTimeoutSeconds,
+        string? YoutubeCookiesFilePath,
+        string? YoutubeCookiesAlertFilePath,
+        FirebaseDatabaseLoaderSection? FirebaseDatabase);
+
+    private sealed record FirebaseDatabaseLoaderSection(
+        string? BaseUrl,
+        string? PlatformsPath,
+        string? AuthToken,
+        int? RequestTimeoutSeconds);
 
     public static OperationsWorkerOptions Load(string? configPath = null)
     {
@@ -232,6 +243,39 @@ public static class OperationsWorkerOptionsLoader
         if (model.StartupDiscoveryRequestTimeoutSeconds.HasValue)
         {
             options.StartupDiscoveryRequestTimeoutSeconds = model.StartupDiscoveryRequestTimeoutSeconds.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.YtdlpBinDirectory))
+        {
+            options.YtdlpBinDirectory = model.YtdlpBinDirectory;
+        }
+
+        if (model.YtdlpResolutionTimeoutSeconds.HasValue)
+        {
+            options.YtdlpResolutionTimeoutSeconds = model.YtdlpResolutionTimeoutSeconds.Value;
+        }
+
+        if (model.YoutubeCookiesFilePath is not null)
+        {
+            options.YoutubeCookiesFilePath = string.IsNullOrWhiteSpace(model.YoutubeCookiesFilePath)
+                ? null
+                : model.YoutubeCookiesFilePath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.YoutubeCookiesAlertFilePath))
+        {
+            options.YoutubeCookiesAlertFilePath = model.YoutubeCookiesAlertFilePath;
+        }
+
+        if (model.FirebaseDatabase is { } fb && !string.IsNullOrWhiteSpace(fb.BaseUrl))
+        {
+            options.FirebaseDatabase = new FirebaseCaptureSourceRepositoryOptions
+            {
+                BaseUrl = fb.BaseUrl.Trim(),
+                PlatformsPath = string.IsNullOrWhiteSpace(fb.PlatformsPath) ? "platforms" : fb.PlatformsPath.Trim('/'),
+                AuthToken = string.IsNullOrWhiteSpace(fb.AuthToken) ? null : fb.AuthToken,
+                RequestTimeoutSeconds = fb.RequestTimeoutSeconds ?? 15
+            };
         }
 
         return options;
