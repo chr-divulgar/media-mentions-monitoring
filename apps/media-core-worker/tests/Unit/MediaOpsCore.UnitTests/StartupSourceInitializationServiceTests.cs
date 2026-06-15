@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
 using MediaOpsCore.Workers.Operations;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -45,7 +46,7 @@ public sealed class StartupSourceInitializationServiceTests
                 EnableStartupDiscoveryOnFailedOnly = true
             };
 
-            var provider = new StaticCaptureSourceProvider(options);
+            var provider = new StaticCaptureSourceProvider(options, new JsonFileCaptureSourceRepository(options));
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
             {
                 ["https://ok.example.com/live.aac"] = true,
@@ -58,6 +59,8 @@ public sealed class StartupSourceInitializationServiceTests
                 provider,
                 validator,
                 discovery,
+                new NoOpLiveStreamUrlResolver(),
+                new NoOpCookiesAlertService(),
                 NullLogger<StartupSourceInitializationService>.Instance);
 
             await sut.InitializeAsync();
@@ -114,7 +117,7 @@ public sealed class StartupSourceInitializationServiceTests
                 EnableStartupDiscoveryOnFailedOnly = true
             };
 
-            var provider = new StaticCaptureSourceProvider(options);
+            var provider = new StaticCaptureSourceProvider(options, new JsonFileCaptureSourceRepository(options));
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
             {
                 ["https://ok.example.com/live.aac"] = true,
@@ -133,6 +136,8 @@ public sealed class StartupSourceInitializationServiceTests
                 provider,
                 validator,
                 discovery,
+                new NoOpLiveStreamUrlResolver(),
+                new NoOpCookiesAlertService(),
                 NullLogger<StartupSourceInitializationService>.Instance);
 
             await sut.InitializeAsync();
@@ -191,7 +196,7 @@ public sealed class StartupSourceInitializationServiceTests
                 EnableStartupDiscoveryOnFailedOnly = true
             };
 
-            var provider = new StaticCaptureSourceProvider(options);
+            var provider = new StaticCaptureSourceProvider(options, new JsonFileCaptureSourceRepository(options));
             var discoveredTokenizedUrl = "https://stream-177.zeno.fm/t8sz23cfhfhvv?zt=eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4OTM0NTYwMDB9.signature";
 
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
@@ -206,6 +211,8 @@ public sealed class StartupSourceInitializationServiceTests
                 provider,
                 validator,
                 discovery,
+                new NoOpLiveStreamUrlResolver(),
+                new NoOpCookiesAlertService(),
                 NullLogger<StartupSourceInitializationService>.Instance);
 
             await sut.InitializeAsync();
@@ -256,7 +263,7 @@ public sealed class StartupSourceInitializationServiceTests
                 EnableStartupDiscoveryOnFailedOnly = true
             };
 
-            var provider = new StaticCaptureSourceProvider(options);
+            var provider = new StaticCaptureSourceProvider(options, new JsonFileCaptureSourceRepository(options));
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
             {
                 ["https://bad.example.com/live.aac"] = false,
@@ -278,6 +285,8 @@ public sealed class StartupSourceInitializationServiceTests
                 provider,
                 validator,
                 discovery,
+                new NoOpLiveStreamUrlResolver(),
+                new NoOpCookiesAlertService(),
                 NullLogger<StartupSourceInitializationService>.Instance);
 
             await sut.InitializeAsync();
@@ -323,6 +332,23 @@ public sealed class StartupSourceInitializationServiceTests
             var succeeded = outcomes.TryGetValue(streamUrl, out var value) && value;
             return Task.FromResult(new StartupStreamValidationResult(succeeded, succeeded ? null : "failed"));
         }
+    }
+
+    private sealed class NoOpLiveStreamUrlResolver : ILiveStreamUrlResolver
+    {
+        public bool CanResolve(CaptureSource source) => false;
+
+        public Task<LiveStreamResolutionResult> TryResolveStreamUrlAsync(
+            CaptureSource source, CancellationToken cancellationToken = default)
+            => Task.FromResult(new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.Unavailable));
+    }
+
+    private sealed class NoOpCookiesAlertService : IYouTubeCookiesAlertService
+    {
+        public string AlertFilePath => Path.Combine(Path.GetTempPath(), "noop-alert.flag");
+        public bool AlertExists() => false;
+        public void WriteAlert(string sourceId, string errorMessage) { }
+        public void ClearAlert() { }
     }
 
     private sealed class FakeDiscovery : IStartupSourceDiscoveryService

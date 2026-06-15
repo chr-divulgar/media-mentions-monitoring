@@ -78,7 +78,7 @@ public sealed class ArchitectureBoundariesTests
     public void Worker_should_not_reference_infrastructure_assemblies()
     {
         AssertNoReferences(
-            typeof(MediaOpsCore.Workers.Operations.OperationsWorker).Assembly,
+            typeof(MediaOpsCore.Workers.Operations.OperationsWorkerOptions).Assembly,
             "MediaOpsCore.BuildingBlocks.Infrastructure",
             "MediaOpsCore.Modules.Capture.Infrastructure",
             "MediaOpsCore.Modules.Segmentation.Infrastructure",

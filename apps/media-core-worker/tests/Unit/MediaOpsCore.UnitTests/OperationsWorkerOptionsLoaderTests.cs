@@ -10,7 +10,6 @@ public sealed class OperationsWorkerOptionsLoaderTests
     {
         var options = OperationsWorkerOptionsLoader.Load(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json"));
 
-        Assert.Equal(TimeSpan.FromSeconds(30), options.HeartbeatInterval);
         Assert.Equal("stage/capture-sources.json", options.CaptureSourcesFilePath);
         Assert.Equal("stage/plugin-profiles.json", options.PluginProfilesFilePath);
         Assert.Equal("radio,video", options.ContinuousMediaAllowList);
@@ -66,7 +65,6 @@ public sealed class OperationsWorkerOptionsLoaderTests
 
             var options = OperationsWorkerOptionsLoader.Load(tempPath);
 
-            Assert.Equal(TimeSpan.FromSeconds(12), options.HeartbeatInterval);
             Assert.Equal(TimeSpan.FromSeconds(45), options.DiscreteWorkerInterval);
             Assert.Equal("radio", options.ContinuousMediaAllowList);
             Assert.Equal(12, options.CaptureMaxDegreeOfParallelism);
@@ -102,6 +100,81 @@ public sealed class OperationsWorkerOptionsLoaderTests
             {
                 File.Delete(tempPath);
             }
+        }
+    }
+
+    [Fact]
+    public void Load_should_parse_firebaseDatabase_section_when_present()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(tempPath, """
+            {
+              "firebaseDatabase": {
+                "baseUrl": "https://my-project-default-rtdb.firebaseio.com",
+                "platformsPath": "platforms",
+                "authToken": "supersecrettoken",
+                "requestTimeoutSeconds": 20
+              }
+            }
+            """);
+
+            var options = OperationsWorkerOptionsLoader.Load(tempPath);
+
+            Assert.NotNull(options.FirebaseDatabase);
+            Assert.True(options.FirebaseDatabase!.IsEnabled);
+            Assert.Equal("https://my-project-default-rtdb.firebaseio.com", options.FirebaseDatabase.BaseUrl);
+            Assert.Equal("platforms", options.FirebaseDatabase.PlatformsPath);
+            Assert.Equal("supersecrettoken", options.FirebaseDatabase.AuthToken);
+            Assert.Equal(20, options.FirebaseDatabase.RequestTimeoutSeconds);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
+    public void Load_should_leave_FirebaseDatabase_null_when_section_is_absent()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(tempPath, """{ "continuousMediaAllowList": "radio" }""");
+
+            var options = OperationsWorkerOptionsLoader.Load(tempPath);
+
+            Assert.Null(options.FirebaseDatabase);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
+    public void Load_should_leave_FirebaseDatabase_null_when_baseUrl_is_empty()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(tempPath, """
+            {
+              "firebaseDatabase": {
+                "baseUrl": "",
+                "authToken": "token"
+              }
+            }
+            """);
+
+            var options = OperationsWorkerOptionsLoader.Load(tempPath);
+
+            Assert.Null(options.FirebaseDatabase);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
         }
     }
 }

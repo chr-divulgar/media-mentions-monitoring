@@ -23,12 +23,13 @@ public sealed class StaticCaptureSourceProviderCanaryTests
 
             await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
 
-            var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions
+            var opts = new OperationsWorkerOptions
             {
                 EnableCanaryMode = false,
                 ContinuousMediaAllowList = "radio,video",
                 CaptureSourcesFilePath = tempFilePath
-            });
+            };
+            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
 
             var sources = await provider.ListActiveSourcesAsync();
 
@@ -63,7 +64,7 @@ public sealed class StaticCaptureSourceProviderCanaryTests
 
             await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
 
-            var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions
+            var opts = new OperationsWorkerOptions
             {
                 EnableCanaryMode = true,
                 CanaryPlatformMinPercent = 10,
@@ -71,7 +72,8 @@ public sealed class StaticCaptureSourceProviderCanaryTests
                 CanaryPlatformPercent = 20,
                 ContinuousMediaAllowList = "radio,video",
                 CaptureSourcesFilePath = tempFilePath
-            });
+            };
+            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
 
             var sources = await provider.ListActiveSourcesAsync();
 
@@ -102,7 +104,7 @@ public sealed class StaticCaptureSourceProviderCanaryTests
 
             await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
 
-            var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions
+            var opts = new OperationsWorkerOptions
             {
                 EnableCanaryMode = true,
                 CanaryPlatformMinPercent = 10,
@@ -111,7 +113,8 @@ public sealed class StaticCaptureSourceProviderCanaryTests
                 CanaryPlatformAllowList = "rcn",
                 ContinuousMediaAllowList = "radio,video",
                 CaptureSourcesFilePath = tempFilePath
-            });
+            };
+            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
 
             var sources = await provider.ListActiveSourcesAsync();
 
@@ -148,12 +151,13 @@ public sealed class StaticCaptureSourceProviderCanaryTests
 
             await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
 
-            var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions
+            var opts = new OperationsWorkerOptions
             {
                 EnableCanaryMode = false,
                 ContinuousMediaAllowList = "radio",
                 CaptureSourcesFilePath = tempFilePath
-            });
+            };
+            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
 
             var sources = await provider.ListConfiguredSourcesAsync();
 
@@ -189,11 +193,12 @@ public sealed class StaticCaptureSourceProviderCanaryTests
 
             await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(payload));
 
-            var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions
+            var opts = new OperationsWorkerOptions
             {
                 EnableCanaryMode = false,
                 CaptureSourcesFilePath = tempFilePath
-            });
+            };
+            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
 
             var sources = await provider.ListConfiguredSourcesAsync();
 

@@ -23,18 +23,17 @@ public sealed class ContinuousCaptureUseCaseTests
         var repository = new InMemoryMonitoringArtifactRepository();
         try
         {
+            var opts = new OperationsWorkerOptions
+            {
+                CaptureSourcesFilePath = tempFilePath,
+                EnableCanaryMode = false,
+                ContinuousMediaAllowList = ""
+            };
             var useCase = new ContinuousCaptureUseCase(
-                new StaticCaptureSourceProvider(new OperationsWorkerOptions
-                {
-                    CaptureSourcesFilePath = tempFilePath,
-                    EnableCanaryMode = false,
-                    ContinuousMediaAllowList = ""
-                }),
+                new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts)),
                 new RadioOnlyPluginResolver(),
                 new SuccessfulAudioCapturePlugin(),
-                repository,
-                1,
-                NullCaptureAttemptObserver.Instance);
+                1);
 
             var result = await useCase.ExecuteAsync();
             var artifacts = await repository.ListByTenantAsync("global-ingestion");
@@ -65,16 +64,12 @@ public sealed class ContinuousCaptureUseCaseTests
         var repository = new InMemoryMonitoringArtifactRepository();
         try
         {
+            var opts = new OperationsWorkerOptions { CaptureSourcesFilePath = tempFilePath };
             var useCase = new ContinuousCaptureUseCase(
-                new StaticCaptureSourceProvider(new OperationsWorkerOptions
-                {
-                    CaptureSourcesFilePath = tempFilePath
-                }),
+                new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts)),
                 new StaticPluginResolver(),
                 new SuccessfulAudioCapturePlugin(),
-                repository,
-                1,
-                NullCaptureAttemptObserver.Instance);
+                1);
 
             var result = await useCase.ExecuteAsync();
             var artifacts = await repository.ListByTenantAsync("global-ingestion");
@@ -110,19 +105,18 @@ public sealed class ContinuousCaptureUseCaseTests
 
         try
         {
+            var opts2 = new OperationsWorkerOptions
+            {
+                CaptureSourcesFilePath = tempFilePath,
+                EnableCanaryMode = false,
+                ContinuousMediaAllowList = "radio",
+                CaptureMaxDegreeOfParallelism = 2
+            };
             var useCase = new ContinuousCaptureUseCase(
-                new StaticCaptureSourceProvider(new OperationsWorkerOptions
-                {
-                    CaptureSourcesFilePath = tempFilePath,
-                    EnableCanaryMode = false,
-                    ContinuousMediaAllowList = "radio",
-                    CaptureMaxDegreeOfParallelism = 2
-                }),
+                new StaticCaptureSourceProvider(opts2, new JsonFileCaptureSourceRepository(opts2)),
                 new StaticPluginResolver(),
                 gate,
-                repository,
-                2,
-                NullCaptureAttemptObserver.Instance);
+                2);
 
             var execution = useCase.ExecuteAsync();
 
