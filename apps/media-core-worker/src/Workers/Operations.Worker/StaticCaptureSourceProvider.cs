@@ -7,21 +7,17 @@ namespace MediaOpsCore.Workers.Operations;
 public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 {
     private readonly OperationsWorkerOptions options;
-    private const string GlobalIngestionScopeId = "global-ingestion";
+    private readonly ICaptureSourceRepository sourceRepository;
     private readonly object syncRoot = new();
     private IReadOnlyList<CaptureSource>? resolvedSources;
 
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
-
+    // Used only by the Persist* methods that write runtime state back to the local JSON file.
     private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl, string? PrimaryUrl, string? Country, IReadOnlyList<string>? FallbackStreamUrls = null, bool? Excluded = null);
 
-    public StaticCaptureSourceProvider(OperationsWorkerOptions options)
+    public StaticCaptureSourceProvider(OperationsWorkerOptions options, ICaptureSourceRepository sourceRepository)
     {
-        this.options = options;
+        this.options = options ?? throw new ArgumentNullException(nameof(options));
+        this.sourceRepository = sourceRepository ?? throw new ArgumentNullException(nameof(sourceRepository));
     }
 
     public Task<IReadOnlyList<CaptureSource>> ListActiveSourcesAsync(CancellationToken cancellationToken = default)
@@ -35,7 +31,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 
     public Task<IReadOnlyList<CaptureSource>> ListConfiguredSourcesAsync(CancellationToken cancellationToken = default)
     {
-        return Task.FromResult<IReadOnlyList<CaptureSource>>(LoadSources());
+        return sourceRepository.ListAllAsync(cancellationToken);
     }
 
     public void SetResolvedSources(IReadOnlyList<CaptureSource> sources)
@@ -54,7 +50,11 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
             {
                 // Excluded sources are loaded into configuredSources (visible for reconciliation)
                 // but must not start capturing — skip them in the initial resolved set.
-                resolvedSources = LoadSources().Where(s => !s.IsExcluded).ToArray();
+                resolvedSources = sourceRepository
+                    .ListAllAsync()
+                    .GetAwaiter().GetResult()
+                    .Where(s => !s.IsExcluded)
+                    .ToArray();
             }
 
             return resolvedSources.ToArray();
@@ -65,7 +65,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
     {
         lock (syncRoot)
         {
-            var current = (resolvedSources ?? LoadSources()).ToList();
+            var current = (resolvedSources ?? sourceRepository.ListAllAsync().GetAwaiter().GetResult()).ToList();
             var index = current.FindIndex(item => string.Equals(item.SourceId, source.SourceId, StringComparison.OrdinalIgnoreCase));
 
             if (index >= 0)
@@ -101,7 +101,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 
         lock (syncRoot)
         {
-            var current = (resolvedSources ?? LoadSources()).ToList();
+            var current = (resolvedSources ?? sourceRepository.ListAllAsync().GetAwaiter().GetResult()).ToList();
             var removed = current.RemoveAll(item => string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
             if (removed == 0)
             {
@@ -121,7 +121,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         }
 
         var json = File.ReadAllText(options.CaptureSourcesFilePath);
-        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
+        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, JsonFileCaptureSourceRepository.SerializerOptions);
         if (items is null || items.Count == 0)
         {
             return Task.FromResult(false);
@@ -158,7 +158,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         }
 
         var json = File.ReadAllText(options.CaptureSourcesFilePath);
-        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
+        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, JsonFileCaptureSourceRepository.SerializerOptions);
         if (items is null || items.Count == 0)
         {
             return Task.FromResult(false);
@@ -201,7 +201,7 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         }
 
         var json = File.ReadAllText(options.CaptureSourcesFilePath);
-        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
+        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, JsonFileCaptureSourceRepository.SerializerOptions);
         if (items is null || items.Count == 0)
         {
             return Task.FromResult(false);
@@ -242,39 +242,6 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 
         return sources
             .Where(source => allowList.Contains(source.Media))
-            .ToArray();
-    }
-
-    private IReadOnlyList<CaptureSource> LoadSources()
-    {
-        if (string.IsNullOrWhiteSpace(options.CaptureSourcesFilePath))
-        {
-            throw new InvalidOperationException("CaptureSourcesFilePath is required.");
-        }
-
-        if (!File.Exists(options.CaptureSourcesFilePath))
-        {
-            throw new FileNotFoundException("Capture sources file not found.", options.CaptureSourcesFilePath);
-        }
-
-        var json = File.ReadAllText(options.CaptureSourcesFilePath);
-        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
-        if (items is null || items.Count == 0)
-        {
-            throw new InvalidOperationException("Capture sources file is empty or invalid.");
-        }
-
-        return items
-            .Select(item => new CaptureSource(
-                item.SourceId,
-                GlobalIngestionScopeId,
-                item.Platform,
-                item.Media,
-                item.StreamUrl,
-                item.PrimaryUrl,
-                item.Country,
-                fallbackStreamUrls: item.FallbackStreamUrls,
-                isExcluded: item.Excluded ?? false))
             .ToArray();
     }
 
