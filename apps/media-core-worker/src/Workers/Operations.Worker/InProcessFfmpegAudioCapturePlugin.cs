@@ -481,9 +481,17 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                                    source.StreamUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
                 var isRtspStream = source.StreamUrl.StartsWith("rtsp://", StringComparison.OrdinalIgnoreCase);
 
+                // HLS manifests (m3u8) require downloading segments before FFmpeg can determine codec info —
+                // 1s analyzeduration is too short and blocks avformat_find_stream_info for 10-30s.
+                // Direct audio streams (AAC, WebM, MP3) are probed fast with 1s.
+                var isHlsStream = isHttpStream &&
+                    (source.StreamUrl.Contains(".m3u8", StringComparison.OrdinalIgnoreCase) ||
+                     source.StreamUrl.Contains("/hls_playlist/", StringComparison.OrdinalIgnoreCase) ||
+                     source.StreamUrl.Contains("/manifest/", StringComparison.OrdinalIgnoreCase));
+
                 // HTTP/HTTPS streams need gentler probing; RTSP/local can be aggressive
-                ffmpeg.av_dict_set(&inputOptions, "probesize", isHttpStream ? "131072" : "32768", 0);
-                ffmpeg.av_dict_set(&inputOptions, "analyzeduration", isHttpStream ? "1000000" : "0", 0);
+                ffmpeg.av_dict_set(&inputOptions, "probesize", isHttpStream ? "524288" : "32768", 0);
+                ffmpeg.av_dict_set(&inputOptions, "analyzeduration", isHlsStream ? "10000000" : (isHttpStream ? "1000000" : "0"), 0);
 
                 if (isHttpStream)
                 {
@@ -497,7 +505,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     ffmpeg.av_dict_set(&inputOptions, "fflags", "nobuffer", 0);
                 }
 
-                ffmpeg.av_dict_set(&inputOptions, "stimeout", "5000000", 0);
+                // HLS requires per-segment HTTP requests; 5s is too tight. Use 15s for HLS.
+                ffmpeg.av_dict_set(&inputOptions, "stimeout", isHlsStream ? "15000000" : "5000000", 0);
 
                 if (options.EnableDecoderReconnect)
                 {
@@ -522,8 +531,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     ffmpeg.av_dict_free(&inputOptions);
 
                     // Rebuild baseline options and retry once with browser-like HTTP headers.
-                    ffmpeg.av_dict_set(&inputOptions, "probesize", "131072", 0);
-                    ffmpeg.av_dict_set(&inputOptions, "analyzeduration", "1000000", 0);
+                    ffmpeg.av_dict_set(&inputOptions, "probesize", "524288", 0);
+                    ffmpeg.av_dict_set(&inputOptions, "analyzeduration", isHlsStream ? "10000000" : "1000000", 0);
                     ffmpeg.av_dict_set(&inputOptions, "stimeout", "5000000", 0);
                     ffmpeg.av_dict_set(&inputOptions, "live_start_index", "-1", 0);
                     ffmpeg.av_dict_set(&inputOptions, "fflags", "nobuffer+discardcorrupt", 0);
@@ -549,16 +558,14 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 openResult.ThrowIfError("avformat_open_input");
                 inputContext = inputContextPtr;
 
-                // Pass the same live-edge options to find_stream_info so the format probe
-                // does not buffer past audio before returning stream metadata.
-                AVDictionary* probeOptions = null;
-                if (isHttpStream)
-                {
-                    ffmpeg.av_dict_set(&probeOptions, "live_start_index", "-1", 0);
-                    ffmpeg.av_dict_set(&probeOptions, "fflags", "nobuffer+discardcorrupt", 0);
-                }
-                ffmpeg.avformat_find_stream_info(inputContext, isHttpStream ? &probeOptions : null).ThrowIfError("avformat_find_stream_info");
-                ffmpeg.av_dict_free(&probeOptions);
+                // avformat_find_stream_info expects an ARRAY of AVDictionary* — one entry per
+                // stream in the input. Passing a single dictionary works by accident for
+                // single-stream radio inputs, but multi-stream inputs (YouTube HLS carries
+                // video + audio) make FFmpeg index past the single element and crash the
+                // process with an access violation (0xC0000005). Probe limits and live-edge
+                // options are already applied via the avformat_open_input dictionary above,
+                // which configures the same fields on the format context.
+                ffmpeg.avformat_find_stream_info(inputContext, null).ThrowIfError("avformat_find_stream_info");
 
                 AVCodec* decoder = null;
                 var audioStreamIndex = ffmpeg.av_find_best_stream(inputContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, &decoder, 0);
