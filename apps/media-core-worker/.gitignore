@@ -4,3 +4,4 @@ obj/
 .vs/
 stage-evidence/
 stage/cookies/
+src/Workers/Operations.Worker/native/win-x64/*.dll
