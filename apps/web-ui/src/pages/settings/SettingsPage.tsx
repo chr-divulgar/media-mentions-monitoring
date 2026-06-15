@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import {
   Button,
   Table,
@@ -639,7 +639,7 @@ const PlatformModal: React.FC<{
         </Row>
 
         <Divider orientation="left" style={{ fontSize: 12, margin: "12px 0 8px" }}>
-          Configuraci\u00f3n de captura
+          Configuración de captura
         </Divider>
         <Row gutter={12}>
           <Col span={12}>
@@ -648,7 +648,7 @@ const PlatformModal: React.FC<{
             </Form.Item>
           </Col>
           <Col span={12}>
-            <Form.Item name="country" label="Pa\u00eds">
+            <Form.Item name="country" label="País">
               <Input placeholder="ej. Colombia" />
             </Form.Item>
           </Col>
