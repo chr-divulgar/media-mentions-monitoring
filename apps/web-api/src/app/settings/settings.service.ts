@@ -93,6 +93,11 @@ interface PlatformDoc {
   slots: SlotDto[];
   audience?: number;
   rate?: number;
+  sourceId?: string;
+  streamUrl?: string;
+  primaryUrl?: string;
+  country?: string;
+  fallbackStreamUrls?: string[];
 }
 
 @Injectable()
@@ -129,6 +134,13 @@ export class SettingsService {
       slots,
       ...(dto.audience == null ? {} : { audience: Number(dto.audience) }),
       ...(dto.rate == null ? {} : { rate: Number(dto.rate) }),
+      ...(dto.sourceId ? { sourceId: dto.sourceId } : {}),
+      ...(dto.streamUrl ? { streamUrl: dto.streamUrl } : {}),
+      ...(dto.primaryUrl ? { primaryUrl: dto.primaryUrl } : {}),
+      ...(dto.country ? { country: dto.country } : {}),
+      ...(dto.fallbackStreamUrls?.length
+        ? { fallbackStreamUrls: dto.fallbackStreamUrls }
+        : {}),
     };
     const ref = await this.db.collection(PLATFORMS_COLLECTION).add(data);
     return { id: ref.id, ...data };
@@ -150,6 +162,16 @@ export class SettingsService {
       slots: dto.slots ?? existing.slots,
       audience: dto.audience == null ? existing.audience : Number(dto.audience),
       rate: dto.rate == null ? existing.rate : Number(dto.rate),
+      sourceId: dto.sourceId !== undefined ? dto.sourceId : existing.sourceId,
+      streamUrl:
+        dto.streamUrl !== undefined ? dto.streamUrl : existing.streamUrl,
+      primaryUrl:
+        dto.primaryUrl !== undefined ? dto.primaryUrl : existing.primaryUrl,
+      country: dto.country !== undefined ? dto.country : existing.country,
+      fallbackStreamUrls:
+        dto.fallbackStreamUrls !== undefined
+          ? dto.fallbackStreamUrls
+          : existing.fallbackStreamUrls,
     };
     await ref.update(updated);
     return { id: dto.id, ...updated };

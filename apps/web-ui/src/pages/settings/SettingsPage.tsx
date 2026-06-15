@@ -454,6 +454,11 @@ const PlatformModal: React.FC<{
         slots: initial?.slots ?? generateDefaultSlots(""),
         audience: initial?.audience ?? 5000,
         rate: initial?.rate ?? 105000,
+        sourceId: initial?.sourceId ?? "",
+        streamUrl: initial?.streamUrl ?? "",
+        primaryUrl: initial?.primaryUrl ?? "",
+        country: initial?.country ?? "",
+        fallbackStreamUrls: initial?.fallbackStreamUrls ?? [],
       });
     }
   }, [open, initial, form, mediaTypes, defaultMedia]);
@@ -482,6 +487,16 @@ const PlatformModal: React.FC<{
     const currentIsAudioVisual = ["radio", "tv", "television"].includes(
       currentMedia.toLowerCase(),
     );
+
+    const captureFields = {
+      sourceId: values.sourceId?.trim() || undefined,
+      streamUrl: values.streamUrl?.trim() || undefined,
+      primaryUrl: values.primaryUrl?.trim() || undefined,
+      country: values.country?.trim() || undefined,
+      fallbackStreamUrls: (values.fallbackStreamUrls as string[] | undefined)
+        ?.map((u: string) => u?.trim())
+        .filter(Boolean),
+    };
 
     if (currentIsAudioVisual) {
       // Normalize slots: ensure numeric fields are numbers and all fields present
@@ -518,6 +533,7 @@ const PlatformModal: React.FC<{
         zone: values.zone ?? "Nacional",
         city: values.city ?? "Nacional",
         slots,
+        ...captureFields,
       });
     } else {
       onSave({
@@ -536,6 +552,7 @@ const PlatformModal: React.FC<{
           values.rate !== undefined && values.rate !== null
             ? Number(values.rate)
             : 105000,
+        ...captureFields,
       });
     }
   };
@@ -571,7 +588,7 @@ const PlatformModal: React.FC<{
             </Form.Item>
           </Col>
         </Row>
-        <Form.Item name="url" label="URL Stream">
+        <Form.Item name="url" label="URL Web">
           <Input />
         </Form.Item>
         <Row gutter={12}>
@@ -620,6 +637,53 @@ const PlatformModal: React.FC<{
             </Form.Item>
           </Col>
         </Row>
+
+        <Divider orientation="left" style={{ fontSize: 12, margin: "12px 0 8px" }}>
+          Configuraci\u00f3n de captura
+        </Divider>
+        <Row gutter={12}>
+          <Col span={12}>
+            <Form.Item name="sourceId" label="Source ID">
+              <Input placeholder="ej. caracol_bogota" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="country" label="Pa\u00eds">
+              <Input placeholder="ej. Colombia" />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Form.Item name="streamUrl" label="Stream URL">
+          <Input placeholder="https://..." />
+        </Form.Item>
+        <Form.Item name="primaryUrl" label="Primary URL (descubrimiento)">
+          <Input placeholder="https://..." />
+        </Form.Item>
+        <Form.Item label="Fallback Stream URLs">
+          <Form.List name="fallbackStreamUrls">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map(({ key, name }) => (
+                  <Space key={key} style={{ display: "flex", marginBottom: 4 }} align="baseline">
+                    <Form.Item name={name} noStyle rules={[{ required: true, message: "Ingresa la URL" }]}>
+                      <Input placeholder="https://..." style={{ width: 420 }} />
+                    </Form.Item>
+                    <MinusCircleOutlined onClick={() => remove(name)} style={{ color: "#ff4d4f" }} />
+                  </Space>
+                ))}
+                <Button
+                  type="dashed"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={() => add("")}
+                >
+                  Agregar URL de respaldo
+                </Button>
+              </>
+            )}
+          </Form.List>
+        </Form.Item>
+
         {isAudioVisual ? (
           <>
             <Alert

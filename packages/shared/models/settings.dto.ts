@@ -26,6 +26,16 @@ export class PlatformDto {
   readonly audience?: number;
   /** Tarifa general (solo para medios no audiovisuales) */
   readonly rate?: number;
+  /** Capture worker: unique identifier for the capture source */
+  readonly sourceId?: string;
+  /** Capture worker: direct audio/video stream URL */
+  readonly streamUrl?: string;
+  /** Capture worker: primary page URL used for stream discovery */
+  readonly primaryUrl?: string;
+  /** Country where the source is located */
+  readonly country?: string;
+  /** Capture worker: fallback stream URLs tried when streamUrl fails */
+  readonly fallbackStreamUrls?: string[];
 }
 
 export interface PlatformResponseDto {
@@ -38,4 +48,9 @@ export interface PlatformResponseDto {
   slots: SlotDto[];
   audience?: number;
   rate?: number;
+  sourceId?: string;
+  streamUrl?: string;
+  primaryUrl?: string;
+  country?: string;
+  fallbackStreamUrls?: string[];
 }
