@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -16,7 +17,9 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     private readonly StaticCaptureSourceProvider captureSourceProvider;
     private readonly IStartupStreamValidator streamValidator;
     private readonly IIngestionPluginResolver pluginResolver;
-    private readonly IAudioCapturePlugin audioCapturePlugin;
+    private readonly IServiceProvider serviceProvider;
+    private readonly ILiveStreamUrlResolver liveStreamUrlResolver;
+    private readonly IYouTubeCookiesAlertService cookiesAlertService;
     private readonly ILogger<SourceAvailabilityReconciliationService> logger;
 
     private readonly ConcurrentDictionary<string, byte> inFlightHotRecovery = new(StringComparer.OrdinalIgnoreCase);
@@ -26,15 +29,25 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         StaticCaptureSourceProvider captureSourceProvider,
         IStartupStreamValidator streamValidator,
         IIngestionPluginResolver pluginResolver,
-        IAudioCapturePlugin audioCapturePlugin,
+        IServiceProvider serviceProvider,
+        ILiveStreamUrlResolver liveStreamUrlResolver,
+        IYouTubeCookiesAlertService cookiesAlertService,
         ILogger<SourceAvailabilityReconciliationService> logger)
     {
         this.captureSourceProvider = captureSourceProvider;
         this.streamValidator = streamValidator;
         this.pluginResolver = pluginResolver;
-        this.audioCapturePlugin = audioCapturePlugin;
+        this.serviceProvider = serviceProvider;
+        this.liveStreamUrlResolver = liveStreamUrlResolver;
+        this.cookiesAlertService = cookiesAlertService;
         this.logger = logger;
     }
+
+    // Resolved lazily: this service is the ICaptureAttemptObserver that the plugin factory
+    // requires, so taking IAudioCapturePlugin in the constructor creates a circular DI
+    // resolution (plugin → observer → plugin) that deadlocks at first resolution.
+    // The plugin is only needed long after startup, when TriggerCaptureAsync runs.
+    private IAudioCapturePlugin AudioCapturePlugin => serviceProvider.GetRequiredService<IAudioCapturePlugin>();
 
     public Task ReportAsync(CaptureSource source, AudioCaptureExecutionResult result, CancellationToken cancellationToken = default)
     {
@@ -114,9 +127,13 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                         .PersistExclusionAsync(recovered.SourceId, false, CancellationToken.None)
                         .ConfigureAwait(false);
 
+                    var isTv = liveStreamUrlResolver.CanResolve(failedSource);
                     logger.LogInformation(
-                        "Hot recovery succeeded for source {SourceId} on attempt {Attempt}. StreamUrl={StreamUrl}",
-                        recovered.SourceId, attempt, recovered.StreamUrl);
+                        "Hot recovery succeeded for source {SourceId} [{MediaType}] on attempt {Attempt}. StreamUrl={StreamUrl}",
+                        recovered.SourceId,
+                        isTv ? $"{failedSource.Media}/{failedSource.Platform}" : failedSource.Media,
+                        attempt,
+                        recovered.StreamUrl);
 
                     _ = Task.Run(() => TriggerCaptureAsync(recovered), CancellationToken.None);
                     return;
@@ -231,6 +248,28 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             string.Join(",", recoveredIds),
             stillExcludedIds.Count,
             string.Join(",", stillExcludedIds));
+
+        // Emit a TV-specific status board whenever TV sources are involved so operators can track them at a glance
+        var tvResolved = captureSourceProvider.ListResolvedSources()
+            .Where(s => liveStreamUrlResolver.CanResolve(s))
+            .Select(s => s.SourceId)
+            .ToList();
+        var tvExcluded = configuredSources
+            .Where(s => liveStreamUrlResolver.CanResolve(s) && !tvResolved.Contains(s.SourceId, StringComparer.OrdinalIgnoreCase))
+            .Select(s => s.SourceId)
+            .ToList();
+
+        if (tvResolved.Count > 0 || tvExcluded.Count > 0)
+        {
+            var authAlertActive = cookiesAlertService.AlertExists();
+            logger.LogInformation(
+                "TV source status — Active={ActiveCount} [{ActiveIds}] Excluded={ExcludedCount} [{ExcludedIds}]{AuthAlert}",
+                tvResolved.Count,
+                string.Join(",", tvResolved),
+                tvExcluded.Count,
+                string.Join(",", tvExcluded),
+                authAlertActive ? " [AUTH ALERT ACTIVE — renew cookies]" : "");
+        }
     }
 
     private static DateTimeOffset ResolveOperationalNow(IReadOnlyList<CaptureSource> configuredSources)
@@ -252,7 +291,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                 .ResolveAsync(source, IngestionMode.Continuous, CancellationToken.None)
                 .ConfigureAwait(false);
 
-            await audioCapturePlugin
+            await AudioCapturePlugin
                 .CaptureAsync(source, plan, CancellationToken.None)
                 .ConfigureAwait(false);
         }
@@ -264,6 +303,50 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
     private async Task<CaptureSource?> TryRecoverSourceAsync(CaptureSource source, CancellationToken cancellationToken, bool persistExclusionOnFailure = true)
     {
+        // ── Television/YouTube: re-resolve ephemeral HLS URL via yt-dlp ──
+        if (liveStreamUrlResolver.CanResolve(source))
+        {
+            // Auth alert active: operator has not renewed cookies yet — skip, wait.
+            if (cookiesAlertService.AlertExists())
+            {
+                logger.LogDebug(
+                    "Skipping TV recovery for {SourceId}: YouTube auth alert active. " +
+                    "Waiting for operator to renew cookies and delete the flag.",
+                    source.SourceId);
+                return null;
+            }
+
+            var resolution = await liveStreamUrlResolver
+                .TryResolveStreamUrlAsync(source, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (resolution.Succeeded)
+            {
+                cookiesAlertService.ClearAlert();
+                return source.WithStreamUrl(resolution.Url!).WithExcluded(false);
+            }
+
+            if (resolution.Failure == LiveStreamResolutionFailure.AuthRequired)
+            {
+                cookiesAlertService.WriteAlert(source.SourceId,
+                    "Authentication failed during recovery. Cookies expired or invalid.");
+                logger.LogError(
+                    "TV source {SourceId} — YouTube authentication required during recovery. " +
+                    "Hot-recovery suspended until operator renews cookies and deletes the flag.",
+                    source.SourceId);
+            }
+
+            if (persistExclusionOnFailure)
+            {
+                await captureSourceProvider
+                    .PersistExclusionAsync(source.SourceId, true, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            return null;
+        }
+
+        // ── Radio/video: conservative structural variants (scheme toggle, token rotation) ──
         var candidates = StartupStreamUrlHeuristics.BuildConservativeCandidates(source);
 
         foreach (var candidate in candidates)
