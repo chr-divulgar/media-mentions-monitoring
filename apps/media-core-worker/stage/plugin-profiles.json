@@ -25,6 +25,15 @@
     "flacWindowDurationSeconds": 12,
     "opusFlushIntervalSeconds": 30,
     "opusRotationIntervalHours": 1
+  },
+  {
+    "pluginId": "television-youtube",
+    "media": "television",
+    "platform": "youtube",
+    "ingestionMode": "continuous",
+    "flacWindowDurationSeconds": 12,
+    "opusFlushIntervalSeconds": 30,
+    "opusRotationIntervalHours": 1
   }
 ]
 
