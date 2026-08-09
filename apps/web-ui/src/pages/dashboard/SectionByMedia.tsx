@@ -1,7 +1,7 @@
 import React from "react";
 import { Bar } from "@ant-design/plots";
-import { NoteSentiment, NoteSentimentColor } from "@repo/shared";
-import { DASHBOARD_THEME } from "./DashboardTheme";
+import { NoteSentiment } from "@repo/shared";
+import { DASHBOARD_THEME, getSentimentColor } from "./DashboardTheme";
 import type { SectionByMediaProps } from "./types";
 
 const colorDomain = [
@@ -10,11 +10,7 @@ const colorDomain = [
   NoteSentiment.POSITIVO,
 ];
 
-const colorRange = [
-  NoteSentimentColor.NEGATIVO,
-  NoteSentimentColor.NEUTRO,
-  NoteSentimentColor.POSITIVO,
-];
+const colorRange = colorDomain.map(getSentimentColor);
 
 const MAX_ITEMS_PER_MEDIA = 6;
 const FIXED_CHART_HEIGHT = 200;
@@ -106,6 +102,7 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
               color: "#262626",
               fontSize: 13,
               fontWeight: 500,
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
             }}
           >
             <span
@@ -230,6 +227,7 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
                   ...DASHBOARD_THEME.titleStyle,
                   fontSize: 16,
                   fontWeight: "normal",
+                  fontFamily: DASHBOARD_THEME.bodyFontFamily,
                 }}
               >
                 Potencial audiencia alcanzada:{" "}
@@ -240,6 +238,9 @@ const SectionByMedia: React.FC<SectionByMediaProps> = ({
             </div>
           );
         })}
+      </div>
+      <div style={DASHBOARD_THEME.footerStyle}>
+        {DASHBOARD_THEME.footerText}
       </div>
     </div>
   );

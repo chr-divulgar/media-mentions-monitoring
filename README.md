@@ -28,7 +28,7 @@ Cambiar el puerto a 3001
    ```
 4. Iniciar el Backend
    ```sh
-   pnpm --filter ./apps/web-api start:prod
+   $env:NODE_ENV="production"; pnpm --filter ./apps/web-api start:prod
    ```
 
 El backend servirá la web en la misma URL y puerto configurado.

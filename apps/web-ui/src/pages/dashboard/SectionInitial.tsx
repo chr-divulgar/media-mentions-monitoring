@@ -33,6 +33,7 @@ const SectionInitial: React.FC<SectionInitialProps> = ({ dateRange }) => {
             textAlign: "center",
             fontSize: 40,
             lineHeight: 1.2,
+            fontFamily: DASHBOARD_THEME.headingFontFamily,
           }}
         >
           Análisis Monitoreo Medios de Comunicación
@@ -44,6 +45,7 @@ const SectionInitial: React.FC<SectionInitialProps> = ({ dateRange }) => {
             textAlign: "center",
             fontSize: 20,
             marginTop: 24,
+            fontFamily: DASHBOARD_THEME.headingFontFamily,
           }}
         >
           {dateRange}
@@ -55,10 +57,14 @@ const SectionInitial: React.FC<SectionInitialProps> = ({ dateRange }) => {
             textAlign: "center",
             fontSize: 20,
             lineHeight: 1.2,
+            fontFamily: DASHBOARD_THEME.headingFontFamily,
           }}
         >
           Jefatura de Comunicaciones Externas y Prensa
         </div>
+      </div>
+      <div style={DASHBOARD_THEME.footerStyle}>
+        {DASHBOARD_THEME.footerText}
       </div>
     </div>
   );

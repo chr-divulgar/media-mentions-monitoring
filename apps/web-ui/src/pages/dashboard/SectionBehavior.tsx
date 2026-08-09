@@ -1,7 +1,12 @@
 import React from "react";
 import { Pie } from "@ant-design/plots";
 import { CaretUpFilled, CaretDownFilled } from "@ant-design/icons";
-import { DASHBOARD_THEME, getPieConfig } from "./DashboardTheme";
+import {
+  DASHBOARD_THEME,
+  getPieConfig,
+  getSentimentColor,
+  getSentimentTextColor,
+} from "./DashboardTheme";
 import type { SectionBehaviorProps } from "./types";
 
 /**
@@ -64,13 +69,6 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
     (sum, row) => sum + Number(row.audience ?? 0),
     0,
   );
-  const sentimentColorMap: Record<string, string> = {
-    negativa: "#ff4d4f",
-    neutra: "#8c8c8c",
-    positiva: "#00b050",
-  };
-  const getSentimentTextColor = (column: string) =>
-    sentimentColorMap[column.toLowerCase()];
 
   return (
     <div
@@ -116,6 +114,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
               fontSize: 24,
               fontWeight: 700,
               lineHeight: 1,
+              fontFamily: DASHBOARD_THEME.headingFontFamily,
             }}
           >
             {totalNotes}
@@ -124,6 +123,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
             style={{
               color: "#fff",
               fontWeight: "bold",
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
             }}
           >
             Publicaciones
@@ -153,11 +153,27 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
               padding: "8px 6px",
             }}
           >
-            <div style={{ fontSize: 24, fontWeight: "bold" }}>
+            <div
+              style={{
+                fontSize: 24,
+                fontWeight: "bold",
+                fontFamily: DASHBOARD_THEME.headingFontFamily,
+              }}
+            >
               {directNotes}
             </div>
-            <div>El volumen total de la conversación</div>
-            <div style={{ fontSize: 22, fontWeight: "bold" }}>{directPct}%</div>
+            <div style={{ fontFamily: DASHBOARD_THEME.bodyFontFamily }}>
+              El volumen total de la conversación
+            </div>
+            <div
+              style={{
+                fontSize: 22,
+                fontWeight: "bold",
+                fontFamily: DASHBOARD_THEME.headingFontFamily,
+              }}
+            >
+              {directPct}%
+            </div>
           </div>
 
           {/* Parte 2 */}
@@ -173,10 +189,11 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
           >
             <div
               style={{
-                fontSize: 24,
+                fontSize: 20,
                 fontWeight: "bold",
                 alignSelf: "center",
                 lineHeight: 1.2,
+                fontFamily: DASHBOARD_THEME.headingFontFamily,
               }}
             >
               Publicaciones directas
@@ -187,6 +204,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                 margin: 0,
                 paddingLeft: 18,
                 listStyleType: "disc",
+                fontFamily: DASHBOARD_THEME.bodyFontFamily,
               }}
             >
               <li>Empresa o Grupo Empresarial</li>
@@ -213,12 +231,15 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                   fontSize: 24,
                   fontWeight: "bold",
                   lineHeight: 1,
+                  fontFamily: DASHBOARD_THEME.headingFontFamily,
                 }}
               >
                 {getArrow(comparisonValue)} {comparisonText}
               </div>
             )}
-            <div style={{ fontSize: 14 }}>
+            <div
+              style={{ fontSize: 14, fontFamily: DASHBOARD_THEME.bodyFontFamily }}
+            >
               vs. {getPeriodLabel(period)} anterior
             </div>
           </div>
@@ -238,10 +259,24 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
             padding: "8px 6px",
           }}
         >
-          <div style={{ fontWeight: "bold", marginTop: 6, lineHeight: 1.25 }}>
+          <div
+            style={{
+              fontWeight: "bold",
+              marginTop: 6,
+              lineHeight: 1.25,
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
+            }}
+          >
             Publicaciones Indirectas
           </div>
-          <div style={{ fontSize: 24, fontWeight: "bold", lineHeight: 1 }}>
+          <div
+            style={{
+              fontSize: 24,
+              fontWeight: "bold",
+              lineHeight: 1,
+              fontFamily: DASHBOARD_THEME.headingFontFamily,
+            }}
+          >
             {indirectPct}%
           </div>
         </div>
@@ -274,22 +309,34 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                 borderCollapse: "collapse",
                 fontSize: 12,
                 lineHeight: 1,
-                color: "#4d4d4d",
+                color: "#000",
+                fontFamily: DASHBOARD_THEME.bodyFontFamily,
               }}
             >
               <thead>
-                <tr style={{ background: "#fff" }}>
-                  <th></th>
+                <tr style={{ background: DASHBOARD_THEME.headerBg }}>
+                  <th
+                    style={{
+                      border: `1px solid ${DASHBOARD_THEME.borderColor}`,
+                    }}
+                  ></th>
                   {totalNotesColumn && (
                     <th
                       style={{
                         textAlign: "center",
+                        border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                       }}
                     >
                       #
                     </th>
                   )}
-                  <th style={{ fontWeight: "initial", textAlign: "right" }}>
+                  <th
+                    style={{
+                      fontWeight: "initial",
+                      textAlign: "right",
+                      border: `1px solid ${DASHBOARD_THEME.borderColor}`,
+                    }}
+                  >
                     Audiencia
                   </th>
                   {sentimentColumnsWithoutTotalNotes.map((column) => (
@@ -299,7 +346,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                         textAlign: "center",
                         textTransform: "capitalize",
                         fontWeight: "initial",
-                        color: getSentimentTextColor(column) ?? "inherit",
+                        border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                       }}
                     >
                       {column.slice(0, 3) + "."}
@@ -330,14 +377,14 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                     <tr
                       key={`topic-header-${topic}`}
                       style={{
-                        background: "#f0f0f0",
+                        background: DASHBOARD_THEME.headerBg,
                         fontWeight: 600,
                       }}
                     >
                       <td
                         colSpan={2 + sentimentColumns.length}
                         style={{
-                          borderBottom: "1px solid #e8e8e8",
+                          border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                           textAlign: "left",
                         }}
                       >
@@ -348,7 +395,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                       <tr key={`${row.topic}-${row.subtopic}-${index}`}>
                         <td
                           style={{
-                            borderBottom: "1px solid #f0f0f0",
+                            border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                           }}
                         >
                           {row.subtopic}
@@ -357,7 +404,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                           <td
                             style={{
                               textAlign: "center",
-                              borderBottom: "1px solid #f0f0f0",
+                              border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                             }}
                           >
                             {String(
@@ -368,27 +415,31 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
                         <td
                           style={{
                             textAlign: "right",
-                            borderBottom: "1px solid #f0f0f0",
+                            border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                           }}
                         >
                           {row.audience !== undefined && row.audience !== null
                             ? Number(row.audience).toLocaleString("es-CO")
                             : ""}
                         </td>
-                        {sentimentColumnsWithoutTotalNotes.map((column) => (
-                          <td
-                            key={`${row.subtopic}-${column}-${index}`}
-                            style={{
-                              textAlign: "center",
-                              borderBottom: "1px solid #f0f0f0",
-                              color: getSentimentTextColor(column) ?? "inherit",
-                            }}
-                          >
-                            {Number(row[column as keyof typeof row] ?? 0) > 0
-                              ? row[column as keyof typeof row]
-                              : ""}
-                          </td>
-                        ))}
+                        {sentimentColumnsWithoutTotalNotes.map((column) => {
+                          const bg = getSentimentColor(column);
+                          return (
+                            <td
+                              key={`${row.subtopic}-${column}-${index}`}
+                              style={{
+                                textAlign: "center",
+                                border: `1px solid ${DASHBOARD_THEME.borderColor}`,
+                                background: bg,
+                                color: getSentimentTextColor(bg),
+                              }}
+                            >
+                              {Number(row[column as keyof typeof row] ?? 0) > 0
+                                ? row[column as keyof typeof row]
+                                : ""}
+                            </td>
+                          );
+                        })}
                       </tr>
                     )),
                   ]);
@@ -428,6 +479,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
               textAlign: "left",
               width: "100%",
               marginLeft: 24,
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
             }}
           >
             Sentimiento publicaciones directas
@@ -441,10 +493,11 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
           <div
             style={{
               color: DASHBOARD_THEME.titleStyle.color,
-              fontSize: 24,
+              fontSize: 22,
               fontWeight: "bold",
               lineHeight: 1.2,
               textAlign: "left",
+              fontFamily: DASHBOARD_THEME.headingFontFamily,
             }}
           >
             Potencial audiencia publicaciones directas
@@ -457,6 +510,7 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
               lineHeight: 1.1,
               width: "100%",
               textAlign: "left",
+              fontFamily: DASHBOARD_THEME.headingFontFamily,
             }}
           >
             {Number(totalAudience).toLocaleString("es-CO")}
@@ -468,6 +522,9 @@ const SectionBehavior: React.FC<SectionBehaviorProps> = ({
             flex: 1,
           }}
         ></div>
+      </div>
+      <div style={DASHBOARD_THEME.footerStyle}>
+        {DASHBOARD_THEME.footerText}
       </div>
     </div>
   );

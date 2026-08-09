@@ -12,7 +12,11 @@ const SectionFinal: React.FC<SectionFinalProps> = () => {
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
       }}
-    />
+    >
+      <div style={DASHBOARD_THEME.footerStyle}>
+        {DASHBOARD_THEME.footerText}
+      </div>
+    </div>
   );
 };
 

@@ -1,7 +1,7 @@
 import React from "react";
 import { Column } from "@ant-design/plots";
-import { NoteSentiment, NoteSentimentColor } from "@repo/shared";
-import { DASHBOARD_THEME } from "./DashboardTheme";
+import { NoteSentiment } from "@repo/shared";
+import { DASHBOARD_THEME, getSentimentColor } from "./DashboardTheme";
 import type { SectionTop20ByMediaNameProps } from "./types";
 
 const COLOR_TOTAL_NACIONAL = "#084dbc";
@@ -19,9 +19,9 @@ const colorDomain = [
 ];
 
 const colorRange = [
-  NoteSentimentColor.NEGATIVO,
-  NoteSentimentColor.NEUTRO,
-  NoteSentimentColor.POSITIVO,
+  getSentimentColor(NoteSentiment.NEGATIVO),
+  getSentimentColor(NoteSentiment.NEUTRO),
+  getSentimentColor(NoteSentiment.POSITIVO),
   COLOR_TOTAL_NACIONAL,
   COLOR_TOTAL_LOCAL,
 ];
@@ -174,6 +174,7 @@ const SectionTop20ByMediaName: React.FC<SectionTop20ByMediaNameProps> = ({
             lineHeight: 1.35,
             color: "#262626",
             textAlign: "left",
+            fontFamily: DASHBOARD_THEME.bodyFontFamily,
           }}
         >
           Total registros{" "}
@@ -186,6 +187,9 @@ const SectionTop20ByMediaName: React.FC<SectionTop20ByMediaNameProps> = ({
           </span>{" "}
           medios.
         </div>
+      </div>
+      <div style={DASHBOARD_THEME.footerStyle}>
+        {DASHBOARD_THEME.footerText}
       </div>
     </div>
   );

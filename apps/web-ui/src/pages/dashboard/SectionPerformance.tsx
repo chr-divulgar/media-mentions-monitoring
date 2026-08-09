@@ -1,8 +1,12 @@
 import React from "react";
 import dayjs from "dayjs";
 import { DualAxes } from "@ant-design/plots";
-import { NoteSentiment, NoteSentimentColor } from "@repo/shared";
-import { DASHBOARD_THEME } from "./DashboardTheme";
+import { NoteSentiment } from "@repo/shared";
+import {
+  DASHBOARD_THEME,
+  getSentimentColor,
+  getSentimentTextColor,
+} from "./DashboardTheme";
 import type { SectionPerformanceProps } from "./types";
 
 const meses = [
@@ -87,21 +91,14 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
     ];
   });
 
-  const sentimentColorMap: Record<string, string> = {
-    [NoteSentiment.NEGATIVO]: NoteSentimentColor.NEGATIVO,
-    [NoteSentiment.NEUTRO]: NoteSentimentColor.NEUTRO,
-    [NoteSentiment.POSITIVO]: NoteSentimentColor.POSITIVO,
-  };
-
   const sentimentOrder = [
     NoteSentiment.NEGATIVO,
     NoteSentiment.NEUTRO,
     NoteSentiment.POSITIVO,
   ];
 
-  const sentimentColors = sentimentOrder.map(
-    (sentiment) => sentimentColorMap[sentiment],
-  );
+  const sentimentColors = sentimentOrder.map(getSentimentColor);
+  const trendLineColor = DASHBOARD_THEME.SENTIMENT_COLORS.neutra;
 
   const dualConfig = {
     height: 150,
@@ -141,7 +138,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
         })),
         encode: { x: "range", y: "value" },
         style: {
-          stroke: "#FFD600",
+          stroke: trendLineColor,
           lineWidth: 4,
         },
         axis: {
@@ -181,10 +178,10 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
           if (name === "total") {
             return {
               symbol: "line",
-              style: { stroke: "#FFD600", lineWidth: 4 },
+              style: { stroke: trendLineColor, lineWidth: 4 },
             };
           }
-          return { symbol: "square", style: { fill: sentimentColorMap[name] } };
+          return { symbol: "square", style: { fill: getSentimentColor(name) } };
         },
       },
     },
@@ -237,6 +234,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                   color: "#00323f",
                   fontWeight: "bold",
                   fontSize: 18,
+                  fontFamily: DASHBOARD_THEME.headingFontFamily,
                 }}
               >
                 {rangeLabel}
@@ -246,17 +244,18 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                 style={{
                   width: "100%",
                   borderCollapse: "collapse",
-                  color: "#4d4d4d",
+                  color: "#000",
                   fontSize: 12,
                   lineHeight: 1,
+                  fontFamily: DASHBOARD_THEME.bodyFontFamily,
                 }}
               >
                 <thead>
-                  <tr style={{ background: "#f5f5f5" }}>
+                  <tr style={{ background: DASHBOARD_THEME.headerBg }}>
                     <th
                       style={{
                         textAlign: "left",
-                        borderBottom: "1px solid #e8e8e8",
+                        border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                       }}
                     >
                       Tema
@@ -264,7 +263,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                     <th
                       style={{
                         textAlign: "center",
-                        borderBottom: "1px solid #e8e8e8",
+                        border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                       }}
                     >
                       #
@@ -272,7 +271,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                     <th
                       style={{
                         textAlign: "right",
-                        borderBottom: "1px solid #e8e8e8",
+                        border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                       }}
                     >
                       Audiencia
@@ -280,8 +279,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                     <th
                       style={{
                         textAlign: "center",
-                        borderBottom: "1px solid #e8e8e8",
-                        color: NoteSentimentColor.NEGATIVO,
+                        border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                       }}
                     >
                       {NoteSentiment.NEGATIVO.slice(0, 3) + "."}
@@ -289,8 +287,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                     <th
                       style={{
                         textAlign: "center",
-                        borderBottom: "1px solid #e8e8e8",
-                        color: NoteSentimentColor.NEUTRO,
+                        border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                       }}
                     >
                       {NoteSentiment.NEUTRO.slice(0, 3) + "."}
@@ -298,8 +295,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                     <th
                       style={{
                         textAlign: "center",
-                        borderBottom: "1px solid #e8e8e8",
-                        color: NoteSentimentColor.POSITIVO,
+                        border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                       }}
                     >
                       {NoteSentiment.POSITIVO.slice(0, 3) + "."}
@@ -309,13 +305,17 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                 <tbody>
                   {tableRows.map((row, rowIndex) => (
                     <tr key={`${row.topic}-${row.subtopic}-${rowIndex}`}>
-                      <td style={{ borderBottom: "1px solid #f0f0f0" }}>
+                      <td
+                        style={{
+                          border: `1px solid ${DASHBOARD_THEME.borderColor}`,
+                        }}
+                      >
                         {row.subtopic || row.topic}
                       </td>
                       <td
                         style={{
                           textAlign: "center",
-                          borderBottom: "1px solid #f0f0f0",
+                          border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                         }}
                       >
                         {row.totalNotes}
@@ -323,7 +323,7 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                       <td
                         style={{
                           textAlign: "right",
-                          borderBottom: "1px solid #f0f0f0",
+                          border: `1px solid ${DASHBOARD_THEME.borderColor}`,
                         }}
                       >
                         {Number(row.audience).toLocaleString("es-CO")}
@@ -331,8 +331,11 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                       <td
                         style={{
                           textAlign: "center",
-                          borderBottom: "1px solid #f0f0f0",
-                          color: NoteSentimentColor.NEGATIVO,
+                          border: `1px solid ${DASHBOARD_THEME.borderColor}`,
+                          background: getSentimentColor(NoteSentiment.NEGATIVO),
+                          color: getSentimentTextColor(
+                            getSentimentColor(NoteSentiment.NEGATIVO),
+                          ),
                         }}
                       >
                         {Number(row[NoteSentiment.NEGATIVO] ?? 0) > 0
@@ -342,8 +345,11 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                       <td
                         style={{
                           textAlign: "center",
-                          borderBottom: "1px solid #f0f0f0",
-                          color: NoteSentimentColor.NEUTRO,
+                          border: `1px solid ${DASHBOARD_THEME.borderColor}`,
+                          background: getSentimentColor(NoteSentiment.NEUTRO),
+                          color: getSentimentTextColor(
+                            getSentimentColor(NoteSentiment.NEUTRO),
+                          ),
                         }}
                       >
                         {Number(row[NoteSentiment.NEUTRO] ?? 0) > 0
@@ -353,8 +359,11 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
                       <td
                         style={{
                           textAlign: "center",
-                          borderBottom: "1px solid #f0f0f0",
-                          color: NoteSentimentColor.POSITIVO,
+                          border: `1px solid ${DASHBOARD_THEME.borderColor}`,
+                          background: getSentimentColor(NoteSentiment.POSITIVO),
+                          color: getSentimentTextColor(
+                            getSentimentColor(NoteSentiment.POSITIVO),
+                          ),
                         }}
                       >
                         {Number(row[NoteSentiment.POSITIVO] ?? 0) > 0
@@ -382,6 +391,9 @@ const SectionPerformance: React.FC<SectionPerformanceProps> = ({
             </div>
           );
         })}
+      </div>
+      <div style={DASHBOARD_THEME.footerStyle}>
+        {DASHBOARD_THEME.footerText}
       </div>
     </div>
   );

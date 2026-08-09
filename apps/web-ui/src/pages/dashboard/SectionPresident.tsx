@@ -1,7 +1,7 @@
 import React from "react";
 import { Column } from "@ant-design/plots";
-import { NoteSentiment, NoteSentimentColor } from "@repo/shared";
-import { DASHBOARD_THEME } from "./DashboardTheme";
+import { NoteSentiment } from "@repo/shared";
+import { DASHBOARD_THEME, getSentimentColor } from "./DashboardTheme";
 import type { SectionPresidentProps } from "./types";
 
 const COLOR_TOTAL_NACIONAL = "#084dbc";
@@ -19,9 +19,9 @@ const colorDomain = [
 ];
 
 const colorRange = [
-  NoteSentimentColor.NEGATIVO,
-  NoteSentimentColor.NEUTRO,
-  NoteSentimentColor.POSITIVO,
+  getSentimentColor(NoteSentiment.NEGATIVO),
+  getSentimentColor(NoteSentiment.NEUTRO),
+  getSentimentColor(NoteSentiment.POSITIVO),
   COLOR_TOTAL_NACIONAL,
   COLOR_TOTAL_LOCAL,
 ];
@@ -152,13 +152,18 @@ const SectionPresident: React.FC<SectionPresidentProps> = ({
           >
             Publicaciones de mayor impacto
           </div>
-          <div style={{ color: "#7f7f7f" }}>
+          <div
+            style={{
+              color: "#7f7f7f",
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
+            }}
+          >
             {presidentData.topImpact?.sentiment ?? NoteSentiment.NEGATIVO}
           </div>
           <div
             style={{
               color: DASHBOARD_THEME.titleStyle.color,
-
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
               lineHeight: 1,
               marginBottom: 4,
               whiteSpace: "pre-line",
@@ -173,6 +178,7 @@ const SectionPresident: React.FC<SectionPresidentProps> = ({
               lineHeight: 1.2,
               color: "#7f7f7f",
               marginTop: 8,
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
             }}
           >
             {presidentData.topImpact?.title ?? "Sin título repetido"}
@@ -180,7 +186,13 @@ const SectionPresident: React.FC<SectionPresidentProps> = ({
         </div>
 
         <div style={{ flex: 2 }}>
-          <div style={{ color: "#7f7f7f", lineHeight: 1.2 }}>
+          <div
+            style={{
+              color: "#7f7f7f",
+              lineHeight: 1.2,
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
+            }}
+          >
             <div>
               Total publicaciones{" "}
               <span style={{ fontWeight: "bold" }}>
@@ -214,17 +226,22 @@ const SectionPresident: React.FC<SectionPresidentProps> = ({
             justifyContent: "center",
             color: "#000",
             lineHeight: 1.2,
+            fontFamily: DASHBOARD_THEME.bodyFontFamily,
           }}
         >
           Potencial audiencia alcanzada
           <div
             style={{
               fontWeight: "bold",
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
             }}
           >
             {presidentData.totalAudience.toLocaleString("es-CO")}
           </div>
         </div>
+      </div>
+      <div style={DASHBOARD_THEME.footerStyle}>
+        {DASHBOARD_THEME.footerText}
       </div>
     </div>
   );

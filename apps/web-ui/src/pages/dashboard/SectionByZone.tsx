@@ -1,7 +1,7 @@
 import React from "react";
 import { DualAxes } from "@ant-design/plots";
-import { NoteSentiment, NoteSentimentColor } from "@repo/shared";
-import { DASHBOARD_THEME } from "./DashboardTheme";
+import { NoteSentiment } from "@repo/shared";
+import { DASHBOARD_THEME, getSentimentColor } from "./DashboardTheme";
 import type { SectionByZoneProps } from "./types";
 
 const toTitleCase = (value: string) =>
@@ -72,11 +72,7 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
     NoteSentiment.NEUTRO,
     NoteSentiment.POSITIVO,
   ];
-  const sentimentColors = [
-    NoteSentimentColor.NEGATIVO,
-    NoteSentimentColor.NEUTRO,
-    NoteSentimentColor.POSITIVO,
-  ];
+  const sentimentColors = sentimentOrder.map(getSentimentColor);
 
   const dualConfig = {
     height: 250,
@@ -169,6 +165,7 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
             justifyContent: "flex-start",
             color: "#7f7f7f",
             lineHeight: 1.2,
+            fontFamily: DASHBOARD_THEME.bodyFontFamily,
           }}
         >
           <div>
@@ -180,7 +177,10 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
           <div>
             Positivas{" "}
             <span
-              style={{ fontWeight: "bold", color: NoteSentimentColor.POSITIVO }}
+              style={{
+                fontWeight: "bold",
+                color: getSentimentColor(NoteSentiment.POSITIVO),
+              }}
             >
               {totalPositivas.toLocaleString("es-CO")}
             </span>
@@ -188,7 +188,10 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
           <div>
             Neutras{" "}
             <span
-              style={{ fontWeight: "bold", color: NoteSentimentColor.NEUTRO }}
+              style={{
+                fontWeight: "bold",
+                color: getSentimentColor(NoteSentiment.NEUTRO),
+              }}
             >
               {totalNeutras.toLocaleString("es-CO")}
             </span>
@@ -196,7 +199,10 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
           <div>
             Negativas{" "}
             <span
-              style={{ fontWeight: "bold", color: NoteSentimentColor.NEGATIVO }}
+              style={{
+                fontWeight: "bold",
+                color: getSentimentColor(NoteSentiment.NEGATIVO),
+              }}
             >
               {totalNegativas.toLocaleString("es-CO")}
             </span>
@@ -213,12 +219,14 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
             color: "#000",
             lineHeight: 1.2,
             marginBottom: 42,
+            fontFamily: DASHBOARD_THEME.bodyFontFamily,
           }}
         >
           Potencial audiencia alcanzada
           <div
             style={{
               fontWeight: "bold",
+              fontFamily: DASHBOARD_THEME.bodyFontFamily,
             }}
           >
             {totalAudiencia.toLocaleString("es-CO")}
@@ -226,6 +234,9 @@ const SectionByZone: React.FC<SectionByZoneProps> = ({
         </div>
 
         <div style={{ flex: 1 }} />
+      </div>
+      <div style={DASHBOARD_THEME.footerStyle}>
+        {DASHBOARD_THEME.footerText}
       </div>
     </div>
   );
