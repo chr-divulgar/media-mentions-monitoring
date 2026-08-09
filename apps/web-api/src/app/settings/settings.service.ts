@@ -100,6 +100,29 @@ interface PlatformDoc {
   fallbackStreamUrls?: string[];
 }
 
+function buildOptionalPlatformFields(
+  dto: PlatformDto,
+  existing: Omit<PlatformDoc, 'id'>,
+): Partial<Omit<PlatformDoc, 'id'>> {
+  const candidates: Partial<Omit<PlatformDoc, 'id'>> = {
+    audience: dto.audience == null ? existing.audience : Number(dto.audience),
+    rate: dto.rate == null ? existing.rate : Number(dto.rate),
+    sourceId: dto.sourceId !== undefined ? dto.sourceId : existing.sourceId,
+    streamUrl: dto.streamUrl !== undefined ? dto.streamUrl : existing.streamUrl,
+    primaryUrl:
+      dto.primaryUrl !== undefined ? dto.primaryUrl : existing.primaryUrl,
+    country: dto.country !== undefined ? dto.country : existing.country,
+    fallbackStreamUrls:
+      dto.fallbackStreamUrls !== undefined
+        ? dto.fallbackStreamUrls
+        : existing.fallbackStreamUrls,
+  };
+
+  return Object.fromEntries(
+    Object.entries(candidates).filter(([, value]) => value !== undefined),
+  ) as Partial<Omit<PlatformDoc, 'id'>>;
+}
+
 @Injectable()
 export class SettingsService {
   constructor(private readonly firebaseAdmin: FirebaseAdminService) {}
@@ -153,6 +176,8 @@ export class SettingsService {
     if (!snap.exists) throw new NotFoundException('Platform not found');
 
     const existing = snap.data() as Omit<PlatformDoc, 'id'>;
+    const optionalFields = buildOptionalPlatformFields(dto, existing);
+
     const updated: Omit<PlatformDoc, 'id'> = {
       name: dto.name ?? existing.name,
       url: dto.url ?? existing.url,
@@ -160,18 +185,7 @@ export class SettingsService {
       zone: dto.zone ?? existing.zone ?? 'Nacional',
       city: dto.city ?? existing.city ?? 'Nacional',
       slots: dto.slots ?? existing.slots,
-      audience: dto.audience == null ? existing.audience : Number(dto.audience),
-      rate: dto.rate == null ? existing.rate : Number(dto.rate),
-      sourceId: dto.sourceId !== undefined ? dto.sourceId : existing.sourceId,
-      streamUrl:
-        dto.streamUrl !== undefined ? dto.streamUrl : existing.streamUrl,
-      primaryUrl:
-        dto.primaryUrl !== undefined ? dto.primaryUrl : existing.primaryUrl,
-      country: dto.country !== undefined ? dto.country : existing.country,
-      fallbackStreamUrls:
-        dto.fallbackStreamUrls !== undefined
-          ? dto.fallbackStreamUrls
-          : existing.fallbackStreamUrls,
+      ...optionalFields,
     };
     await ref.update(updated);
     return { id: dto.id, ...updated };
