@@ -56,29 +56,45 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
 
         var args = new List<string>(runner.Args);
 
-        // Cookie guard: if configured, the file is mandatory
+        // Cookie handling: prefer browser cookies over file
         string? tempCookiesPath = null;
         try
         {
-            var cookiesPath = options.YoutubeCookiesFilePath;
-            if (!string.IsNullOrWhiteSpace(cookiesPath))
+            logger.LogInformation(
+                "[YtdlpResolver] Cookie resolution for source {SourceId}: UseBrowserCookies={UseBrowserCookies}, BrowserCookiesSource={BrowserCookiesSource}",
+                source.SourceId, options.UseBrowserCookies, options.BrowserCookiesSource);
+
+            if (options.UseBrowserCookies)
             {
-                var absPath = Path.IsPathRooted(cookiesPath)
-                    ? cookiesPath
-                    : Path.GetFullPath(cookiesPath);
-
-                if (!File.Exists(absPath))
+                // Use cookies directly from browser (chrome, edge, firefox, opera)
+                args.AddRange(["--cookies-from-browser", options.BrowserCookiesSource]);
+                logger.LogInformation(
+                    "[YtdlpResolver] Using {Browser} browser cookies for source {SourceId}.",
+                    options.BrowserCookiesSource, source.SourceId);
+            }
+            else
+            {
+                // Fall back to cookies file if configured
+                var cookiesPath = options.YoutubeCookiesFilePath;
+                if (!string.IsNullOrWhiteSpace(cookiesPath))
                 {
-                    logger.LogError(
-                        "[YtdlpResolver] Cookies file required but not found at '{Path}' for source {SourceId}.",
-                        absPath, source.SourceId);
-                    return new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.AuthRequired);
-                }
+                    var absPath = Path.IsPathRooted(cookiesPath)
+                        ? cookiesPath
+                        : Path.GetFullPath(cookiesPath);
 
-                // Convert to Netscape format if needed — yt-dlp rejects raw browser cookie strings
-                var effectiveCookiesPath = EnsureNetscapeFormat(absPath, out tempCookiesPath, logger);
-                args.AddRange(["--cookies", effectiveCookiesPath]);
-                logger.LogDebug("[YtdlpResolver] Using cookies file '{Path}' for source {SourceId}.", effectiveCookiesPath, source.SourceId);
+                    if (!File.Exists(absPath))
+                    {
+                        logger.LogError(
+                            "[YtdlpResolver] Cookies file required but not found at '{Path}' for source {SourceId}.",
+                            absPath, source.SourceId);
+                        return new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.AuthRequired);
+                    }
+
+                    // Convert to Netscape format if needed — yt-dlp rejects raw browser cookie strings
+                    var effectiveCookiesPath = EnsureNetscapeFormat(absPath, out tempCookiesPath, logger);
+                    args.AddRange(["--cookies", effectiveCookiesPath]);
+                    logger.LogDebug("[YtdlpResolver] Using cookies file '{Path}' for source {SourceId}.", effectiveCookiesPath, source.SourceId);
+                }
             }
 
             // Prefer audio-only direct streams over HLS manifests.

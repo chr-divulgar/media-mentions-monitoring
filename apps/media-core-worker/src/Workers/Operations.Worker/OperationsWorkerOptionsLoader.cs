@@ -5,6 +5,7 @@ namespace MediaOpsCore.Workers.Operations;
 public static class OperationsWorkerOptionsLoader
 {
     private const string DefaultConfigPath = "stage/worker-options.json";
+    private const string StageDirectoryName = "stage";
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -48,6 +49,8 @@ public static class OperationsWorkerOptionsLoader
         int? StartupDiscoveryRequestTimeoutSeconds,
         string? YtdlpBinDirectory,
         int? YtdlpResolutionTimeoutSeconds,
+        bool? UseBrowserCookies,
+        string? BrowserCookiesSource,
         string? YoutubeCookiesFilePath,
         string? YoutubeCookiesAlertFilePath,
         FirebaseDatabaseLoaderSection? FirebaseDatabase);
@@ -62,22 +65,25 @@ public static class OperationsWorkerOptionsLoader
     {
         var options = new OperationsWorkerOptions();
         var path = string.IsNullOrWhiteSpace(configPath) ? DefaultConfigPath : configPath;
+        var resolvedConfigPath = ResolveConfigPath(path);
+        var configDirectory = Path.GetDirectoryName(resolvedConfigPath);
+        var applicationRoot = ResolveApplicationRoot(configDirectory);
 
-        if (!File.Exists(path))
+        if (!File.Exists(resolvedConfigPath))
         {
-            return options;
+            return NormalizeConfiguredPaths(options, applicationRoot, configDirectory);
         }
 
-        var json = File.ReadAllText(path);
+        var json = File.ReadAllText(resolvedConfigPath);
         if (string.IsNullOrWhiteSpace(json))
         {
-            return options;
+            return NormalizeConfiguredPaths(options, applicationRoot, configDirectory);
         }
 
         var model = JsonSerializer.Deserialize<WorkerOptionsFileModel>(json, SerializerOptions);
         if (model is null)
         {
-            return options;
+            return NormalizeConfiguredPaths(options, applicationRoot, configDirectory);
         }
 
         if (model.SegmentationIntervalSeconds.HasValue)
@@ -255,6 +261,16 @@ public static class OperationsWorkerOptionsLoader
             options.YtdlpResolutionTimeoutSeconds = model.YtdlpResolutionTimeoutSeconds.Value;
         }
 
+        if (model.UseBrowserCookies.HasValue)
+        {
+            options.UseBrowserCookies = model.UseBrowserCookies.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.BrowserCookiesSource))
+        {
+            options.BrowserCookiesSource = model.BrowserCookiesSource;
+        }
+
         if (model.YoutubeCookiesFilePath is not null)
         {
             options.YoutubeCookiesFilePath = string.IsNullOrWhiteSpace(model.YoutubeCookiesFilePath)
@@ -267,8 +283,32 @@ public static class OperationsWorkerOptionsLoader
             options.YoutubeCookiesAlertFilePath = model.YoutubeCookiesAlertFilePath;
         }
 
-        if (model.FirebaseDatabase is { } fb && !string.IsNullOrWhiteSpace(fb.BaseUrl))
+        // Load Firebase from environment variables (highest priority) or JSON config (fallback).
+        var firebaseBaseUrl = Environment.GetEnvironmentVariable("FIREBASE_BASE_URL");
+        var firebaseAuthToken = Environment.GetEnvironmentVariable("FIREBASE_AUTH_TOKEN");
+        var firebasePlatformsPath = Environment.GetEnvironmentVariable("FIREBASE_PLATFORMS_PATH");
+        var firebaseTimeoutSecondsStr = Environment.GetEnvironmentVariable("FIREBASE_REQUEST_TIMEOUT_SECONDS");
+
+        // If env vars provided, use them; otherwise try JSON config.
+        if (!string.IsNullOrWhiteSpace(firebaseBaseUrl) && !string.IsNullOrWhiteSpace(firebaseAuthToken))
         {
+            var timeoutSeconds = 15;
+            if (!string.IsNullOrWhiteSpace(firebaseTimeoutSecondsStr) && int.TryParse(firebaseTimeoutSecondsStr, out var envTimeout))
+            {
+                timeoutSeconds = envTimeout;
+            }
+
+            options.FirebaseDatabase = new FirebaseCaptureSourceRepositoryOptions
+            {
+                BaseUrl = firebaseBaseUrl.Trim(),
+                PlatformsPath = string.IsNullOrWhiteSpace(firebasePlatformsPath) ? "platforms" : firebasePlatformsPath.Trim('/'),
+                AuthToken = firebaseAuthToken,
+                RequestTimeoutSeconds = timeoutSeconds
+            };
+        }
+        else if (model.FirebaseDatabase is { } fb && !string.IsNullOrWhiteSpace(fb.BaseUrl))
+        {
+            // Fallback: use JSON config if no env vars provided.
             options.FirebaseDatabase = new FirebaseCaptureSourceRepositoryOptions
             {
                 BaseUrl = fb.BaseUrl.Trim(),
@@ -278,7 +318,98 @@ public static class OperationsWorkerOptionsLoader
             };
         }
 
+        return NormalizeConfiguredPaths(options, applicationRoot, configDirectory);
+    }
+
+    private static OperationsWorkerOptions NormalizeConfiguredPaths(
+        OperationsWorkerOptions options,
+        string applicationRoot,
+        string? configDirectory)
+    {
+        options.CaptureSourcesFilePath = ResolveConfiguredPath(options.CaptureSourcesFilePath, applicationRoot, configDirectory);
+        options.PluginProfilesFilePath = ResolveConfiguredPath(options.PluginProfilesFilePath, applicationRoot, configDirectory);
+        options.StageFilesystemRootPath = ResolveConfiguredPath(options.StageFilesystemRootPath, applicationRoot, configDirectory);
+        options.YtdlpBinDirectory = ResolveConfiguredPath(options.YtdlpBinDirectory, applicationRoot, configDirectory);
+        options.YoutubeCookiesAlertFilePath = ResolveConfiguredPath(options.YoutubeCookiesAlertFilePath, applicationRoot, configDirectory);
+
+        if (!string.IsNullOrWhiteSpace(options.YoutubeCookiesFilePath))
+        {
+            options.YoutubeCookiesFilePath = ResolveConfiguredPath(options.YoutubeCookiesFilePath, applicationRoot, configDirectory);
+        }
+
         return options;
+    }
+
+    private static string ResolveConfigPath(string configPath)
+    {
+        if (Path.IsPathRooted(configPath))
+        {
+            return Path.GetFullPath(configPath);
+        }
+
+        var current = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (current is not null)
+        {
+            var candidate = Path.GetFullPath(Path.Combine(current.FullName, configPath));
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            current = current.Parent;
+        }
+
+        return Path.GetFullPath(configPath, Directory.GetCurrentDirectory());
+    }
+
+    private static string ResolveApplicationRoot(string? configDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(configDirectory))
+        {
+            return Directory.GetCurrentDirectory();
+        }
+
+        var directoryName = Path.GetFileName(configDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (string.Equals(directoryName, StageDirectoryName, StringComparison.OrdinalIgnoreCase))
+        {
+            var parent = Directory.GetParent(configDirectory);
+            if (parent is not null)
+            {
+                return parent.FullName;
+            }
+        }
+
+        return configDirectory;
+    }
+
+    private static string ResolveConfiguredPath(string configuredPath, string applicationRoot, string? configDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(configuredPath))
+        {
+            return configuredPath;
+        }
+
+        if (Path.IsPathRooted(configuredPath))
+        {
+            return Path.GetFullPath(configuredPath);
+        }
+
+        var appRootCandidate = Path.GetFullPath(Path.Combine(applicationRoot, configuredPath));
+        if (Path.Exists(appRootCandidate))
+        {
+            return appRootCandidate;
+        }
+
+        if (!string.IsNullOrWhiteSpace(configDirectory))
+        {
+            var configDirectoryCandidate = Path.GetFullPath(Path.Combine(configDirectory, configuredPath));
+            if (Path.Exists(configDirectoryCandidate))
+            {
+                return configDirectoryCandidate;
+            }
+        }
+
+        return appRootCandidate;
     }
 }
 

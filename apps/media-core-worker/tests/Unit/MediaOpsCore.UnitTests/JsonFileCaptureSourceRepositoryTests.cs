@@ -105,4 +105,70 @@ public sealed class JsonFileCaptureSourceRepositoryTests
         }
         finally { if (File.Exists(tempPath)) File.Delete(tempPath); }
     }
+
+    [Fact]
+    public async Task UpdateStreamUrlAsync_should_persist_new_stream_url()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"sources-{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(tempPath,
+                """
+                [{"sourceId":"s1","platform":"P","media":"radio","streamUrl":"https://old.example.com/live"}]
+                """);
+
+            var sut = new JsonFileCaptureSourceRepository(new OperationsWorkerOptions { CaptureSourcesFilePath = tempPath });
+
+            var changed = await sut.UpdateStreamUrlAsync("s1", "https://new.example.com/live");
+            var updated = await sut.ListAllAsync();
+
+            Assert.True(changed);
+            Assert.Equal("https://new.example.com/live", updated[0].StreamUrl);
+        }
+        finally { if (File.Exists(tempPath)) File.Delete(tempPath); }
+    }
+
+    [Fact]
+    public async Task UpdateFallbackUrlsAsync_should_store_distinct_non_empty_values()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"sources-{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(tempPath,
+                """
+                [{"sourceId":"s1","platform":"P","media":"radio","streamUrl":"https://a.example.com/live"}]
+                """);
+
+            var sut = new JsonFileCaptureSourceRepository(new OperationsWorkerOptions { CaptureSourcesFilePath = tempPath });
+
+            var changed = await sut.UpdateFallbackUrlsAsync("s1", ["https://f1.example.com", "https://f1.example.com", ""]);
+            var updated = await sut.ListAllAsync();
+
+            Assert.True(changed);
+            Assert.Single(updated[0].FallbackStreamUrls);
+        }
+        finally { if (File.Exists(tempPath)) File.Delete(tempPath); }
+    }
+
+    [Fact]
+    public async Task UpdateExclusionAsync_should_toggle_excluded_flag()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"sources-{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(tempPath,
+                """
+                [{"sourceId":"s1","platform":"P","media":"radio","streamUrl":"https://a.example.com/live"}]
+                """);
+
+            var sut = new JsonFileCaptureSourceRepository(new OperationsWorkerOptions { CaptureSourcesFilePath = tempPath });
+
+            var changed = await sut.UpdateExclusionAsync("s1", true);
+            var updated = await sut.ListAllAsync();
+
+            Assert.True(changed);
+            Assert.True(updated[0].IsExcluded);
+        }
+        finally { if (File.Exists(tempPath)) File.Delete(tempPath); }
+    }
 }

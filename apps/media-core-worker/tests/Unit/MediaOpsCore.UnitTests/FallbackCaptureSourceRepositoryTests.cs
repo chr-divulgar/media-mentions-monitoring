@@ -103,15 +103,59 @@ public sealed class FallbackCaptureSourceRepositoryTests
         Assert.False(secondary.WasCalled);
     }
 
+    [Fact]
+    public async Task UpdateStreamUrlAsync_should_write_to_secondary_even_when_primary_succeeds()
+    {
+        var primary = new StubRepository([MakeSource("a")]);
+        var secondary = new StubRepository([MakeSource("a")]);
+
+        var changed = await Build(primary, secondary)
+            .UpdateStreamUrlAsync("a", "https://new.example.com/stream");
+
+        Assert.True(changed);
+        Assert.True(primary.UpdateStreamUrlWasCalled);
+        Assert.True(secondary.UpdateStreamUrlWasCalled);
+    }
+
+    [Fact]
+    public async Task UpdateStreamUrlAsync_should_return_true_when_primary_fails_and_secondary_succeeds()
+    {
+        var primary = new ThrowingRepository(new HttpRequestException("primary failed"));
+        var secondary = new StubRepository([MakeSource("a")]);
+
+        var changed = await Build(primary, secondary)
+            .UpdateStreamUrlAsync("a", "https://new.example.com/stream");
+
+        Assert.True(changed);
+        Assert.True(secondary.UpdateStreamUrlWasCalled);
+    }
+
     private sealed class StubRepository : ICaptureSourceRepository
     {
         private readonly IReadOnlyList<CaptureSource> sources;
         public bool WasCalled { get; private set; }
+        public bool UpdateStreamUrlWasCalled { get; private set; }
         public StubRepository(IReadOnlyList<CaptureSource> sources) => this.sources = sources;
         public Task<IReadOnlyList<CaptureSource>> ListAllAsync(CancellationToken ct = default)
         {
             WasCalled = true;
             return Task.FromResult(sources);
+        }
+
+        public Task<bool> UpdateStreamUrlAsync(string sourceId, string streamUrl, CancellationToken cancellationToken = default)
+        {
+            UpdateStreamUrlWasCalled = true;
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> UpdateFallbackUrlsAsync(string sourceId, IReadOnlyList<string> fallbackStreamUrls, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> UpdateExclusionAsync(string sourceId, bool excluded, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(true);
         }
     }
 
@@ -120,6 +164,15 @@ public sealed class FallbackCaptureSourceRepositoryTests
         private readonly Exception exception;
         public ThrowingRepository(Exception exception) => this.exception = exception;
         public Task<IReadOnlyList<CaptureSource>> ListAllAsync(CancellationToken ct = default) =>
+            throw exception;
+
+        public Task<bool> UpdateStreamUrlAsync(string sourceId, string streamUrl, CancellationToken cancellationToken = default) =>
+            throw exception;
+
+        public Task<bool> UpdateFallbackUrlsAsync(string sourceId, IReadOnlyList<string> fallbackStreamUrls, CancellationToken cancellationToken = default) =>
+            throw exception;
+
+        public Task<bool> UpdateExclusionAsync(string sourceId, bool excluded, CancellationToken cancellationToken = default) =>
             throw exception;
     }
 }

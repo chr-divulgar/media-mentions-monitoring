@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
 using Microsoft.Extensions.Logging;
@@ -91,9 +92,73 @@ public sealed class FirebaseCaptureSourceRepository : ICaptureSourceRepository
         return sources;
     }
 
+    public Task<bool> UpdateStreamUrlAsync(string sourceId, string streamUrl, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId) || string.IsNullOrWhiteSpace(streamUrl))
+        {
+            return Task.FromResult(false);
+        }
+
+        return PatchAsync(sourceId, new { streamUrl }, cancellationToken);
+    }
+
+    public Task<bool> UpdateFallbackUrlsAsync(string sourceId, IReadOnlyList<string> fallbackStreamUrls, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId) || fallbackStreamUrls is null)
+        {
+            return Task.FromResult(false);
+        }
+
+        var cleaned = fallbackStreamUrls
+            .Where(url => !string.IsNullOrWhiteSpace(url))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return PatchAsync(sourceId, new { fallbackStreamUrls = cleaned.Length > 0 ? cleaned : null as string[] }, cancellationToken);
+    }
+
+    public Task<bool> UpdateExclusionAsync(string sourceId, bool excluded, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId))
+        {
+            return Task.FromResult(false);
+        }
+
+        return PatchAsync(sourceId, new { excluded = excluded ? true : null as bool? }, cancellationToken);
+    }
+
     private string BuildUri()
     {
         var uri = $"{options.BaseUrl!.TrimEnd('/')}/{options.PlatformsPath}.json";
+        if (!string.IsNullOrWhiteSpace(options.AuthToken))
+            uri += $"?auth={Uri.EscapeDataString(options.AuthToken)}";
+        return uri;
+    }
+
+    private async Task<bool> PatchAsync(string sourceId, object payload, CancellationToken cancellationToken)
+    {
+        var uri = BuildSourceUri(sourceId);
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(options.RequestTimeoutSeconds));
+
+        var json = JsonSerializer.Serialize(payload, SerializerOptions);
+        using var request = new HttpRequestMessage(HttpMethod.Patch, uri)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+
+        logger.LogDebug("[FirebaseCaptureSourceRepository] Patching source {SourceId} at {Uri}", sourceId, uri);
+
+        using var response = await httpClient.SendAsync(request, cts.Token).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        return true;
+    }
+
+    private string BuildSourceUri(string sourceId)
+    {
+        var escapedSourceId = Uri.EscapeDataString(sourceId);
+        var uri = $"{options.BaseUrl!.TrimEnd('/')}/{options.PlatformsPath}/{escapedSourceId}.json";
         if (!string.IsNullOrWhiteSpace(options.AuthToken))
             uri += $"?auth={Uri.EscapeDataString(options.AuthToken)}";
         return uri;

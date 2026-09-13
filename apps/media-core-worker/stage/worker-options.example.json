@@ -29,8 +29,8 @@
   "flacSilenceHighPassCutoffHz": 120,
   "ytdlpBinDirectory": "bin",
   "ytdlpResolutionTimeoutSeconds": 60,
-  "youtubeCookiesFilePath": "stage/cookies/youtube-cookies.txt",
-  "youtubeCookiesAlertFilePath": "stage/cookies/youtube-auth-required.flag",
+  "youtubeCookiesFilePath": "../../shared-cookies/youtube-cookies.txt",
+  "youtubeCookiesAlertFilePath": "../../shared-cookies/youtube-auth-required.flag",
 
   "firebaseDatabase": {
     "baseUrl": "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",

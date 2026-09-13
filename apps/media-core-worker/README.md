@@ -22,6 +22,12 @@ dotnet build MediaOpsCore.sln -c Release
 dotnet test MediaOpsCore.sln -c Release
 ```
 
+## Environment
+
+- Copy `.env.example` to `.env` and provide real values locally.
+- Keep `.env.example` as placeholders only; never commit real Firebase credentials.
+- The template includes both `FIREBASE_CLIENT_X509_CERT_URL` (preferred) and `FIREBBASE_CLIENT_X509_CERT_URL` (legacy typo key) so existing deployments can migrate safely.
+
 ## Startup Stream Recovery
 
 At startup, the worker executes source initialization before background workers start:

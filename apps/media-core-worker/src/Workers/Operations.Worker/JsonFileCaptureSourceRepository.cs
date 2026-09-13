@@ -64,4 +64,116 @@ public sealed class JsonFileCaptureSourceRepository : ICaptureSourceRepository
 
         return Task.FromResult(result);
     }
+
+    public Task<bool> UpdateStreamUrlAsync(string sourceId, string streamUrl, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(sourceId) || string.IsNullOrWhiteSpace(streamUrl))
+            return Task.FromResult(false);
+
+        var items = LoadFileItems();
+        if (items.Count == 0)
+            return Task.FromResult(false);
+
+        var sourceIndex = items.FindIndex(item =>
+            string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+        if (sourceIndex < 0)
+            return Task.FromResult(false);
+
+        if (string.Equals(items[sourceIndex].StreamUrl, streamUrl, StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult(false);
+
+        items[sourceIndex] = items[sourceIndex] with { StreamUrl = streamUrl };
+        SaveFileItems(items, ignoreNulls: false);
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> UpdateFallbackUrlsAsync(string sourceId, IReadOnlyList<string> fallbackStreamUrls, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(sourceId) || fallbackStreamUrls is null)
+            return Task.FromResult(false);
+
+        var items = LoadFileItems();
+        if (items.Count == 0)
+            return Task.FromResult(false);
+
+        var sourceIndex = items.FindIndex(item =>
+            string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+        if (sourceIndex < 0)
+            return Task.FromResult(false);
+
+        var cleaned = fallbackStreamUrls
+            .Where(url => !string.IsNullOrWhiteSpace(url))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var existing = items[sourceIndex].FallbackStreamUrls;
+        if (existing is not null && existing.SequenceEqual(cleaned, StringComparer.OrdinalIgnoreCase))
+            return Task.FromResult(false);
+
+        if ((existing is null || existing.Count == 0) && cleaned.Length == 0)
+            return Task.FromResult(false);
+
+        items[sourceIndex] = items[sourceIndex] with { FallbackStreamUrls = cleaned.Length > 0 ? cleaned : null };
+        SaveFileItems(items, ignoreNulls: false);
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> UpdateExclusionAsync(string sourceId, bool excluded, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(sourceId))
+            return Task.FromResult(false);
+
+        var items = LoadFileItems();
+        if (items.Count == 0)
+            return Task.FromResult(false);
+
+        var sourceIndex = items.FindIndex(item =>
+            string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+        if (sourceIndex < 0)
+            return Task.FromResult(false);
+
+        var current = items[sourceIndex].Excluded ?? false;
+        if (current == excluded)
+            return Task.FromResult(false);
+
+        items[sourceIndex] = items[sourceIndex] with { Excluded = excluded ? true : null };
+        SaveFileItems(items, ignoreNulls: true);
+        return Task.FromResult(true);
+    }
+
+    private List<CaptureSourceFileItem> LoadFileItems()
+    {
+        if (string.IsNullOrWhiteSpace(options.CaptureSourcesFilePath))
+            throw new InvalidOperationException("CaptureSourcesFilePath is required.");
+
+        if (!File.Exists(options.CaptureSourcesFilePath))
+            throw new FileNotFoundException("Capture sources file not found.", options.CaptureSourcesFilePath);
+
+        var json = File.ReadAllText(options.CaptureSourcesFilePath);
+        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, SerializerOptions);
+        if (items is null)
+            throw new InvalidOperationException("Capture sources file is invalid.");
+
+        return items;
+    }
+
+    private void SaveFileItems(List<CaptureSourceFileItem> items, bool ignoreNulls)
+    {
+        var updatedJson = JsonSerializer.Serialize(items, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true,
+            DefaultIgnoreCondition = ignoreNulls
+                ? System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+                : System.Text.Json.Serialization.JsonIgnoreCondition.Never
+        });
+
+        File.WriteAllText(options.CaptureSourcesFilePath, updatedJson);
+    }
 }

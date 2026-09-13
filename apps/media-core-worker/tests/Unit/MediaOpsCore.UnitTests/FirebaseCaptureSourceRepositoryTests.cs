@@ -173,6 +173,42 @@ public sealed class FirebaseCaptureSourceRepositoryTests
         Assert.Contains("/config/sources.json", capturedUri!.ToString());
     }
 
+    [Fact]
+    public async Task UpdateStreamUrlAsync_should_PATCH_source_uri()
+    {
+        HttpMethod? capturedMethod = null;
+        Uri? capturedUri = null;
+
+        var handler = new RecordingHandler(req =>
+        {
+            capturedMethod = req.Method;
+            capturedUri = req.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            };
+        });
+
+        var sut = Build(handler);
+        var changed = await sut.UpdateStreamUrlAsync("source-1", "https://new.example.com/live");
+
+        Assert.True(changed);
+        Assert.Equal(HttpMethod.Patch, capturedMethod);
+        Assert.Equal("https://test.firebaseio.com/platforms/source-1.json", capturedUri!.ToString());
+    }
+
+    [Fact]
+    public async Task UpdateExclusionAsync_should_return_false_when_source_id_is_blank()
+    {
+        var handler = new RecordingHandler(_ =>
+            throw new InvalidOperationException("HTTP should not be called for invalid input."));
+
+        var sut = Build(handler);
+        var changed = await sut.UpdateExclusionAsync("", true);
+
+        Assert.False(changed);
+    }
+
     private sealed class RecordingHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> handler;

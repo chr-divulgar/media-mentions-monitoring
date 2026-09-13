@@ -72,6 +72,10 @@ public sealed class OperationsWorkerOptions
 
     public int YtdlpResolutionTimeoutSeconds { get; set; } = 60;
 
+    public bool UseBrowserCookies { get; set; } = false;
+
+    public string BrowserCookiesSource { get; set; } = "edge";
+
     public string? YoutubeCookiesFilePath { get; set; }
 
     public string YoutubeCookiesAlertFilePath { get; set; } = "stage/cookies/youtube-auth-required.flag";

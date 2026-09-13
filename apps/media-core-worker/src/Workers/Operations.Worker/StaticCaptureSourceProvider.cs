@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
 
@@ -10,9 +9,6 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
     private readonly ICaptureSourceRepository sourceRepository;
     private readonly object syncRoot = new();
     private IReadOnlyList<CaptureSource>? resolvedSources;
-
-    // Used only by the Persist* methods that write runtime state back to the local JSON file.
-    private sealed record CaptureSourceFileItem(string SourceId, string Platform, string Media, string StreamUrl, string? PrimaryUrl, string? Country, IReadOnlyList<string>? FallbackStreamUrls = null, bool? Excluded = null);
 
     public StaticCaptureSourceProvider(OperationsWorkerOptions options, ICaptureSourceRepository sourceRepository)
     {
@@ -115,121 +111,17 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 
     public Task<bool> PersistStreamUrlAsync(string sourceId, string streamUrl, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(sourceId) || string.IsNullOrWhiteSpace(streamUrl))
-        {
-            return Task.FromResult(false);
-        }
-
-        var json = File.ReadAllText(options.CaptureSourcesFilePath);
-        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, JsonFileCaptureSourceRepository.SerializerOptions);
-        if (items is null || items.Count == 0)
-        {
-            return Task.FromResult(false);
-        }
-
-        var sourceIndex = items.FindIndex(item => string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
-        if (sourceIndex < 0)
-        {
-            return Task.FromResult(false);
-        }
-
-        if (string.Equals(items[sourceIndex].StreamUrl, streamUrl, StringComparison.OrdinalIgnoreCase))
-        {
-            return Task.FromResult(false);
-        }
-
-        items[sourceIndex] = items[sourceIndex] with { StreamUrl = streamUrl };
-
-        var updatedJson = JsonSerializer.Serialize(items, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true
-        });
-
-        File.WriteAllText(options.CaptureSourcesFilePath, updatedJson);
-        return Task.FromResult(true);
+        return sourceRepository.UpdateStreamUrlAsync(sourceId, streamUrl, cancellationToken);
     }
 
     public Task<bool> PersistFallbackStreamUrlsAsync(string sourceId, IReadOnlyList<string> fallbackStreamUrls, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(sourceId) || fallbackStreamUrls is null)
-        {
-            return Task.FromResult(false);
-        }
-
-        var json = File.ReadAllText(options.CaptureSourcesFilePath);
-        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, JsonFileCaptureSourceRepository.SerializerOptions);
-        if (items is null || items.Count == 0)
-        {
-            return Task.FromResult(false);
-        }
-
-        var sourceIndex = items.FindIndex(item => string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
-        if (sourceIndex < 0)
-        {
-            return Task.FromResult(false);
-        }
-
-        var cleaned = fallbackStreamUrls
-            .Where(u => !string.IsNullOrWhiteSpace(u))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        var existing = items[sourceIndex].FallbackStreamUrls;
-        if (existing is not null && existing.SequenceEqual(cleaned, StringComparer.OrdinalIgnoreCase))
-        {
-            return Task.FromResult(false);
-        }
-
-        items[sourceIndex] = items[sourceIndex] with { FallbackStreamUrls = cleaned.Length > 0 ? cleaned : null };
-
-        var updatedJson = JsonSerializer.Serialize(items, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true
-        });
-
-        File.WriteAllText(options.CaptureSourcesFilePath, updatedJson);
-        return Task.FromResult(true);
+        return sourceRepository.UpdateFallbackUrlsAsync(sourceId, fallbackStreamUrls, cancellationToken);
     }
 
     public Task<bool> PersistExclusionAsync(string sourceId, bool excluded, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(sourceId))
-        {
-            return Task.FromResult(false);
-        }
-
-        var json = File.ReadAllText(options.CaptureSourcesFilePath);
-        var items = JsonSerializer.Deserialize<List<CaptureSourceFileItem>>(json, JsonFileCaptureSourceRepository.SerializerOptions);
-        if (items is null || items.Count == 0)
-        {
-            return Task.FromResult(false);
-        }
-
-        var sourceIndex = items.FindIndex(item => string.Equals(item.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
-        if (sourceIndex < 0)
-        {
-            return Task.FromResult(false);
-        }
-
-        var current = items[sourceIndex].Excluded ?? false;
-        if (current == excluded)
-        {
-            return Task.FromResult(false);
-        }
-
-        items[sourceIndex] = items[sourceIndex] with { Excluded = excluded ? true : null };
-
-        var updatedJson = JsonSerializer.Serialize(items, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true,
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-        });
-
-        File.WriteAllText(options.CaptureSourcesFilePath, updatedJson);
-        return Task.FromResult(true);
+        return sourceRepository.UpdateExclusionAsync(sourceId, excluded, cancellationToken);
     }
 
     private IReadOnlyList<CaptureSource> ApplyContinuousMediaFilter(IReadOnlyList<CaptureSource> sources)

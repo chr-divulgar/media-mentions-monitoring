@@ -1,5 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using System.Net;
+using System.Text.Json;
 
 using MediaOpsCore.BuildingBlocks.Application;
 using MediaOpsCore.Modules.Capture.Application;
@@ -11,6 +14,9 @@ var builder = Host.CreateApplicationBuilder(args);
 var options = OperationsWorkerOptionsLoader.Load();
 
 builder.Services.AddSingleton(options);
+
+// Add hosted service for YouTube cookies HTTP endpoint
+builder.Services.AddHostedService<YouTubeCookiesHttpService>();
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IMonitoringArtifactRepository, StageMirrorMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IEvidenceFileStore, FileSystemEvidenceStore>();
@@ -41,6 +47,7 @@ builder.Services.AddSingleton<IProcessRunner, LocalSystemProcessRunner>();
 builder.Services.AddSingleton<YtdlpBinaryProvider>();
 builder.Services.AddSingleton<IYtdlpBinaryProvider>(sp => sp.GetRequiredService<YtdlpBinaryProvider>());
 builder.Services.AddSingleton<IYouTubeCookiesAlertService, YouTubeCookiesAlertService>();
+builder.Services.AddSingleton<IYouTubeCookiesValidator, YouTubeCookiesValidator>();
 builder.Services.AddSingleton<ILiveStreamUrlResolver, YtdlpLiveStreamUrlResolver>();
 builder.Services.AddSingleton<IStartupSourceInitializationService, StartupSourceInitializationService>();
 builder.Services.AddSingleton<SourceAvailabilityReconciliationService>();
