@@ -42,6 +42,7 @@
   },
   "dependencies": {
     "@fastify/compress": "7.0.3",
-    "fastify": "4.28.1"
+    "fastify": "4.28.1",
+    "puppeteer": "^25.6.0"
   }
 }

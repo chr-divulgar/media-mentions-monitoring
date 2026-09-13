@@ -9,3 +9,4 @@ allowBuilds:
   ffmpeg-static: true
   nx: true
   protobufjs: true
+  puppeteer: true
