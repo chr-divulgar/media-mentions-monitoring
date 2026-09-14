@@ -106,7 +106,12 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
                 "/249/250/140/251" +
                 "/bestaudio" +
                 "/best";
-            args.AddRange(["--get-url", "--format", preferredFormat, "--no-playlist", "--quiet", source.StreamUrl]);
+            // Resolve from the durable channel/live page (PrimaryUrl), not StreamUrl — for YouTube
+            // sources StreamUrl is overwritten with the last resolved ephemeral CDN URL, which
+            // expires and isn't recognized by yt-dlp's YouTube extractor (falls back to
+            // [generic], causing a raw 403 that then gets misclassified as AuthRequired).
+            var resolutionUrl = string.IsNullOrWhiteSpace(source.PrimaryUrl) ? source.StreamUrl : source.PrimaryUrl;
+            args.AddRange(["--get-url", "--format", preferredFormat, "--no-playlist", "--quiet", resolutionUrl]);
 
             using var timeoutCts = new CancellationTokenSource(
                 TimeSpan.FromSeconds(options.YtdlpResolutionTimeoutSeconds));
