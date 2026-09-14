@@ -1,17 +1,18 @@
 export interface YouTubeStatusDto {
-  status: 'healthy' | 'degraded' | 'unhealthy';
-  cookiesFileExists: boolean;
-  cookiesValid: boolean;
-  cookieCount?: number;
-  earliestExpiration?: string;
-  hasYouTubeDomain: boolean;
+  status: 'healthy' | 'degraded' | 'unhealthy' | 'worker_unreachable';
+  workerReachable: boolean;
+  cookiesFileExists: boolean | null;
+  cookiesValid: boolean | null;
+  cookieCount: number | null;
+  earliestExpiration: string | null;
+  hasYouTubeDomain: boolean | null;
   excludedYouTubeSources: string[];
   authAlertActive: boolean;
   alertFilePath: string;
   message: string;
   lastCheckTime: string;
-  totalYouTubeSources: number;
-  activeYouTubeSources: number;
+  totalYouTubeSources: number | null;
+  activeYouTubeSources: number | null;
 }
 
 export interface CookiesValidationDto {

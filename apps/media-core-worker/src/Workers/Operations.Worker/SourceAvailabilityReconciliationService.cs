@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace MediaOpsCore.Workers.Operations;
 
-public sealed class SourceAvailabilityReconciliationService : BackgroundService, ICaptureAttemptObserver
+public sealed class SourceAvailabilityReconciliationService : BackgroundService, ICaptureAttemptObserver, IYouTubeReconciliationTrigger
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(1);
     // Minute 0 is included so that sources excluded at :59 are retried at the very
@@ -190,6 +190,53 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             .AddMinutes(1);
         var delay = next - now;
         return delay.TotalSeconds < 1 ? TimeSpan.FromMinutes(1) : delay;
+    }
+
+    // Invoked when fresh cookies arrive via YouTubeCookiesHttpService — recovers currently-excluded
+    // YouTube sources right away instead of waiting for the next scheduled tick (minute 0/1/30/59)
+    // or an in-flight hot-recovery loop's next per-minute attempt.
+    public async Task<int> TriggerImmediateReconciliationAsync(CancellationToken cancellationToken = default)
+    {
+        var configuredSources = await captureSourceProvider.ListConfiguredSourcesAsync(cancellationToken).ConfigureAwait(false);
+
+        var resolvedIds = captureSourceProvider
+            .ListResolvedSources()
+            .Select(source => source.SourceId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var excludedTvSources = configuredSources
+            .Where(source => liveStreamUrlResolver.CanResolve(source)
+                          && !resolvedIds.Contains(source.SourceId)
+                          && !inFlightHotRecovery.ContainsKey(source.SourceId))
+            .ToArray();
+
+        var recoveredCount = 0;
+
+        foreach (var source in excludedTvSources)
+        {
+            var recovered = await TryRecoverSourceAsync(source, cancellationToken).ConfigureAwait(false);
+            if (recovered is null)
+            {
+                continue;
+            }
+
+            captureSourceProvider.AddOrUpdateResolvedSource(recovered);
+            await captureSourceProvider
+                .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, cancellationToken)
+                .ConfigureAwait(false);
+            await captureSourceProvider
+                .PersistExclusionAsync(recovered.SourceId, false, cancellationToken)
+                .ConfigureAwait(false);
+
+            recoveredCount++;
+            _ = Task.Run(() => TriggerCaptureAsync(recovered), CancellationToken.None);
+        }
+
+        logger.LogInformation(
+            "Immediate YouTube reconciliation finished. Recovered={RecoveredCount} of {AttemptedCount} excluded TV source(s).",
+            recoveredCount, excludedTvSources.Length);
+
+        return recoveredCount;
     }
 
     private async Task ReconcileExcludedAtScheduledMinutesAsync(CancellationToken cancellationToken)

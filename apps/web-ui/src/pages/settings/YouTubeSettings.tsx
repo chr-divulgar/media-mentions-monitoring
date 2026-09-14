@@ -20,6 +20,7 @@ import {
   CloseOutlined,
   CheckOutlined,
   RobotOutlined,
+  DisconnectOutlined,
 } from "@ant-design/icons";
 import { useQuery, useMutation } from "react-query";
 import dayjs from "dayjs";
@@ -147,11 +148,14 @@ export const YouTubeSettings: React.FC = () => {
     sendCookiesToWorkerMutation.mutate();
   };
 
-  // Get status colors
+  // Get status colors. "worker_unreachable" gets its own neutral color/icon, distinct from
+  // "unhealthy" (auth required) — one means "renew cookies", the other means "the worker
+  // itself isn't responding", and those call for different operator actions.
   const getStatusColor = () => {
     if (!status) return "default";
     if (status.status === "healthy") return "green";
     if (status.status === "degraded") return "orange";
+    if (status.status === "worker_unreachable") return "#8c8c8c";
     return "red";
   };
 
@@ -159,6 +163,7 @@ export const YouTubeSettings: React.FC = () => {
     if (!status) return null;
     if (status.status === "healthy") return <CheckCircleOutlined />;
     if (status.status === "degraded") return <ExclamationCircleOutlined />;
+    if (status.status === "worker_unreachable") return <DisconnectOutlined />;
     return <CloseOutlined />;
   };
 
@@ -192,28 +197,56 @@ export const YouTubeSettings: React.FC = () => {
                 <Col xs={24} sm={12} md={6}>
                   <Statistic
                     title="Cookies File"
-                    value={status.cookiesFileExists ? "Exists" : "Missing"}
-                    prefix={status.cookiesFileExists ? <CheckOutlined /> : <CloseOutlined />}
+                    value={
+                      !status.workerReachable
+                        ? "Unknown"
+                        : status.cookiesFileExists
+                        ? "Exists"
+                        : "Missing"
+                    }
+                    prefix={
+                      !status.workerReachable ? undefined : status.cookiesFileExists ? (
+                        <CheckOutlined />
+                      ) : (
+                        <CloseOutlined />
+                      )
+                    }
                     valueStyle={{
-                      color: status.cookiesFileExists ? "#52c41a" : "#f5222d",
+                      color: !status.workerReachable
+                        ? "#8c8c8c"
+                        : status.cookiesFileExists
+                        ? "#52c41a"
+                        : "#f5222d",
                     }}
                   />
                 </Col>
                 <Col xs={24} sm={12} md={6}>
                   <Statistic
                     title="Validation"
-                    value={status.cookiesValid ? "Valid" : "Invalid"}
-                    prefix={status.cookiesValid ? <CheckOutlined /> : <CloseOutlined />}
+                    value={
+                      !status.workerReachable ? "Unknown" : status.cookiesValid ? "Valid" : "Invalid"
+                    }
+                    prefix={
+                      !status.workerReachable ? undefined : status.cookiesValid ? (
+                        <CheckOutlined />
+                      ) : (
+                        <CloseOutlined />
+                      )
+                    }
                     valueStyle={{
-                      color: status.cookiesValid ? "#52c41a" : "#f5222d",
+                      color: !status.workerReachable
+                        ? "#8c8c8c"
+                        : status.cookiesValid
+                        ? "#52c41a"
+                        : "#f5222d",
                     }}
                   />
                 </Col>
                 <Col xs={24} sm={12} md={6}>
                   <Statistic
                     title="Cookie Count"
-                    value={status.cookieCount ?? 0}
-                    suffix={status.cookieCount ? " cookies" : ""}
+                    value={status.workerReachable ? status.cookieCount ?? 0 : "Unknown"}
+                    suffix={status.workerReachable && status.cookieCount ? " cookies" : ""}
                   />
                 </Col>
               </Row>
@@ -234,6 +267,18 @@ export const YouTubeSettings: React.FC = () => {
                     </Text>
                   </Col>
                 </Row>
+              )}
+
+              {!status.workerReachable && (
+                <>
+                  <Divider />
+                  <Alert
+                    message="Worker Unreachable"
+                    description="The recording worker did not respond. Cookie and recording status below cannot be verified — this does not necessarily mean cookies have expired, only that the worker's health endpoint could not be reached."
+                    type="warning"
+                    showIcon
+                  />
+                </>
               )}
 
               {status.authAlertActive && (

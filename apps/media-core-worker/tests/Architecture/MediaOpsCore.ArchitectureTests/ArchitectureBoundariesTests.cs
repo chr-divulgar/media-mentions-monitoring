@@ -85,6 +85,23 @@ public sealed class ArchitectureBoundariesTests
             "MediaOpsCore.Modules.ProcessGuardian.Infrastructure");
     }
 
+    [Fact]
+    public void YouTubeCookiesHttpService_should_not_depend_on_reconciliation_service_concretely()
+    {
+        // The HTTP listener must stay a thin presentation adapter: it triggers reconciliation
+        // through IYouTubeReconciliationTrigger, never by taking a dependency on
+        // SourceAvailabilityReconciliationService itself.
+        var constructor = typeof(MediaOpsCore.Workers.Operations.YouTubeCookiesHttpService)
+            .GetConstructors()
+            .Single();
+
+        var parameterTypes = constructor.GetParameters().Select(parameter => parameter.ParameterType);
+
+        Assert.DoesNotContain(
+            typeof(MediaOpsCore.Workers.Operations.SourceAvailabilityReconciliationService),
+            parameterTypes);
+    }
+
     private static void AssertReferences(Assembly assembly, params string[] expectedReferences)
     {
         var referenceNames = GetReferenceNames(assembly);

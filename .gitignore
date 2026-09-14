@@ -34,17 +34,6 @@ scripts/*.json
 /apps/media-core-worker/stage/*
 /apps/media-core-worker/graphify-out/*
 
-# YouTube Cookies Feature (WIP — ignore documentation, scripts, incomplete code)
-PLAN_YOUTUBE_COOKIES_MANAGEMENT.md
-YOUTUBE_COOKIES_ARCHITECTURE.md
-apps/media-core-worker/EDGE_COOKIES_SETUP.md
-apps/media-core-worker/README_FIREBASE_CONFIG.md
-apps/media-core-worker/README_YOUTUBE_AUTHENTICATION.md
-apps/media-core-worker/scripts/
-apps/media-core-worker/setup_youtube_cookies.ps1
-apps/media-core-worker/src/Workers/Operations.Worker/YouTubeCookies*.cs
-docs/YOUTUBE_COOKIES_HTTP_ENDPOINT_SPEC.md
-shared-cookies/
-apps/web-api/apps/
-apps/web-api/shared-cookies/
-apps/web-api/stage/
+# YouTube cookies: real credential files only. The feature's code and docs are finished
+# and tracked normally — only the actual cookie/flag content is a secret.
+/shared-cookies/

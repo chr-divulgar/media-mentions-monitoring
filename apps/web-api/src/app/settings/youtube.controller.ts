@@ -85,38 +85,6 @@ export class YouTubeController {
   }
 
   /**
-   * Get YouTube cookies file content (for worker consumption).
-   * Worker can call this endpoint to fetch cookies via HTTP.
-   */
-  @Get('youtube/cookies')
-  async getYouTubeCookies(): Promise<{ success: boolean; cookies?: string; message: string }> {
-    try {
-      const cookies = await this.youtubeService.getCookiesContent();
-      if (!cookies) {
-        return {
-          success: false,
-          message: 'No cookies found. Please extract cookies first.',
-        };
-      }
-      return {
-        success: true,
-        cookies,
-        message: 'Cookies retrieved successfully',
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Error retrieving cookies: ${errorMsg}`);
-      throw new HttpException(
-        {
-          status: HttpStatus.INTERNAL_SERVER_ERROR,
-          error: `Error retrieving cookies: ${errorMsg}`,
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  /**
    * Get authentication instructions and URLs.
    */
   @Get('youtube/auth-instructions')

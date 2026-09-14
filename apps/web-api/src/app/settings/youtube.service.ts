@@ -18,6 +18,20 @@ type LoginSession = {
   createdAt: number;
 };
 
+// Mirrors the worker's YouTubeHealthResponse (GET /youtube/health), serialized camelCase.
+type WorkerHealthPayload = {
+  authAlertActive: boolean;
+  cookiesFileExists: boolean;
+  cookiesValid: boolean;
+  cookieCount?: number;
+  earliestExpiration?: string;
+  hasYouTubeDomain: boolean;
+  excludedSourceIds: string[];
+  totalTvSources: number;
+  activeTvSources: number;
+  message: string;
+};
+
 @Injectable()
 export class YouTubeService {
   private readonly logger = new Logger(YouTubeService.name);
@@ -37,33 +51,27 @@ export class YouTubeService {
     process.env.YOUTUBE_BROWSER_USER_DATA_DIR ||
     path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Edge', 'User Data');
 
-  // Shared cookies path (in project root for both NestJS and Worker to access)
+  // Shared cookies directory (project root, readable by both NestJS and the worker).
+  // Resolved from this file's own location rather than process.cwd() — the cwd varies
+  // depending on how NestJS was launched (from the repo root vs. from apps/web-api),
+  // which previously caused the cookies file and alert flag to be written to different,
+  // inconsistent directories depending on how the process happened to start.
+  // __dirname is apps/web-api/src/app/settings (or dist/app/settings once compiled),
+  // which sits at the same depth under apps/web-api either way.
+  private static readonly PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
+
   private getSharedCookiesPath(): string {
-    if (process.env.YOUTUBE_COOKIES_PATH) {
-      return process.env.YOUTUBE_COOKIES_PATH;
-    }
-
-    // Resolve to project root regardless of where backend is executed from
-    const cwd = process.cwd();
-    const projectRoot = cwd.includes('apps' + path.sep + 'web-api')
-      ? path.resolve(cwd, '..', '..')
-      : cwd;
-
-    return path.resolve(projectRoot, 'shared-cookies', 'youtube-cookies.txt');
+    return (
+      process.env.YOUTUBE_COOKIES_PATH ||
+      path.resolve(YouTubeService.PROJECT_ROOT, 'shared-cookies', 'youtube-cookies.txt')
+    );
   }
 
   private getSharedAlertPath(): string {
-    if (process.env.YOUTUBE_ALERT_FLAG_PATH) {
-      return process.env.YOUTUBE_ALERT_FLAG_PATH;
-    }
-
-    // Same logic as getSharedCookiesPath
-    const cwd = process.cwd();
-    const projectRoot = cwd.includes('apps' + path.sep + 'web-api')
-      ? path.resolve(cwd, '..', '..')
-      : cwd;
-
-    return path.resolve(projectRoot, 'shared-cookies', 'youtube-auth-required.flag');
+    return (
+      process.env.YOUTUBE_ALERT_FLAG_PATH ||
+      path.resolve(YouTubeService.PROJECT_ROOT, 'shared-cookies', 'youtube-auth-required.flag')
+    );
   }
 
   private get cookiesPath(): string {
@@ -75,51 +83,89 @@ export class YouTubeService {
   }
 
   /**
-   * Get YouTube health status.
+   * Get YouTube health status. The worker is the single source of truth: if it can't be
+   * reached, the status is 'worker_unreachable' — there is no local-filesystem fallback,
+   * since a stale cookies file on disk says nothing about whether the worker that actually
+   * records is alive.
    */
   async getYouTubeStatus(): Promise<YouTubeStatusDto> {
-    const cookiesFileExists = fs.existsSync(this.cookiesPath);
-    const authAlertActive = fs.existsSync(this.alertFilePath);
+    const health = await this.checkWorkerHealth();
 
-    let validation: CookiesValidationDto = {
-      isValid: false,
-      fileExists: cookiesFileExists,
-      cookieCount: 0,
-      hasYouTubeDomain: false,
-      message: 'No validation performed',
-    };
-
-    if (cookiesFileExists) {
-      validation = await this.validateCookiesFile();
+    if (!health.reachable || !health.data) {
+      return {
+        status: 'worker_unreachable',
+        workerReachable: false,
+        cookiesFileExists: null,
+        cookiesValid: null,
+        cookieCount: null,
+        earliestExpiration: null,
+        hasYouTubeDomain: null,
+        excludedYouTubeSources: [],
+        authAlertActive: false,
+        alertFilePath: this.alertFilePath,
+        message: 'Worker is unreachable — cannot verify cookie or recording status.',
+        lastCheckTime: new Date().toISOString(),
+        totalYouTubeSources: null,
+        activeYouTubeSources: null,
+      };
     }
 
-    // For now, excluded sources will be fetched from logs or a persistent state file
-    // In a full implementation, the worker would write this to a JSON file
-    const excludedSources = await this.getExcludedYouTubeSources();
-
-    const status = this.determineStatus(validation, authAlertActive, excludedSources.length > 0);
+    const { data } = health;
+    const status = this.determineStatus({
+      authAlertActive: data.authAlertActive,
+      cookiesValid: data.cookiesValid,
+      hasExcluded: data.excludedSourceIds.length > 0,
+    });
 
     return {
       status,
-      cookiesFileExists,
-      cookiesValid: validation.isValid,
-      cookieCount: validation.cookieCount,
-      earliestExpiration: validation.earliestExpiration,
-      hasYouTubeDomain: validation.hasYouTubeDomain,
-      excludedYouTubeSources: excludedSources,
-      authAlertActive,
+      workerReachable: true,
+      cookiesFileExists: data.cookiesFileExists,
+      cookiesValid: data.cookiesValid,
+      cookieCount: data.cookieCount ?? null,
+      earliestExpiration: data.earliestExpiration ?? null,
+      hasYouTubeDomain: data.hasYouTubeDomain,
+      excludedYouTubeSources: data.excludedSourceIds,
+      authAlertActive: data.authAlertActive,
       alertFilePath: this.alertFilePath,
-      message: validation.message,
+      message: data.message,
       lastCheckTime: new Date().toISOString(),
-      totalYouTubeSources: 0, // TODO: fetch from worker
-      activeYouTubeSources: 0, // TODO: fetch from worker
+      totalYouTubeSources: data.totalTvSources,
+      activeYouTubeSources: data.activeTvSources,
     };
   }
 
   /**
-   * Get cookies file content (for worker consumption via HTTP).
+   * Check whether the worker's YouTube HTTP endpoint is reachable and, if so, fetch its
+   * health snapshot (auth alert, cookie validity, excluded/active TV source counts).
    */
-  async getCookiesContent(): Promise<string | null> {
+  private async checkWorkerHealth(): Promise<{ reachable: boolean; data?: WorkerHealthPayload }> {
+    const workerUrl = process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
+
+    try {
+      const response = await fetch(`${workerUrl}/youtube/health`, {
+        signal: AbortSignal.timeout(3000),
+      });
+
+      if (!response.ok) {
+        return { reachable: false };
+      }
+
+      const data = (await response.json()) as WorkerHealthPayload;
+      return { reachable: true, data };
+    } catch (error) {
+      this.logger.warn(
+        `[YouTubeService] Worker health check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { reachable: false };
+    }
+  }
+
+  /**
+   * Get cookies file content. Used internally to relay the current cookies to the worker
+   * over HTTP (see sendCookiesToWorker) — not exposed as a route since nothing else reads it.
+   */
+  private async getCookiesContent(): Promise<string | null> {
     try {
       if (!fs.existsSync(this.cookiesPath)) {
         return null;
@@ -149,39 +195,11 @@ export class YouTubeService {
       fs.mkdirSync(directory, { recursive: true });
     }
 
-    // Write cookies file to shared location
+    // Write cookies file to the shared location the worker reads from.
     fs.writeFileSync(this.cookiesPath, cookiesContent, 'utf-8');
     this.logger.log(`Cookies file saved: ${this.cookiesPath}`);
 
-    // Also sync cookies to worker's stage directory for fallback
-    const workerCookiesPath = path.resolve(process.cwd(), 'apps/media-core-worker/stage/cookies/youtube-cookies.txt');
-    try {
-      fs.mkdirSync(path.dirname(workerCookiesPath), { recursive: true });
-      fs.writeFileSync(workerCookiesPath, cookiesContent, 'utf-8');
-      this.logger.log(`Cookies synced to worker fallback: ${workerCookiesPath}`);
-    } catch (syncError) {
-      this.logger.warn(
-        `Failed to sync cookies to worker fallback: ${syncError instanceof Error ? syncError.message : String(syncError)}`,
-      );
-    }
-
-    // Clear alert flags
-    try {
-      if (fs.existsSync(this.alertFilePath)) {
-        fs.unlinkSync(this.alertFilePath);
-        this.logger.log('YouTube auth alert flag cleared');
-      }
-      // Also clear worker's alert flag
-      const workerAlertPath = path.resolve(process.cwd(), 'apps/media-core-worker/stage/cookies/youtube-auth-required.flag');
-      if (fs.existsSync(workerAlertPath)) {
-        fs.unlinkSync(workerAlertPath);
-        this.logger.log('Worker YouTube auth alert flag cleared');
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Failed to clear alert flag: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    await this.clearAuthAlert();
 
     // Re-validate to ensure it was written correctly
     const revalidation = await this.validateCookiesFile();
@@ -329,25 +347,18 @@ export class YouTubeService {
   }
 
   /**
-   * Get excluded YouTube sources (TODO: implement from worker state).
+   * Determine overall health status from the worker's health snapshot. Only called once the
+   * worker has already been confirmed reachable — 'worker_unreachable' is decided earlier,
+   * in getYouTubeStatus, before this ever runs.
    */
-  private async getExcludedYouTubeSources(): Promise<string[]> {
-    // TODO: Read from a persistent state file written by the worker
-    // For now, return empty array
-    return [];
-  }
-
-  /**
-   * Determine overall health status.
-   */
-  private determineStatus(
-    validation: CookiesValidationDto,
-    authAlertActive: boolean,
-    hasExcluded: boolean,
-  ): 'healthy' | 'degraded' | 'unhealthy' {
-    if (authAlertActive) return 'unhealthy';
-    if (!validation.isValid) return 'degraded';
-    if (hasExcluded) return 'degraded';
+  private determineStatus(params: {
+    authAlertActive: boolean;
+    cookiesValid: boolean;
+    hasExcluded: boolean;
+  }): 'healthy' | 'degraded' | 'unhealthy' {
+    if (params.authAlertActive) return 'unhealthy';
+    if (!params.cookiesValid) return 'degraded';
+    if (params.hasExcluded) return 'degraded';
     return 'healthy';
   }
 
@@ -484,18 +495,6 @@ export class YouTubeService {
       await fs.promises.mkdir(path.dirname(this.cookiesPath), { recursive: true });
       await fs.promises.writeFile(this.cookiesPath, netscapeContent, 'utf-8');
 
-      // Also sync cookies to worker's local stage directory for fallback
-      const workerCookiesPath = path.resolve(process.cwd(), 'apps/media-core-worker/stage/cookies/youtube-cookies.txt');
-      try {
-        await fs.promises.mkdir(path.dirname(workerCookiesPath), { recursive: true });
-        await fs.promises.writeFile(workerCookiesPath, netscapeContent, 'utf-8');
-        this.logger.log(`[YouTubeService] Cookies synced to worker: ${workerCookiesPath}`);
-      } catch (syncError) {
-        this.logger.warn(
-          `[YouTubeService] Failed to sync cookies to worker fallback: ${syncError instanceof Error ? syncError.message : String(syncError)}`,
-        );
-      }
-
       const validation = await this.validateCookiesFile();
       await this.clearAuthAlert();
 
@@ -577,14 +576,10 @@ export class YouTubeService {
         await fs.promises.unlink(this.alertFilePath);
         this.logger.debug('[YouTubeService] Alert flag cleared');
       }
-      // Also clear worker's alert flag
-      const workerAlertPath = path.resolve(process.cwd(), 'apps/media-core-worker/stage/cookies/youtube-auth-required.flag');
-      if (fs.existsSync(workerAlertPath)) {
-        await fs.promises.unlink(workerAlertPath);
-        this.logger.debug('[YouTubeService] Worker alert flag cleared');
-      }
     } catch (error) {
-      this.logger.warn(`[YouTubeService] Could not clear alert flag: ${error}`);
+      this.logger.warn(
+        `[YouTubeService] Could not clear alert flag: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -662,7 +657,9 @@ export class YouTubeService {
         this.logger.log('[YouTubeService] Cookies synced to worker successfully');
         return {
           success: true,
-          message: 'Cookies sent to worker successfully',
+          // Forward the worker's own message rather than asserting a generic one here —
+          // it's the worker that knows whether recovery is immediate or still pending.
+          message: data.message || 'Cookies sent to worker successfully',
         };
       }
 
