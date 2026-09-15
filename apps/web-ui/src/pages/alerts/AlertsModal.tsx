@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Button, Col, Form, message, Modal, Row, Spin, Steps } from "antd";
+import {
+  Button,
+  Col,
+  Form,
+  message,
+  Modal,
+  Radio,
+  Row,
+  Spin,
+  Steps,
+} from "antd";
 import { useAlert } from "./AlertsContext";
 import { useMutation, UseMutationResult } from "react-query";
 import { CreateFileDto, FileDto, Fragment, NoteDto } from "@repo/shared/index";
@@ -36,14 +46,17 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
     new CreateFileDto()
   );
   const [formSummary] = Form.useForm();
+  // Default stays 30 min (1800s), matching today's behavior; the user can widen it
+  // to bring in audio from the adjacent hour's recording (see audio.service.ts).
+  const [segmentDuration, setSegmentDuration] = useState(1800);
 
   const createSegmentDto = useMemo(
     () => ({
       alert: selectedAlert,
-      output: `segment_${selectedAlert?.id}`,
-      duration: 1800,
+      output: `segment_${selectedAlert?.id}_${segmentDuration / 60}`,
+      duration: segmentDuration,
     }),
-    [selectedAlert]
+    [selectedAlert, segmentDuration]
   );
 
   const {
@@ -149,16 +162,30 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
   const steps = [
     {
       title: "Editar Audio",
-      content: errorSegment ? (
-        <div>Error loading Segment</div>
-      ) : (
-        segmentData && (
-          <AudioEdit
-            segmentData={segmentData}
-            audioFile={createSegmentDto.output}
-            onCreateFragmentDto={handleCreateFragment}
-          ></AudioEdit>
-        )
+      content: (
+        <>
+          <Radio.Group
+            value={segmentDuration}
+            onChange={(e) => setSegmentDuration(e.target.value)}
+            disabled={isLoadingSegment}
+            style={{ marginBottom: 12 }}
+          >
+            <Radio.Button value={1800}>30 min</Radio.Button>
+            <Radio.Button value={3600}>1 hora</Radio.Button>
+            <Radio.Button value={7200}>2 horas</Radio.Button>
+          </Radio.Group>
+          {errorSegment ? (
+            <div>Error loading Segment</div>
+          ) : (
+            segmentData && (
+              <AudioEdit
+                segmentData={segmentData}
+                audioFile={createSegmentDto.output}
+                onCreateFragmentDto={handleCreateFragment}
+              ></AudioEdit>
+            )
+          )}
+        </>
       ),
     },
     {
