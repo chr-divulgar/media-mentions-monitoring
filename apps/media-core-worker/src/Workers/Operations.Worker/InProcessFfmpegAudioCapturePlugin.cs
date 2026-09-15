@@ -10,6 +10,7 @@ using System.Threading.Channels;
 using FFmpeg.AutoGen;
 using FFmpeg.AutoGen.Bindings.DynamicallyLoaded;
 using MediaOpsCore.BuildingBlocks.Application;
+using MediaOpsCore.Modules.Alerting.Application;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
 using Microsoft.Extensions.Logging;
@@ -50,14 +51,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         ILogger<InProcessFfmpegAudioCapturePlugin> logger,
         IOperationalMetrics operationalMetrics,
         ICaptureAttemptObserver captureAttemptObserver,
-        IMonitoringArtifactRepository monitoringArtifactRepository)
+        IMonitoringArtifactRepository monitoringArtifactRepository,
+        IDetectAlertsUseCase detectAlertsUseCase)
     {
         this.options = options;
         this.logger = logger;
         this.operationalMetrics = operationalMetrics;
         this.captureAttemptObserver = captureAttemptObserver;
         this.monitoringArtifactRepository = monitoringArtifactRepository;
-        chunkTranscriptionPipeline = new ChunkTranscriptionPipeline(logger);
+        chunkTranscriptionPipeline = new ChunkTranscriptionPipeline(logger, detectAlertsUseCase);
         EnsureFfmpegInitialized();
     }
 
@@ -1444,7 +1446,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 chunkStartedAt,
                 chunkEndedAt,
                 flacWindows,
-                sourceId));
+                sourceId,
+                source.Platform,
+                source.Media,
+                Path.ChangeExtension(transcriptionJsonPath, ".opus")));
 
             if (preserveOverlapForNextChunk)
             {
@@ -2386,7 +2391,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         DateTimeOffset StartTime,
         DateTimeOffset EndTime,
         IReadOnlyList<byte[]> FlacWindows,
-        string SourceId);
+        string SourceId,
+        string Platform,
+        string Media,
+        string FilePath);
 
     private sealed record ChunkTranscriptionItem(string Text, string StartTime, string EndTime, string Status);
 
@@ -2419,6 +2427,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         };
 
         private readonly ILogger logger;
+        private readonly IDetectAlertsUseCase detectAlertsUseCase;
         private readonly HttpClient httpClient;
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private readonly ConcurrentDictionary<string, SourcePipeline> sourcePipelines = new(StringComparer.OrdinalIgnoreCase);
@@ -2435,9 +2444,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             public readonly Task Worker = worker;
         }
 
-        public ChunkTranscriptionPipeline(ILogger logger)
+        public ChunkTranscriptionPipeline(ILogger logger, IDetectAlertsUseCase detectAlertsUseCase)
         {
             this.logger = logger;
+            this.detectAlertsUseCase = detectAlertsUseCase;
             googleApiKey = ResolveGoogleApiKey();
             httpClient = new HttpClient
             {
@@ -2526,6 +2536,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 {
                     var entryText = string.Empty;
                     var entryStatus = "error";
+                    var recognized = false;
 
                     try
                     {
@@ -2534,6 +2545,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         entryText = recognition.Status == RecognitionStatus.Recognized
                             ? recognition.Text
                             : DisplayTextFor(recognition.Status);
+                        recognized = recognition.Status == RecognitionStatus.Recognized;
 
                         if (recognition.Status == RecognitionStatus.NoSpeech)
                         {
@@ -2561,8 +2573,14 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         logger.LogWarning(exception, "Chunk transcription failed for source {SourceId}.", request.SourceId);
                         entryText = "[error de transcripción]";
                         entryStatus = "error";
+                        recognized = false;
                     }
 
+                    // Persist first: AppendOrderedAsync strips any prefix of entryText that duplicates
+                    // the tail of the previous chunk (see StripChunkPrefixOverlap) before writing it, since
+                    // consecutive chunks share TranscriptionChunkOverlapSeconds of audio. Alert detection
+                    // must see that same deduped text, or it double-matches on the repeated boundary phrase.
+                    var dedupedText = entryText;
                     try
                     {
                         var windowEntry = new ChunkTranscriptionItem(
@@ -2571,7 +2589,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                             request.EndTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
                             entryStatus);
 
-                        await AppendOrderedAsync(request.JsonPath, windowEntry).ConfigureAwait(false);
+                        dedupedText = await AppendOrderedAsync(request.JsonPath, windowEntry).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     {
@@ -2581,10 +2599,42 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     {
                         logger.LogWarning(exception, "Failed to persist chunk transcription entry for source {SourceId} into {JsonPath}.", request.SourceId, request.JsonPath);
                     }
+
+                    if (recognized && !string.IsNullOrWhiteSpace(dedupedText))
+                    {
+                        await DetectAlertsSafeAsync(request, dedupedText).ConfigureAwait(false);
+                    }
                 }
             }
             catch (OperationCanceledException)
             {
+            }
+        }
+
+        // ponytail: awaited inline rather than fire-and-forget, so alert detection stays in the same
+        // per-source FIFO order as transcription; if Mongo latency ever throttles throughput, switch to
+        // a fire-and-forget Task.Run here. Failures are swallowed — alert detection must never break
+        // capture/transcription, same contract as the IMonitoringArtifactDatabaseRepository fan-out.
+        private async Task DetectAlertsSafeAsync(ChunkTranscriptionRequest request, string text)
+        {
+            try
+            {
+                await detectAlertsUseCase.ExecuteAsync(
+                    request.Platform,
+                    request.Media,
+                    request.FilePath,
+                    text,
+                    request.StartTime,
+                    request.EndTime,
+                    cancellationTokenSource.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Alert detection failed for source {SourceId}.", request.SourceId);
             }
         }
 
@@ -2930,7 +2980,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             return Math.Clamp(parsed, min, max);
         }
 
-        private async Task AppendOrderedAsync(string jsonPath, ChunkTranscriptionItem windowEntry)
+        private async Task<string> AppendOrderedAsync(string jsonPath, ChunkTranscriptionItem windowEntry)
         {
             var directory = Path.GetDirectoryName(jsonPath);
             if (!string.IsNullOrWhiteSpace(directory))
@@ -2978,15 +3028,16 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     cancellationTokenSource.Token).ConfigureAwait(false);
 
                 state.LastWriteAt = DateTimeOffset.UtcNow;
+                return entry.Text;
             }
             finally
             {
                 state.Lock.Release();
-            }
 
-            if (Interlocked.Increment(ref appendsSinceEviction) % 200 == 0)
-            {
-                EvictStalePathStates();
+                if (Interlocked.Increment(ref appendsSinceEviction) % 200 == 0)
+                {
+                    EvictStalePathStates();
+                }
             }
         }
 
