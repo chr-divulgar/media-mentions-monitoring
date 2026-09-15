@@ -69,11 +69,18 @@ const AudioEdit: React.FC<AudioEditProps> = ({
   const calculatePositions = () => {
     const fileTime = getDateFromFile(selectedAlert.filePath ?? "");
 
+    // Worker alerts store real UTC timestamps; legacy alerts store local (Bogotá)
+    // wall-clock time mislabeled as UTC, so the 'Z' has to be swapped for the real offset.
+    const isWorker = selectedAlert.source === "worker";
     const startTime = new Date(
-      selectedAlert.startTime?.replace("Z", "-05:00") ?? ""
+      isWorker
+        ? (selectedAlert.startTime ?? "")
+        : (selectedAlert.startTime?.replace("Z", "-05:00") ?? "")
     );
     const endTime = new Date(
-      selectedAlert.endTime?.replace("Z", "-05:00") ?? ""
+      isWorker
+        ? (selectedAlert.endTime ?? "")
+        : (selectedAlert.endTime?.replace("Z", "-05:00") ?? "")
     );
 
     const startSecond =

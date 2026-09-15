@@ -1,4 +1,4 @@
-import { DatePicker } from "antd";
+import { DatePicker, Switch } from "antd";
 import dayjs from "dayjs";
 import { useState } from "react";
 import { dateFormat, DateRange, ValidDatesDto } from "@repo/shared/index";
@@ -25,6 +25,7 @@ const Alerts = () => {
     dayjs(),
     dayjs(),
   ]);
+  const [compareEnabled, setCompareEnabled] = useState(false);
 
   const handleCalendarChange = (dates: DateRange | null) => {
     setSelectedDates(dates);
@@ -44,7 +45,40 @@ const Alerts = () => {
         disabledDate={(current) => current < minDate || current > maxDate}
         allowClear={false}
       />
-      <AlertsTable selectedDates={selectedDates} />
+      <div style={{ margin: "12px 0" }}>
+        <Switch
+          checked={compareEnabled}
+          onChange={setCompareEnabled}
+          checkedChildren="Comparando legacy vs. worker"
+          unCheckedChildren="Comparar legacy vs. worker"
+        />
+      </div>
+      {compareEnabled ? (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 16,
+          }}
+        >
+          <div style={{ flex: "1 1 400px", minWidth: 0 }}>
+            <AlertsTable
+              selectedDates={selectedDates}
+              source="legacy"
+              title="Versión actual (legacy)"
+            />
+          </div>
+          <div style={{ flex: "1 1 400px", minWidth: 0 }}>
+            <AlertsTable
+              selectedDates={selectedDates}
+              source="worker"
+              title="Versión nueva (worker)"
+            />
+          </div>
+        </div>
+      ) : (
+        <AlertsTable selectedDates={selectedDates} />
+      )}
     </>
   );
 };

@@ -1,5 +1,8 @@
 import React, { useRef, useState } from "react";
 import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+
+dayjs.extend(utc);
 import {
   AlertDto,
   dateFormat,
@@ -28,12 +31,23 @@ const getDateOffset = (dateString: string | Date | dayjs.Dayjs) => {
   return dateWithFixedOffset;
 };
 
+// worker alerts store a real UTC instant; show it fixed at Colombia time (UTC-5)
+// regardless of the viewer's own browser timezone.
+const getWorkerDate = (dateString: string | Date | dayjs.Dayjs) =>
+  dayjs.utc(dateString).utcOffset(-300);
+
 interface AlertsTableProps {
   selectedDates: DateRange | null;
+  source?: "legacy" | "worker";
+  title?: string;
 }
 type DataIndex = keyof AlertDto;
 
-const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates }) => {
+const AlertsTable: React.FC<AlertsTableProps> = ({
+  selectedDates,
+  source,
+  title,
+}) => {
   //#region Table Handlers
   const [searchText, setSearchText] = useState("");
   const [searchedColumn, setSearchedColumn] = useState("");
@@ -175,13 +189,14 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates }) => {
     isLoading: isLoadingAlerts,
     error: errorAlerts,
   }: UseQueryResult<AlertDto[]> = useQuery<AlertDto[]>({
-    queryKey: ["alerts", selectedDates],
+    queryKey: ["alerts", selectedDates, source],
     queryFn: async () =>
       await api
         .post(`/alerts`, {
           startDate: selectedDates?.[0]?.format(dateFormat),
           endDate: selectedDates?.[1]?.format(dateFormat),
           type: ["Nueva", "RepetidaOtraPlataforma"],
+          ...(source && { source }),
         })
         .then((res) => res.data),
   });
@@ -220,7 +235,10 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates }) => {
       dataIndex: "startTime",
       key: "startTime",
       //sorter: (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-      render: (text) => getDateOffset(text).format("DD/MM/YY"),
+      render: (text) =>
+        (source === "worker" ? getWorkerDate(text) : getDateOffset(text)).format(
+          "DD/MM/YY",
+        ),
       ellipsis: true,
       width: "100px",
     },
@@ -229,7 +247,10 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates }) => {
       dataIndex: "startTime",
       key: "startTime",
       //sorter: (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-      render: (text) => getDateOffset(text).format("HH:mm:ss"),
+      render: (text) =>
+        (source === "worker" ? getWorkerDate(text) : getDateOffset(text)).format(
+          "HH:mm:ss",
+        ),
       ellipsis: true,
       width: "100px",
     },
@@ -299,6 +320,7 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates }) => {
 
   return (
     <>
+      {title && <h3>{title}</h3>}
       <Table {...tableProps} />
       <AlertsModal
         key={modalKey}

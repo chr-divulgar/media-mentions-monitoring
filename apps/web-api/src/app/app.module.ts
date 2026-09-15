@@ -7,7 +7,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AlertsModule } from './alerts/alerts.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SettingsModule } from './settings/settings.module';
-import { Alert, Note, Platform, Transcription } from './entities';
+import { Alert, Note, Platform, Transcription, WorkerAlert } from './entities';
 import { NotesModule } from './notes/notes.module';
 import { FirebaseAdminModule } from './firebase/firebase-admin.module';
 import { ClientsModule } from './clients/clients.module';
@@ -26,7 +26,7 @@ import { AuthModule } from './auth/auth.module';
       useFactory: async (configService: ConfigService) => ({
         type: 'mongodb',
         url: configService.get<string>('MONGODB_URI') + '/monitoring',
-        entities: [Alert, Note, Transcription, Platform],
+        entities: [Alert, Note, Transcription, Platform, WorkerAlert],
         synchronize: false,
       }),
       inject: [ConfigService],
