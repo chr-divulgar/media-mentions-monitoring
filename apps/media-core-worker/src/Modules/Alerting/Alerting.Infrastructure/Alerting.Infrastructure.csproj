@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MediaOpsCore.Modules.Alerting.Infrastructure</AssemblyName>
+    <RootNamespace>MediaOpsCore.Modules.Alerting.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MongoDB.Driver" Version="3.11.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Alerting.Application\Alerting.Application.csproj" />
+    <ProjectReference Include="..\Alerting.Domain\Alerting.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Infrastructure\MediaOpsCore.BuildingBlocks.Infrastructure\MediaOpsCore.BuildingBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

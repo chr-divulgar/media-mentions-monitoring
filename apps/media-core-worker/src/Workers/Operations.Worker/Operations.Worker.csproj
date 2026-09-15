@@ -14,6 +14,8 @@
     <ProjectReference Include="..\..\Modules\Capture\Capture.Application\Capture.Application.csproj" />
     <ProjectReference Include="..\..\Modules\ProcessGuardian\ProcessGuardian.Application\ProcessGuardian.Application.csproj" />
     <ProjectReference Include="..\..\Modules\Segmentation\Segmentation.Application\Segmentation.Application.csproj" />
+    <ProjectReference Include="..\..\Modules\Alerting\Alerting.Application\Alerting.Application.csproj" />
+    <ProjectReference Include="..\..\Modules\Alerting\Alerting.Infrastructure\Alerting.Infrastructure.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Application\MediaOpsCore.BuildingBlocks.Application\MediaOpsCore.BuildingBlocks.Application.csproj" />
   </ItemGroup>
 

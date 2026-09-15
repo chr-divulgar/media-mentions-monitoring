@@ -5,6 +5,8 @@ using System.Net;
 using System.Text.Json;
 
 using MediaOpsCore.BuildingBlocks.Application;
+using MediaOpsCore.Modules.Alerting.Application;
+using MediaOpsCore.Modules.Alerting.Infrastructure;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Segmentation.Application;
 using MediaOpsCore.Workers.Operations;
@@ -61,13 +63,24 @@ builder.Services.AddSingleton(new IncrementalSegmentationOptions
 {
 	SegmentDurationSeconds = options.SegmentDurationSeconds
 });
+builder.Services.AddSingleton(new MongoAlertingOptions
+{
+	ConnectionString = options.MongoConnectionString,
+	ConfigDatabaseName = options.MongoConfigDatabaseName,
+	MonitoringDatabaseName = options.MongoMonitoringDatabaseName,
+	AlertCollectionName = options.MongoAlertCollectionName
+});
+builder.Services.AddSingleton<IClientConfigRepository, MongoClientConfigRepository>();
+builder.Services.AddSingleton<IAlertRepository, MongoAlertRepository>();
+builder.Services.AddSingleton<IDetectAlertsUseCase, DetectAlertsUseCase>();
 // IAudioCapturePlugin gets observer and repository so sessions report events directly.
 builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudioCapturePlugin(
 	sp.GetRequiredService<OperationsWorkerOptions>(),
 	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<InProcessFfmpegAudioCapturePlugin>>(),
 	sp.GetRequiredService<IOperationalMetrics>(),
 	sp.GetRequiredService<ICaptureAttemptObserver>(),
-	sp.GetRequiredService<IMonitoringArtifactRepository>()));
+	sp.GetRequiredService<IMonitoringArtifactRepository>(),
+	sp.GetRequiredService<IDetectAlertsUseCase>()));
 builder.Services.AddSingleton<IContinuousCaptureUseCase>(sp => new ContinuousCaptureUseCase(
 	sp.GetRequiredService<ICaptureSourceProvider>(),
 	sp.GetRequiredService<IIngestionPluginResolver>(),

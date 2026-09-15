@@ -53,7 +53,11 @@ public static class OperationsWorkerOptionsLoader
         string? BrowserCookiesSource,
         string? YoutubeCookiesFilePath,
         string? YoutubeCookiesAlertFilePath,
-        FirebaseDatabaseLoaderSection? FirebaseDatabase);
+        FirebaseDatabaseLoaderSection? FirebaseDatabase,
+        string? MongoConnectionString,
+        string? MongoConfigDatabaseName,
+        string? MongoMonitoringDatabaseName,
+        string? MongoAlertCollectionName);
 
     private sealed record FirebaseDatabaseLoaderSection(
         string? BaseUrl,
@@ -316,6 +320,32 @@ public static class OperationsWorkerOptionsLoader
                 AuthToken = string.IsNullOrWhiteSpace(fb.AuthToken) ? null : fb.AuthToken,
                 RequestTimeoutSeconds = fb.RequestTimeoutSeconds ?? 15
             };
+        }
+
+        // MONGODB_URI matches the env var name apps/web-api already uses, so both point at one instance.
+        var mongoConnectionStringEnv = Environment.GetEnvironmentVariable("MONGODB_URI");
+        if (!string.IsNullOrWhiteSpace(mongoConnectionStringEnv))
+        {
+            options.MongoConnectionString = mongoConnectionStringEnv.Trim();
+        }
+        else if (!string.IsNullOrWhiteSpace(model.MongoConnectionString))
+        {
+            options.MongoConnectionString = model.MongoConnectionString;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.MongoConfigDatabaseName))
+        {
+            options.MongoConfigDatabaseName = model.MongoConfigDatabaseName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.MongoMonitoringDatabaseName))
+        {
+            options.MongoMonitoringDatabaseName = model.MongoMonitoringDatabaseName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.MongoAlertCollectionName))
+        {
+            options.MongoAlertCollectionName = model.MongoAlertCollectionName;
         }
 
         return NormalizeConfiguredPaths(options, applicationRoot, configDirectory);

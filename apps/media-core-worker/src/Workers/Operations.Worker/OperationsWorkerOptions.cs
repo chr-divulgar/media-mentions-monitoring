@@ -81,5 +81,15 @@ public sealed class OperationsWorkerOptions
     public string YoutubeCookiesAlertFilePath { get; set; } = "stage/cookies/youtube-auth-required.flag";
 
     public FirebaseCaptureSourceRepositoryOptions? FirebaseDatabase { get; set; }
+
+    // Same connection string as apps/web-api's MONGODB_URI so both point at the one MongoDB instance.
+    public string MongoConnectionString { get; set; } = "mongodb://localhost:27017";
+
+    public string MongoConfigDatabaseName { get; set; } = "config";
+
+    public string MongoMonitoringDatabaseName { get; set; } = "monitoring";
+
+    // "workerAlert" during the shadow-run validation period; becomes "alert" at cutover (config-only change).
+    public string MongoAlertCollectionName { get; set; } = "workerAlert";
 }
 

@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MediaOpsCore.Modules.Alerting.Domain</AssemblyName>
+    <RootNamespace>MediaOpsCore.Modules.Alerting.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>
