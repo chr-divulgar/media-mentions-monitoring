@@ -20,13 +20,14 @@ import OpenAI from 'openai';
 import { exec } from 'child_process';
 import * as path from 'path';
 import { ConfigService } from '@nestjs/config';
-import { Alert, Note, Transcription } from '../entities';
+import { Alert, Note, Transcription, WorkerAlert } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as fs from 'fs/promises';
 
 @Injectable()
 export class AlertsService {
   alertsRepo: MongoRepository<Alert>;
+  workerAlertsRepo: MongoRepository<WorkerAlert>;
   transcriptRepo: MongoRepository<Transcription>;
   noteRepo: MongoRepository<Note>;
   openai: OpenAI;
@@ -36,6 +37,7 @@ export class AlertsService {
     configService: ConfigService,
   ) {
     this.alertsRepo = this.dataSource.getMongoRepository(Alert);
+    this.workerAlertsRepo = this.dataSource.getMongoRepository(WorkerAlert);
     this.transcriptRepo = this.dataSource.getMongoRepository(Transcription);
     this.noteRepo = this.dataSource.getMongoRepository(Note);
     this.openai = new OpenAI({
@@ -98,6 +100,7 @@ export class AlertsService {
       endDate = '',
       clientName = '',
       type = [],
+      source,
     } = getAlertasDto;
 
     if (!startDate || !endDate) {
@@ -114,7 +117,15 @@ export class AlertsService {
         ...(type.length > 0 && { type: { $in: type } }),
       } as unknown as FindOptionsWhere<Alert>,
     };
-    return this.alertsRepo.find(findOptions);
+
+    // 'source' picks which collection to read (see WorkerAlert/worker-alert.entity.ts); it never
+    // changes the shape of the query above, so both tables stay comparable filter-for-filter.
+    const repo = source === 'worker' ? this.workerAlertsRepo : this.alertsRepo;
+    const results = await repo.find(findOptions as FindOneOptions<WorkerAlert>);
+    // Stamp the origin on each record: the audio-cut flow (AudioService) needs it to
+    // know whether startTime/endTime are real UTC (worker) or legacy's mislabeled-local-time.
+    const resolvedSource = source === 'worker' ? 'worker' : 'legacy';
+    return results.map((alert) => ({ ...alert, source: resolvedSource }));
   }
 
   async getText(

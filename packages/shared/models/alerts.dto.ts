@@ -11,6 +11,10 @@ export class AlertDto {
   readonly platform?: string;
   readonly clientName?: string;
   readonly type?: string;
+  // Which collection this alert was read from (see GetAlertsDto.source). Stamped
+  // by AlertsService.getAlerts so the audio-cut flow knows whether endTime/startTime
+  // are real UTC (worker) or the legacy mislabeled-local-time quirk.
+  readonly source?: 'legacy' | 'worker';
 }
 
 export class GetAlertsDto {
@@ -20,6 +24,9 @@ export class GetAlertsDto {
   readonly clientName?: string;
   readonly platform?: string;
   readonly type?: string[];
+  // 'worker' reads the shadow-run apps/media-core-worker alerts (monitoring.workerAlert) instead of
+  // the legacy monitoring.alert collection. Omitted or 'legacy' preserves today's behavior.
+  readonly source?: 'legacy' | 'worker';
 }
 
 export class GetTranscriptionDto {
