@@ -37,3 +37,6 @@ scripts/*.json
 # YouTube cookies: real credential files only. The feature's code and docs are finished
 # and tracked normally — only the actual cookie/flag content is a secret.
 /shared-cookies/
+
+# Playwright MCP temporary directory
+.playwright-mcp/
