@@ -36,6 +36,8 @@ export class PlatformDto {
   readonly country?: string;
   /** Capture worker: fallback stream URLs tried when streamUrl fails */
   readonly fallbackStreamUrls?: string[];
+  /** Capture worker: set when the worker itself has excluded this source (recovery in progress) */
+  readonly isExcluded?: boolean;
 }
 
 export interface PlatformResponseDto {
@@ -53,4 +55,5 @@ export interface PlatformResponseDto {
   primaryUrl?: string;
   country?: string;
   fallbackStreamUrls?: string[];
+  isExcluded?: boolean;
 }

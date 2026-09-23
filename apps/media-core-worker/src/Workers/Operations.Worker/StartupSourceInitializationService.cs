@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
 using Microsoft.Extensions.Logging;
@@ -232,16 +235,53 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
                     .PersistFallbackStreamUrlsAsync(source.SourceId, fallbackUrls, cancellationToken)
                     .ConfigureAwait(false);
 
+                // The URL list itself is routinely 100+ entries (every scraped player/CDN variant,
+                // each duplicated for http/https) — worth persisting for use, not worth printing.
                 logger.LogInformation(
-                    "Discovered {Count} fallback URL(s) for source {SourceId}: {Urls}",
+                    "Discovered {Count} fallback URL(s) for source {SourceId}.",
                     fallbackUrls.Length,
-                    source.SourceId,
-                    string.Join(", ", fallbackUrls));
+                    source.SourceId);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogWarning(ex, "Fallback discovery failed silently for source {SourceId}.", source.SourceId);
+            // One line, no stack trace: this fires per source on every startup and a scraped
+            // page's HTML changing or blocking bots is routine, not something to page anyone
+            // over. The full exception is still available via LogDebug for when it's not.
+            logger.LogWarning("{Description}", DescribeFallbackDiscoveryFailure(source, ex));
+            logger.LogDebug(ex, "Fallback discovery failed for source {SourceId}.", source.SourceId);
         }
     }
+
+    // Compact, human-readable reason for a failed fallback-discovery attempt — e.g.
+    // "LA_FM: 403 — el sitio bloqueó la petición (probable anti-bot)." Fallback discovery scrapes
+    // a source's primary web page and third-party pages fail for all kinds of routine reasons
+    // (blocked, moved, slow), so a five-line stack trace per source at startup is just noise; the
+    // one thing worth keeping at a glance is which source, and why.
+    private static string DescribeFallbackDiscoveryFailure(CaptureSource source, Exception ex)
+    {
+        var reason = ex switch
+        {
+            HttpRequestException { StatusCode: HttpStatusCode.Forbidden } =>
+                "403 — el sitio bloqueó la petición (probable anti-bot).",
+            HttpRequestException { StatusCode: HttpStatusCode.NotFound } =>
+                "404 — la página cambió o ya no existe en esa URL.",
+            HttpRequestException { StatusCode: { } status } =>
+                $"{(int)status} — {status}.",
+            HttpRequestException { InnerException: SocketException { SocketErrorCode: SocketError.TimedOut } } =>
+                $"timeout de conexión — {DescribeHost(source.PrimaryUrl)} no respondió.",
+            HttpRequestException { InnerException: SocketException { SocketErrorCode: SocketError.ConnectionRefused } } =>
+                $"conexión rechazada — el puerto {DescribePort(source.PrimaryUrl)} de {DescribeHost(source.PrimaryUrl)} no aceptó la conexión.",
+            TaskCanceledException => $"timeout de conexión — {DescribeHost(source.PrimaryUrl)} no respondió.",
+            _ => $"{ex.GetType().Name} — {ex.Message}",
+        };
+
+        return $"{source.SourceId}: {reason}";
+    }
+
+    private static string DescribeHost(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var parsed) ? parsed.Host : "el sitio";
+
+    private static string DescribePort(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var parsed) ? parsed.Port.ToString() : "?";
 }

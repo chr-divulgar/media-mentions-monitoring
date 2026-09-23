@@ -17,7 +17,39 @@ using Microsoft.Extensions.Logging;
 
 namespace MediaOpsCore.Workers.Operations;
 
-public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDisposable
+// Worker-level monitoring port (not a Capture.Application port — it exposes live, in-memory
+// process state for the /capture/status HTTP endpoint, same convention as
+// ICaptureStatusSnapshotProvider/IYouTubeHealthSnapshotProvider living in this project rather
+// than in a module's Application layer).
+public interface ILiveCaptureProgressReader
+{
+    // Null when the source has no active capture session right now (worker not currently
+    // recording it) — the signal CaptureStatusSnapshotProvider uses to report "no-session" for
+    // the in-progress hour instead of guessing.
+    LiveCaptureProgress? TryGetLiveProgress(string sourceId);
+
+    // The sources recording right now. Lets callers report on live capture without reading the
+    // source catalog back out of Firestore just to learn ids the worker already holds in memory.
+    IReadOnlyCollection<string> ActiveSourceIds { get; }
+}
+
+/// <summary>
+/// Live capture state for the in-progress window. Every offset here — including RecordedSeconds,
+/// the window end readers must use — is a position in the recording itself, derived from the
+/// encoded sample cursor, never from a clock read. The recording is the only thing that knows what
+/// was actually captured: a wall-clock offset drifts from it on every stall and disagrees with it
+/// across a rotation, which is what used to paint coverage over time that was never recorded.
+/// </summary>
+/// <param name="WindowStartedAt">
+/// The rotation window these offsets belong to. A session only advances to the next window when
+/// its own audio timeline crosses the boundary, so a stalled one keeps reporting the window it was
+/// last in — readers must check this rather than assume the progress describes the current clock
+/// hour, or a frozen position gets drawn against a later hour as coverage that never happened.
+/// </param>
+public sealed record LiveCaptureProgress(
+    DateTimeOffset WindowStartedAt, double RecordedSeconds, IReadOnlyList<WindowCheckpoint> Checkpoints);
+
+public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILiveCaptureProgressReader, IDisposable
 {
     private const int AudioSampleRate = 16000;
     private const int AudioChannels = 1;
@@ -29,8 +61,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
     // How many seconds before/after the target window cut to search for a silence boundary.
     // 0 disables VAD-aligned cuts (falls back to fixed-time windows).
     private static readonly int RecognitionVadSearchSeconds = ResolveConfiguredInt("MEDIA_RECOGNITION_VAD_SEARCH_SECONDS", 2, 0, 5);
-    // Must match flacSilenceMaxChunkSeconds in worker-options.json so the fast path covers all normal VAD chunks.
-    private static readonly int FlacSilenceMaxChunkSeconds = ResolveConfiguredInt("MEDIA_FLAC_SILENCE_MAX_CHUNK_SECONDS", 20, 5, 120);
     // 20 ms analysis frame at 16 kHz / mono / s16 = 640 bytes
     private const int RmsAnalysisFrameBytes = AudioSampleRate * AudioChannels * AudioBytesPerSample * 20 / 1000;
     private const string DefaultHttpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Safari/537.36";
@@ -118,6 +148,14 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             capturedSeconds: session.CapturedThisWindowSeconds);
     }
 
+    public IReadOnlyCollection<string> ActiveSourceIds =>
+        sessions.Where(entry => entry.Value.IsRunning).Select(entry => entry.Key).ToArray();
+
+    public LiveCaptureProgress? TryGetLiveProgress(string sourceId) =>
+        sessions.TryGetValue(sourceId, out var session) && session.IsRunning
+            ? session.SnapshotLiveProgress()
+            : null;
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0)
@@ -134,7 +172,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         chunkTranscriptionPipeline.Dispose();
     }
 
-    private static void EnsureFfmpegInitialized()
+    // Internal (not private) so ClosedHourAudioSegmentReader can guarantee the native FFmpeg
+    // bindings are loaded before it opens a file, even if no capture session has started yet.
+    internal static void EnsureFfmpegInitialized()
     {
         if (Interlocked.Exchange(ref ffmpegInitialized, 1) != 0)
         {
@@ -210,14 +250,18 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         return raw is "1" or "true" or "yes";
     }
 
-    private static DateTimeOffset AlignWindow(DateTimeOffset now, TimeSpan window)
+    // Internal (not private) so ClosedHourAudioSegmentReader can compute the same hour
+    // boundaries the capture session itself rotates on.
+    internal static DateTimeOffset AlignWindow(DateTimeOffset now, TimeSpan window)
     {
         var ticks = window.Ticks;
         var alignedTicks = (now.Ticks / ticks) * ticks;
         return new DateTimeOffset(alignedTicks, now.Offset);
     }
 
-    private static string BuildMediaDirectoryName(string media)
+    // Internal (not private) so ClosedHourAudioSegmentReader can resolve the same on-disk
+    // opus paths a capture session for this source would write to.
+    internal static string BuildMediaDirectoryName(string media)
     {
         if (string.IsNullOrWhiteSpace(media))
         {
@@ -276,6 +320,27 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         private long silenceFilledThisWindowMs;
         // Real audio samples encoded this window (excludes silence fill).
         private long realCapturedSamplesThisWindow;
+        // How far into the current rotation window the recording itself has reached, in encoded
+        // samples counted from the window start (so it already includes any silence bridged in at
+        // startup or at resume). This — not the clock — is what every checkpoint offset is measured
+        // against: it is the position in the opus file a listener would seek to, so a stalled
+        // source stops advancing instead of accruing coverage it never recorded.
+        private long recordedPositionSamplesThisWindow;
+        // Where in the current window this session picked up. Zero means it owns the window from
+        // its very start; anything else means a previous session already recorded that much of it
+        // and this one knows nothing about what happened before (see BuildSnapshot).
+        private long windowStartRecordedSamples;
+        // The rotation window currently being recorded into. Driven by the audio timeline (the
+        // same thing that triggers rotation), not the clock, so it stays accurate while stalled.
+        private DateTimeOffset currentWindowStart;
+        // Periodic samples of the counters above, used to derive sub-hour coverage segments (see
+        // WindowCheckpoint) without instrumenting the packet-read loop itself. The timer only sets
+        // the sampling cadence; what it records is the recording position, never the time it fired.
+        private static readonly TimeSpan CheckpointInterval = TimeSpan.FromMinutes(5);
+        private readonly ConcurrentQueue<WindowCheckpoint> windowCheckpoints = new();
+        private readonly Timer checkpointTimer;
+        private readonly DateTimeOffset sessionStartedAt;
+
 
         private CaptureSession(
             CaptureSource source,
@@ -301,7 +366,67 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             this.monitoringArtifactRepository = monitoringArtifactRepository;
             sourceId = source.SourceId;
             isRunning = true;
+            sessionStartedAt = SourceNow();
+            // Created idle: a sample taken before RunAsync has worked out where in the window this
+            // session starts would be recorded at position zero and misrepresent a resumed session
+            // as one that owns the window from the top. RunAsync starts the cadence once it knows.
+            checkpointTimer = new Timer(_ => RecordCheckpoint(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             captureTask = Task.Run(RunAsync);
+        }
+
+        // Cheap — only reads the already-thread-safe window counters above, never touches the
+        // FFmpeg packet loop.
+        private void RecordCheckpoint() =>
+            windowCheckpoints.Enqueue(new WindowCheckpoint(
+                RecordedThisWindowSeconds,
+                CapturedThisWindowSeconds,
+                SilenceFilledThisWindowSeconds));
+
+        // Snapshot for persisting alongside the closing window's coverage artifact. Offsets are
+        // already positions within the window being closed, so nothing needs reprojecting.
+        public IReadOnlyList<WindowCheckpoint> SnapshotCheckpoints() => BuildSnapshot();
+
+        // Live status for the in-progress window. The window end is how far the recording has
+        // reached, not how much of the hour has elapsed, so a source that stalled stops advancing
+        // right where its audio stopped instead of claiming the silence that follows.
+        public LiveCaptureProgress SnapshotLiveProgress()
+        {
+            var snapshot = BuildSnapshot();
+            return new LiveCaptureProgress(currentWindowStart, snapshot[^1].ElapsedSeconds, snapshot);
+        }
+
+        // The periodic samples for the current window, closed off with the counters at the
+        // position the recording has reached right now.
+        //
+        // A zero baseline is prepended only when this session owns the window from its very start
+        // — then "no audio yet at offset zero" is exact. A session that resumed part-way in has no
+        // idea what the previous one recorded, and its own counters restart at zero, so claiming
+        // zero at offset zero would report everything before it as uncovered. Leaving the snapshot
+        // to begin at the position it resumed from is what lets a reader recognise it as partial
+        // and splice it onto the earlier history (see WindowCheckpointMerger).
+        private List<WindowCheckpoint> BuildSnapshot()
+        {
+            var snapshot = windowCheckpoints.ToList();
+            if (Interlocked.Read(ref windowStartRecordedSamples) <= 0)
+            {
+                snapshot.Insert(0, new WindowCheckpoint(0, 0, 0));
+            }
+
+            snapshot.Add(new WindowCheckpoint(
+                RecordedThisWindowSeconds,
+                CapturedThisWindowSeconds,
+                SilenceFilledThisWindowSeconds));
+            return snapshot;
+        }
+
+        // Called at rotation, alongside resetting the window counters, so the next window starts
+        // with an empty checkpoint list. Also restarts the timer's schedule (dueTime=0) so the new
+        // window gets sampled immediately rather than whenever the old cadence next happens to tick.
+        private void ResetCheckpoints()
+        {
+            windowCheckpoints.Clear();
+            Interlocked.Exchange(ref windowStartRecordedSamples, 0);
+            checkpointTimer.Change(TimeSpan.Zero, CheckpointInterval);
         }
 
         public static CaptureSession Start(
@@ -332,6 +457,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         public double CapturedThisWindowSeconds =>
             Interlocked.Read(ref realCapturedSamplesThisWindow) / (double)AudioSampleRate;
+
+        // The recording's own clock for the current window.
+        public double RecordedThisWindowSeconds =>
+            Interlocked.Read(ref recordedPositionSamplesThisWindow) / (double)AudioSampleRate;
 
         public string CurrentOpusPath() => CurrentOpusPath(SourceNow());
 
@@ -377,6 +506,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
         public void Dispose()
         {
+            checkpointTimer.Dispose();
             try
             {
                 cancellationTokenSource.Cancel();
@@ -408,7 +538,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 Succeeded = true,
                 OpusFilePath = opusPath ?? string.Empty,
                 CapturedSeconds = CapturedThisWindowSeconds,
-                SilenceFilledSeconds = SilenceFilledThisWindowSeconds
+                SilenceFilledSeconds = SilenceFilledThisWindowSeconds,
+                Checkpoints = SnapshotCheckpoints()
             });
             var artifact = new MediaOpsCore.BuildingBlocks.Domain.MonitoringArtifact(
                 id: $"capture-{sourceId}-{windowStart:yyyyMMddHHmmssfff}",
@@ -476,6 +607,12 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             const int maxConsecutivePacketSendErrors = 8;
             const int maxConsecutiveEncoderFrameSendFailures = 48;
             string? resumeTempPath = null;
+
+            // Recover any resume segment a previous run left unmerged, before anything else. This
+            // is about audio that is already on disk, so it must not depend on the stream being
+            // reachable — a source whose stream is currently down would otherwise never get its
+            // orphan back, and the next resume would truncate it away.
+            RecoverOrphanedResumeSegments(effectiveOpusRotationInterval);
 
             try
             {
@@ -655,7 +792,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 //   2. Write new content (silence gap + real audio) to a temp file.
                 //   3. At rotation time, OGG-chain the temp file onto the original so the
                 //      final file covers the complete clock-hour with no silent void in it.
-                TimeSpan silenceGap = TimeSpan.Zero;
+                TimeSpan silenceGap;
+                var elapsedSinceHourStart = sessionStartNow - alignedSessionStart;
+                if (elapsedSinceHourStart < TimeSpan.Zero) elapsedSinceHourStart = TimeSpan.Zero;
+
                 if (File.Exists(activeOpusPath))
                 {
                     // Resume: a previous session recorded part of this hour and failed.
@@ -663,8 +803,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     var existingDuration = ProbeAudioDuration(activeOpusPath);
                     if (existingDuration > TimeSpan.Zero)
                     {
-                        var elapsed = sessionStartNow - alignedSessionStart;
-                        silenceGap = elapsed - existingDuration;
+                        silenceGap = elapsedSinceHourStart - existingDuration;
                         if (silenceGap < TimeSpan.Zero)
                         {
                             silenceGap = TimeSpan.Zero;
@@ -678,7 +817,17 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     }
                     else
                     {
+                        // Probe failed — e.g. the file was left truncated by a hard process kill
+                        // mid-write, so its duration can't be determined. Its real content is
+                        // unknown, so the safe assumption is that none of the elapsed time since
+                        // the hour started is recoverable: treat it all as gap, same as a fresh
+                        // start. Silently leaving silenceGap at zero here (the previous behavior)
+                        // made the entire outage invisible to monitoring instead of gap-filled.
                         currentOpusStartedAt = alignedSessionStart;
+                        silenceGap = elapsedSinceHourStart;
+                        logger.LogWarning(
+                            "Could not probe existing capture file for source {SourceId} at {Path} — treating the full elapsed span ({Gap:g}) as an unrecorded gap.",
+                            sourceId, activeOpusPath, silenceGap);
                     }
                 }
                 else
@@ -687,8 +836,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     // (e.g. 14:00:00) to the actual start time (e.g. 14:33:12) so the file
                     // represents the complete clock-hour with an accurate timestamp.
                     currentOpusStartedAt = alignedSessionStart;
-                    silenceGap = sessionStartNow - alignedSessionStart;
-                    if (silenceGap < TimeSpan.Zero) silenceGap = TimeSpan.Zero;
+                    silenceGap = elapsedSinceHourStart;
                     if (silenceGap > TimeSpan.FromSeconds(1))
                     {
                         logger.LogInformation(
@@ -698,6 +846,16 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 }
 
                 currentOpusSampleCursor = 0;
+                // The file is always named after (and starts at) the aligned window boundary, so
+                // whatever a previous session already recorded into it is part of this window's
+                // timeline and the position resumes after it rather than at zero.
+                currentWindowStart = alignedSessionStart;
+                var windowStartSamples = (long)((currentOpusStartedAt - AlignWindow(currentOpusStartedAt, effectiveOpusRotationInterval)).TotalSeconds * AudioSampleRate);
+                Interlocked.Exchange(ref recordedPositionSamplesThisWindow, windowStartSamples);
+                Interlocked.Exchange(ref windowStartRecordedSamples, windowStartSamples);
+                // Now that the window position is known, start sampling (immediately, then on the
+                // regular cadence) — see the constructor for why it was left idle until here.
+                checkpointTimer.Change(TimeSpan.Zero, CheckpointInterval);
                 var actualOutputPath = resumeTempPath ?? activeOpusPath;
                 outputContext = OpenOutputContext(actualOutputPath, encoderContext, ref outputStream);
                 startupCompletionSource.TrySetResult(new AudioCaptureExecutionResult(true, activeOpusPath));
@@ -742,7 +900,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         ref encoderSampleCursor,
                         ref consecutiveEncoderFrameSendFailures,
                         maxConsecutiveEncoderFrameSendFailures);
-                    currentOpusSampleCursor += (long)(silenceGap.TotalSeconds * AudioSampleRate);
+                    var silenceGapSamples = (long)(silenceGap.TotalSeconds * AudioSampleRate);
+                    currentOpusSampleCursor += silenceGapSamples;
+                    Interlocked.Add(ref recordedPositionSamplesThisWindow, silenceGapSamples);
+
+                    // Mark the exact end of the bridge. Without this the next periodic sample is
+                    // the first one after it, so the bridged span and the real audio that follows
+                    // land in a single slice and the status page reports the whole thing as one
+                    // partial-coverage block instead of "worker was down here, recording there".
+                    RecordCheckpoint();
                 }
 
                 while (!cancellationTokenSource.IsCancellationRequested)
@@ -846,6 +1012,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                         }
 
                         currentOpusSampleCursor += frameSampleCount;
+                        Interlocked.Add(ref recordedPositionSamplesThisWindow, frameSampleCount);
                         Interlocked.Add(ref realCapturedSamplesThisWindow, frameSampleCount);
                         var currentAudioTimeline = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
 
@@ -908,9 +1075,12 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                             resumeTempPath = null; // rotation consumed the resume, next file is clean
                             Interlocked.Exchange(ref silenceFilledThisWindowMs, 0);
                             Interlocked.Exchange(ref realCapturedSamplesThisWindow, 0); // reset for the new window
+                            ResetCheckpoints();
                             currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath ?? string.Empty);
+                            currentWindowStart = nextRotationAt;
                             currentOpusStartedAt = nextRotationAt;
                             currentOpusSampleCursor = 0;
+                            Interlocked.Exchange(ref recordedPositionSamplesThisWindow, 0);
                             nextRotationAt = AlignWindow(currentOpusStartedAt, effectiveOpusRotationInterval).Add(effectiveOpusRotationInterval);
                         }
                     }
@@ -942,13 +1112,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                     var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
                     EnqueueChunkTranscription(pendingFlacPcm, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: false);
                 }
-                // If the session ends before the next rotation (EOF or clean stop),
-                // finalize any pending resume file so the partial audio is still appended.
-                if (resumeTempPath is not null)
-                {
-                    FinalizeResumeOutput(activeOpusPath ?? string.Empty, resumeTempPath);
-                    resumeTempPath = null;
-                }
+                // A pending resume file (session ending before the next rotation — EOF or clean
+                // stop) is finalized in the finally block below, once FFmpeg has actually released
+                // it — not here, where the output context is still open on it and finalizing would
+                // race FFmpeg's own handle and fail with IOException.
 
                 isRunning = false;
                 logger.LogInformation("Capture completed for source {SourceId}.", sourceId);
@@ -1226,26 +1393,64 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        // Appends the content of resumeTempPath to originalPath (OGG chaining) and deletes
-        // the temp file. Chained OGG/Opus files play as a single continuous stream in FFmpeg,
-        // VLC, and most compliant players, producing a complete-hour file from two segments.
-        private void FinalizeResumeOutput(string originalPath, string resumeTempPath)
+        // Folds back any resume segment a previous run left unmerged, for the windows this
+        // session can touch (the one it is about to record into, and the one before it).
+        //
+        // A session writes new audio to "<hour file>.resume" and merges it at rotation or on a
+        // clean stop. One that dies without running that cleanup — a crash, or the process being
+        // killed — leaves the segment behind. The path is derived from the hour's file, so the
+        // next resume opens that exact path for writing and truncates it: real recorded audio,
+        // gone. Worse, any alert already raised from it stays in the database pointing at a
+        // timestamp that would then play back as nothing but bridge silence.
+        private void RecoverOrphanedResumeSegments(TimeSpan rotationInterval)
         {
-            try
+            var currentWindowStart = AlignWindow(SourceNow(), rotationInterval);
+
+            foreach (var windowStart in new[] { currentWindowStart - rotationInterval, currentWindowStart })
             {
-                using (var original = new FileStream(originalPath, FileMode.Append, FileAccess.Write, FileShare.None))
-                using (var resume = new FileStream(resumeTempPath, FileMode.Open, FileAccess.Read, FileShare.None))
+                var opusPath = CurrentOpusPath(windowStart, rotationInterval);
+                var orphanedResumePath = opusPath + ".resume";
+                if (!File.Exists(orphanedResumePath) || !File.Exists(opusPath))
                 {
-                    resume.CopyTo(original);
+                    continue;
                 }
 
+                logger.LogWarning(
+                    "Found an unmerged resume segment for source {SourceId} at {Path} — a previous session ended without finishing. Merging it back before continuing.",
+                    sourceId, orphanedResumePath);
+
+                FinalizeResumeOutput(opusPath, orphanedResumePath);
+            }
+        }
+
+        // Merges resumeTempPath's audio onto the end of originalPath and deletes the temp file.
+        //
+        // This used to be a raw byte append ("Ogg chaining"), which is legal Ogg but not something
+        // FFmpeg's demuxer reliably follows — it logs "failed to create or replace stream" and
+        // decodes garbage past the splice, silently making every second of audio after a mid-hour
+        // restart unreadable to the transcription pipeline, the Alerts audio-edit endpoint and any
+        // player. OpusFileJoiner instead remuxes both parts into one continuous bitstream (stream
+        // copy, no re-encode), which every consumer reads back correctly.
+        private void FinalizeResumeOutput(string originalPath, string resumeTempPath)
+        {
+            var joinedPath = originalPath + ".joined";
+            try
+            {
+                OpusFileJoiner.Join([originalPath, resumeTempPath], joinedPath);
+
+                // Only swap in the merged file once it is complete, so a failure mid-join leaves
+                // both original parts intact rather than a half-written recording.
+                File.Move(joinedPath, originalPath, overwrite: true);
                 File.Delete(resumeTempPath);
+
                 logger.LogInformation(
-                    "Resume gap filled for source {SourceId}. Original={OriginalPath}",
+                    "Resume segment merged for source {SourceId}. Original={OriginalPath}",
                     sourceId, originalPath);
             }
             catch (Exception ex)
             {
+                try { File.Delete(joinedPath); } catch { /* best effort */ }
+
                 logger.LogWarning(ex,
                     "Failed to finalize resume output for source {SourceId}. Temp file kept at {TempPath}.",
                     sourceId, resumeTempPath);
@@ -1431,7 +1636,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
             var payloadPcm = ConcatPcm(overlapTailPcm, currentPcm);
             var preprocessedPcm = PreprocessPcmForRecognition(payloadPcm);
-            var flacWindows = BuildFlacRecognitionWindows(preprocessedPcm);
+            var flacWindows = BuildFlacRecognitionWindows(
+                preprocessedPcm,
+                options.FlacSilenceMaxChunkSeconds + TranscriptionChunkOverlapSeconds);
             if (flacWindows.Count == 0)
             {
                 logger.LogWarning(
@@ -1739,7 +1946,12 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private static IReadOnlyList<byte[]> BuildFlacRecognitionWindows(byte[] pcm)
+        // maxFastPathSeconds should cover a normal VAD chunk PLUS the cross-chunk overlap prefix
+        // that's always prepended before this runs (see EnqueueChunkTranscription) — otherwise a
+        // completely normal chunk always exceeds the threshold and the split path (no dedup between
+        // its sub-windows, silently drops unrecognized ones) fires on every chunk instead of only
+        // genuinely oversized ones.
+        private static IReadOnlyList<byte[]> BuildFlacRecognitionWindows(byte[] pcm, int maxFastPathSeconds)
         {
             if (pcm.Length == 0)
             {
@@ -1749,9 +1961,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             var bytesPerSecond = AudioSampleRate * AudioChannels * AudioBytesPerSample;
             var windowBytes = Math.Max(bytesPerSecond, RecognitionWindowSeconds * bytesPerSecond);
 
-            // Fast path: VAD found silence within the expected range (12-20 s) → one API call, no split, no merge, no duplicates.
+            // Fast path: VAD found silence within the expected range → one API call, no split, no merge, no duplicates.
             // Split path only activates when silence was NOT found before maxChunk and the chunk is abnormally large.
-            var maxVadChunkBytes = FlacSilenceMaxChunkSeconds * bytesPerSecond;
+            var maxVadChunkBytes = maxFastPathSeconds * bytesPerSecond;
             if (pcm.Length <= maxVadChunkBytes)
             {
                 var singleFlac = EncodeFlacChunkBytes(pcm);
@@ -2386,7 +2598,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
     }
 
-    private readonly record struct ChunkTranscriptionRequest(
+    internal readonly record struct ChunkTranscriptionRequest(
         string JsonPath,
         DateTimeOffset StartTime,
         DateTimeOffset EndTime,
@@ -2411,7 +2623,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
     private readonly record struct RecognitionResult(RecognitionStatus Status, string Text);
 
-    private sealed class ChunkTranscriptionPipeline : IDisposable
+    // Internal (not private) so MediaOpsCore.UnitTests can exercise StripTextPrefixOverlap
+    // directly — see AssemblyInfo.cs's InternalsVisibleTo.
+    internal sealed class ChunkTranscriptionPipeline : IDisposable
     {
         private const string DefaultLanguage = "es-CO";
         private static readonly Meter TranscriptionMeter = new("MediaOpsCore.Workers.Operations.Transcription", "1.0.0");
@@ -2540,7 +2754,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
 
                     try
                     {
-                        var recognition = await RecognizeWindowedAsync(request.FlacWindows, DefaultLanguage).ConfigureAwait(false);
+                        var recognition = await RecognizeWindowedAsync(request.FlacWindows, DefaultLanguage, request.SourceId).ConfigureAwait(false);
                         entryStatus = StatusLabel(recognition.Status);
                         entryText = recognition.Status == RecognitionStatus.Recognized
                             ? recognition.Text
@@ -2638,17 +2852,20 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             }
         }
 
-        private async Task<RecognitionResult> RecognizeWindowedAsync(IReadOnlyList<byte[]> flacWindows, string language)
+        private async Task<RecognitionResult> RecognizeWindowedAsync(IReadOnlyList<byte[]> flacWindows, string language, string sourceId)
         {
             if (flacWindows.Count == 0)
             {
                 return new RecognitionResult(RecognitionStatus.NoSpeech, string.Empty);
             }
 
-            // One chunk normally produces a single FLAC window. If more than one is present, join the
-            // recognized text plainly. When nothing is recognized, report the most informative failure
-            // status across the windows so the cause (no speech / rate limit / audio error / ...) stays
-            // visible downstream instead of collapsing into a single ambiguous "no text".
+            // One chunk normally produces a single FLAC window (see BuildFlacRecognitionWindows' fast
+            // path). When it doesn't — chunk abnormally large, VAD never found silence — these
+            // sub-windows overlap by RecognitionWindowOverlapSeconds, same as cross-chunk overlap, so
+            // they need the same dedup, not a plain join. When nothing is recognized, report the most
+            // informative failure status across the windows so the cause (no speech / rate limit /
+            // audio error / ...) stays visible downstream instead of collapsing into an ambiguous
+            // "no text".
             var recognized = new List<string>(flacWindows.Count);
             var worst = RecognitionStatus.NoSpeech;
             foreach (var window in flacWindows)
@@ -2656,11 +2873,26 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 var result = await RecognizeSingleAsync(window, language).ConfigureAwait(false);
                 if (result.Status == RecognitionStatus.Recognized && !string.IsNullOrWhiteSpace(result.Text))
                 {
-                    recognized.Add(result.Text.Trim());
+                    var text = result.Text.Trim();
+                    if (recognized.Count > 0)
+                    {
+                        text = StripTextPrefixOverlap(recognized[^1], text, minOverlapWords: 4);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        recognized.Add(text);
+                    }
                 }
-                else if (StatusSeverity(result.Status) > StatusSeverity(worst))
+                else
                 {
-                    worst = result.Status;
+                    logger.LogDebug(
+                        "Recognition sub-window for source {SourceId} returned {Status}; dropped from the merged chunk text.",
+                        sourceId, result.Status);
+                    if (StatusSeverity(result.Status) > StatusSeverity(worst))
+                    {
+                        worst = result.Status;
+                    }
                 }
             }
 
@@ -2830,11 +3062,12 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
         }
 
         // String-based overlap removal used by StripChunkPrefixOverlap.
-        // Searches for the longest suffix of prevText that matches a contiguous sequence starting
-        // at position 0..maxPrefixSkip in newText. If found, returns newText with the duplicate
-        // removed (keeping any "skip" words before the match that represent new content the
-        // previous chunk missed, plus the remainder after the match).
-        private static string StripTextPrefixOverlap(string prevText, string newText, int minOverlapWords = 5)
+        // Searches for the longest suffix of prevText — allowing a few of prevText's own trailing
+        // words to be ignored as orphaned/mistranscribed noise (see prevTrailingIgnore below) — that
+        // matches a contiguous sequence starting at position 0..maxPrefixSkip in newText. If found,
+        // returns newText with the duplicate removed (keeping any "skip" words before the match that
+        // represent new content the previous chunk missed, plus the remainder after the match).
+        internal static string StripTextPrefixOverlap(string prevText, string newText, int minOverlapWords = 5)
         {
             if (string.IsNullOrWhiteSpace(prevText) || string.IsNullOrWhiteSpace(newText))
             {
@@ -2855,34 +3088,46 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
             // the previous chunk didn't capture (different context → different recognition).
             var maxSkip = Math.Min(15, (newWords.Length - minOverlapWords) / 2);
 
-            for (var skip = 0; skip <= maxSkip; skip++)
-            {
-                var maxOverlap = Math.Min(newWords.Length - skip - 1, prevWords.Length);
-                for (var size = maxOverlap; size >= minOverlapWords; size--)
-                {
-                    var match = true;
-                    for (var k = 0; k < size; k++)
-                    {
-                        if (!NormalizeWord(prevWords[prevWords.Length - size + k])
-                                .Equals(NormalizeWord(newWords[skip + k]), StringComparison.Ordinal))
-                        {
-                            match = false;
-                            break;
-                        }
-                    }
+            // The previous chunk's own tail can carry a word or two that never made it into the new
+            // chunk at all (e.g. a stray/mistranscribed word right at the cut point) — without this,
+            // the overlap search only ever anchors at prevText's literal last word and never finds a
+            // match that sits just before that. maxPrevTrailingIgnore=3 tolerates that without
+            // opening the door to matching deep, unrelated spans of the previous chunk.
+            var maxPrevTrailingIgnore = Math.Min(3, prevWords.Length - minOverlapWords);
 
-                    if (match)
+            for (var prevTrailingIgnore = 0; prevTrailingIgnore <= maxPrevTrailingIgnore; prevTrailingIgnore++)
+            {
+                var effectivePrevLength = prevWords.Length - prevTrailingIgnore;
+
+                for (var skip = 0; skip <= maxSkip; skip++)
+                {
+                    var maxOverlap = Math.Min(newWords.Length - skip - 1, effectivePrevLength);
+                    for (var size = maxOverlap; size >= minOverlapWords; size--)
                     {
-                        // Keep words before the overlap (they are new content the previous chunk
-                        // didn't catch), skip the duplicate, and keep the remainder after it.
-                        var before = skip > 0 ? string.Join(' ', newWords.AsSpan(0, skip)) : string.Empty;
-                        var after = string.Join(' ', newWords.AsSpan(skip + size));
-                        var result = string.IsNullOrWhiteSpace(before)
-                            ? after
-                            : string.IsNullOrWhiteSpace(after)
-                                ? before
-                                : before + " " + after;
-                        return string.IsNullOrWhiteSpace(result) ? newText : result;
+                        var match = true;
+                        for (var k = 0; k < size; k++)
+                        {
+                            if (!NormalizeWord(prevWords[effectivePrevLength - size + k])
+                                    .Equals(NormalizeWord(newWords[skip + k]), StringComparison.Ordinal))
+                            {
+                                match = false;
+                                break;
+                            }
+                        }
+
+                        if (match)
+                        {
+                            // Keep words before the overlap (they are new content the previous chunk
+                            // didn't catch), skip the duplicate, and keep the remainder after it.
+                            var before = skip > 0 ? string.Join(' ', newWords.AsSpan(0, skip)) : string.Empty;
+                            var after = string.Join(' ', newWords.AsSpan(skip + size));
+                            var result = string.IsNullOrWhiteSpace(before)
+                                ? after
+                                : string.IsNullOrWhiteSpace(after)
+                                    ? before
+                                    : before + " " + after;
+                            return string.IsNullOrWhiteSpace(result) ? newText : result;
+                        }
                     }
                 }
             }
@@ -3009,7 +3254,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, IDi
                 }
 
                 // Strip any prefix of the merged entry that duplicates the tail of the previous entry.
-                var dedupedText = StripChunkPrefixOverlap(state.CachedItems, entry.Text, minOverlapWords: 8);
+                // minOverlapWords was 8, higher than the function's own default (5) — too strict for
+                // TranscriptionChunkOverlapSeconds=8s of audio, which often yields only 6-7 shared
+                // words at natural speaking pace, letting real duplicates slip through unremoved.
+                var dedupedText = StripChunkPrefixOverlap(state.CachedItems, entry.Text, minOverlapWords: 4);
                 if (!string.IsNullOrWhiteSpace(dedupedText))
                 {
                     entry = entry with { Text = dedupedText };

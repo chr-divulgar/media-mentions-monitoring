@@ -6,5 +6,6 @@ export * from "./models/clients.dto";
 export * from "./models/dashboard.dto";
 export * from "./models/note.enum";
 export * from "./models/youtube-status.dto";
+export * from "./models/status.dto";
 export * from "./helper/dates";
 export * from "./helper/text";

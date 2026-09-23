@@ -53,17 +53,10 @@ public static class OperationsWorkerOptionsLoader
         string? BrowserCookiesSource,
         string? YoutubeCookiesFilePath,
         string? YoutubeCookiesAlertFilePath,
-        FirebaseDatabaseLoaderSection? FirebaseDatabase,
         string? MongoConnectionString,
         string? MongoConfigDatabaseName,
         string? MongoMonitoringDatabaseName,
         string? MongoAlertCollectionName);
-
-    private sealed record FirebaseDatabaseLoaderSection(
-        string? BaseUrl,
-        string? PlatformsPath,
-        string? AuthToken,
-        int? RequestTimeoutSeconds);
 
     public static OperationsWorkerOptions Load(string? configPath = null)
     {
@@ -287,14 +280,17 @@ public static class OperationsWorkerOptionsLoader
             options.YoutubeCookiesAlertFilePath = model.YoutubeCookiesAlertFilePath;
         }
 
-        // Load Firebase from environment variables (highest priority) or JSON config (fallback).
-        var firebaseBaseUrl = Environment.GetEnvironmentVariable("FIREBASE_BASE_URL");
-        var firebaseAuthToken = Environment.GetEnvironmentVariable("FIREBASE_AUTH_TOKEN");
-        var firebasePlatformsPath = Environment.GetEnvironmentVariable("FIREBASE_PLATFORMS_PATH");
+        // Same service-account variables apps/web-api already uses for Firestore (FIREBASE_*) —
+        // secrets only ever come from the environment, never from worker-options.json.
+        var firebaseProjectId = Environment.GetEnvironmentVariable("FIREBASE_PROJECT_ID");
+        var firebaseClientEmail = Environment.GetEnvironmentVariable("FIREBASE_CLIENT_EMAIL");
+        var firebasePrivateKey = Environment.GetEnvironmentVariable("FIREBASE_PRIVATE_KEY");
+        var firebaseCollectionPath = Environment.GetEnvironmentVariable("FIREBASE_FIRESTORE_COLLECTION");
         var firebaseTimeoutSecondsStr = Environment.GetEnvironmentVariable("FIREBASE_REQUEST_TIMEOUT_SECONDS");
 
-        // If env vars provided, use them; otherwise try JSON config.
-        if (!string.IsNullOrWhiteSpace(firebaseBaseUrl) && !string.IsNullOrWhiteSpace(firebaseAuthToken))
+        if (!string.IsNullOrWhiteSpace(firebaseProjectId) &&
+            !string.IsNullOrWhiteSpace(firebaseClientEmail) &&
+            !string.IsNullOrWhiteSpace(firebasePrivateKey))
         {
             var timeoutSeconds = 15;
             if (!string.IsNullOrWhiteSpace(firebaseTimeoutSecondsStr) && int.TryParse(firebaseTimeoutSecondsStr, out var envTimeout))
@@ -302,23 +298,13 @@ public static class OperationsWorkerOptionsLoader
                 timeoutSeconds = envTimeout;
             }
 
-            options.FirebaseDatabase = new FirebaseCaptureSourceRepositoryOptions
+            options.Firestore = new FirestoreCaptureSourceRepositoryOptions
             {
-                BaseUrl = firebaseBaseUrl.Trim(),
-                PlatformsPath = string.IsNullOrWhiteSpace(firebasePlatformsPath) ? "platforms" : firebasePlatformsPath.Trim('/'),
-                AuthToken = firebaseAuthToken,
+                ProjectId = firebaseProjectId.Trim(),
+                ClientEmail = firebaseClientEmail.Trim(),
+                PrivateKeyPem = firebasePrivateKey,
+                CollectionPath = string.IsNullOrWhiteSpace(firebaseCollectionPath) ? "platforms" : firebaseCollectionPath.Trim('/'),
                 RequestTimeoutSeconds = timeoutSeconds
-            };
-        }
-        else if (model.FirebaseDatabase is { } fb && !string.IsNullOrWhiteSpace(fb.BaseUrl))
-        {
-            // Fallback: use JSON config if no env vars provided.
-            options.FirebaseDatabase = new FirebaseCaptureSourceRepositoryOptions
-            {
-                BaseUrl = fb.BaseUrl.Trim(),
-                PlatformsPath = string.IsNullOrWhiteSpace(fb.PlatformsPath) ? "platforms" : fb.PlatformsPath.Trim('/'),
-                AuthToken = string.IsNullOrWhiteSpace(fb.AuthToken) ? null : fb.AuthToken,
-                RequestTimeoutSeconds = fb.RequestTimeoutSeconds ?? 15
             };
         }
 

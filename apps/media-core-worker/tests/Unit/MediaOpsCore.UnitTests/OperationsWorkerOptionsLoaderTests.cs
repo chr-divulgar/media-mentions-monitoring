@@ -103,78 +103,80 @@ public sealed class OperationsWorkerOptionsLoaderTests
         }
     }
 
+    // Firestore credentials only ever come from environment variables (the same FIREBASE_* names
+    // apps/web-api's service account already uses) — never from worker-options.json, since that
+    // file is checked into the repo and a private key has no business living there.
     [Fact]
-    public void Load_should_parse_firebaseDatabase_section_when_present()
+    public void Load_should_parse_firestore_credentials_from_environment_variables()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-{Guid.NewGuid():N}.json");
-        try
-        {
-            File.WriteAllText(tempPath, """
-            {
-              "firebaseDatabase": {
-                "baseUrl": "https://my-project-default-rtdb.firebaseio.com",
-                "platformsPath": "platforms",
-                "authToken": "supersecrettoken",
-                "requestTimeoutSeconds": 20
-              }
-            }
-            """);
+        using var env = new EnvironmentVariableScope(
+            ("FIREBASE_PROJECT_ID", "media-mentions-monitoring"),
+            ("FIREBASE_CLIENT_EMAIL", "firebase-adminsdk-fbsvc@media-mentions-monitoring.iam.gserviceaccount.com"),
+            ("FIREBASE_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\\nFAKEKEY\\n-----END PRIVATE KEY-----\\n"),
+            ("FIREBASE_FIRESTORE_COLLECTION", "platforms"),
+            ("FIREBASE_REQUEST_TIMEOUT_SECONDS", "20"));
 
-            var options = OperationsWorkerOptionsLoader.Load(tempPath);
+        var options = OperationsWorkerOptionsLoader.Load();
 
-            Assert.NotNull(options.FirebaseDatabase);
-            Assert.True(options.FirebaseDatabase!.IsEnabled);
-            Assert.Equal("https://my-project-default-rtdb.firebaseio.com", options.FirebaseDatabase.BaseUrl);
-            Assert.Equal("platforms", options.FirebaseDatabase.PlatformsPath);
-            Assert.Equal("supersecrettoken", options.FirebaseDatabase.AuthToken);
-            Assert.Equal(20, options.FirebaseDatabase.RequestTimeoutSeconds);
-        }
-        finally
-        {
-            if (File.Exists(tempPath)) File.Delete(tempPath);
-        }
+        Assert.NotNull(options.Firestore);
+        Assert.True(options.Firestore!.IsEnabled);
+        Assert.Equal("media-mentions-monitoring", options.Firestore.ProjectId);
+        Assert.Equal("firebase-adminsdk-fbsvc@media-mentions-monitoring.iam.gserviceaccount.com", options.Firestore.ClientEmail);
+        Assert.Equal("platforms", options.Firestore.CollectionPath);
+        Assert.Equal(20, options.Firestore.RequestTimeoutSeconds);
     }
 
     [Fact]
-    public void Load_should_leave_FirebaseDatabase_null_when_section_is_absent()
+    public void Load_should_leave_Firestore_null_when_no_credentials_are_set()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-{Guid.NewGuid():N}.json");
-        try
-        {
-            File.WriteAllText(tempPath, """{ "continuousMediaAllowList": "radio" }""");
+        using var env = new EnvironmentVariableScope(
+            ("FIREBASE_PROJECT_ID", null),
+            ("FIREBASE_CLIENT_EMAIL", null),
+            ("FIREBASE_PRIVATE_KEY", null));
 
-            var options = OperationsWorkerOptionsLoader.Load(tempPath);
+        var options = OperationsWorkerOptionsLoader.Load();
 
-            Assert.Null(options.FirebaseDatabase);
-        }
-        finally
-        {
-            if (File.Exists(tempPath)) File.Delete(tempPath);
-        }
+        Assert.Null(options.Firestore);
     }
 
     [Fact]
-    public void Load_should_leave_FirebaseDatabase_null_when_baseUrl_is_empty()
+    public void Load_should_leave_Firestore_null_when_only_some_credentials_are_set()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-{Guid.NewGuid():N}.json");
-        try
+        using var env = new EnvironmentVariableScope(
+            ("FIREBASE_PROJECT_ID", "media-mentions-monitoring"),
+            ("FIREBASE_CLIENT_EMAIL", null),
+            ("FIREBASE_PRIVATE_KEY", null));
+
+        var options = OperationsWorkerOptionsLoader.Load();
+
+        Assert.Null(options.Firestore);
+    }
+
+    // Sets environment variables for the duration of a test and restores their previous values
+    // (including "was absent") on dispose — keeps FIREBASE_* tests isolated from whatever the
+    // real process environment (or another test) happens to have set.
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly (string Key, string? Previous)[] previousValues;
+
+        public EnvironmentVariableScope(params (string Key, string? Value)[] variables)
         {
-            File.WriteAllText(tempPath, """
+            previousValues = variables
+                .Select(v => (v.Key, Environment.GetEnvironmentVariable(v.Key)))
+                .ToArray();
+
+            foreach (var (key, value) in variables)
             {
-              "firebaseDatabase": {
-                "baseUrl": "",
-                "authToken": "token"
-              }
+                Environment.SetEnvironmentVariable(key, value);
             }
-            """);
-
-            var options = OperationsWorkerOptionsLoader.Load(tempPath);
-
-            Assert.Null(options.FirebaseDatabase);
         }
-        finally
+
+        public void Dispose()
         {
-            if (File.Exists(tempPath)) File.Delete(tempPath);
+            foreach (var (key, previous) in previousValues)
+            {
+                Environment.SetEnvironmentVariable(key, previous);
+            }
         }
     }
 }

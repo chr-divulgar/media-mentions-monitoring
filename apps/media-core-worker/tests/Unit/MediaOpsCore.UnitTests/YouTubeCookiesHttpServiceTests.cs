@@ -42,7 +42,9 @@ public sealed class YouTubeCookiesHttpServiceTests : IDisposable
             validator ?? new FakeValidator(isValid: true),
             alertService ?? new FakeAlertService(),
             new FakeHealthSnapshotProvider(),
-            trigger ?? new FakeReconciliationTrigger());
+            trigger ?? new FakeReconciliationTrigger(),
+            new FakeCaptureStatusSnapshotProvider(),
+            new FakeClosedHourAudioReader());
     }
 
     [Fact]
@@ -138,5 +140,19 @@ public sealed class YouTubeCookiesHttpServiceTests : IDisposable
                 ExcludedTvSourceIds: [],
                 TotalTvSourceCount: 0,
                 ActiveTvSourceCount: 0));
+    }
+
+    private sealed class FakeCaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvider
+    {
+        public Task<CaptureStatusResponse> GetSnapshotAsync(DateOnly date, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new CaptureStatusResponse { Date = date.ToString("yyyy-MM-dd"), Sources = [] });
+    }
+
+    private sealed class FakeClosedHourAudioReader : IClosedHourAudioReader
+    {
+        public Task<ClosedHourAudioResult> ExtractSegmentAsync(
+            string sourceId, DateTimeOffset startUtc, DateTimeOffset endUtc, int bitrateKbps, int frequencyHz,
+            string format, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ClosedHourAudioResult>(new ClosedHourAudioSourceNotFound());
     }
 }

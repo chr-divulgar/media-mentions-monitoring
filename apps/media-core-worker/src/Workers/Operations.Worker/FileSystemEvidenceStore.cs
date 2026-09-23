@@ -40,6 +40,25 @@ public sealed class FileSystemEvidenceStore : IEvidenceFileStore
         await JsonSerializer.SerializeAsync(stream, payload, SerializerOptions, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<T?> ReadJsonAsync<T>(string relativePath, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            throw new ArgumentException("Value cannot be null or whitespace.", nameof(relativePath));
+        }
+
+        var normalizedRelative = relativePath.Replace('\\', '/');
+        var inputPath = Path.Combine(rootPath, normalizedRelative);
+
+        if (!File.Exists(inputPath))
+        {
+            return default;
+        }
+
+        await using var stream = File.OpenRead(inputPath);
+        return await JsonSerializer.DeserializeAsync<T>(stream, SerializerOptions, cancellationToken).ConfigureAwait(false);
+    }
+
     public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

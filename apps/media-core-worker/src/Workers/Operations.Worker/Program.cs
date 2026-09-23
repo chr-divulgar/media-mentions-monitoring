@@ -11,6 +11,8 @@ using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Segmentation.Application;
 using MediaOpsCore.Workers.Operations;
 
+DotEnvLoader.LoadIfPresent();
+
 var builder = Host.CreateApplicationBuilder(args);
 
 var options = OperationsWorkerOptionsLoader.Load();
@@ -20,18 +22,29 @@ builder.Services.AddSingleton(options);
 // Add hosted service for YouTube cookies HTTP endpoint
 builder.Services.AddHostedService<YouTubeCookiesHttpService>();
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
-builder.Services.AddSingleton<IMonitoringArtifactRepository, StageMirrorMonitoringArtifactRepository>();
+builder.Services.AddSingleton<StageMirrorMonitoringArtifactRepository>();
+builder.Services.AddSingleton<IMonitoringArtifactRepository>(
+    sp => sp.GetRequiredService<StageMirrorMonitoringArtifactRepository>());
 builder.Services.AddSingleton<IEvidenceFileStore, FileSystemEvidenceStore>();
 builder.Services.AddSingleton<IOperationalMetrics, MeterOperationalMetrics>();
-// Capture source repositories: Firebase primary (when configured) + JSON file fallback.
+// Capture source repositories: Firestore primary (when configured, same "platforms" collection
+// and service account apps/web-api already uses) + JSON file fallback.
 builder.Services.AddSingleton<JsonFileCaptureSourceRepository>();
-if (options.FirebaseDatabase?.IsEnabled == true)
+if (options.Firestore?.IsEnabled == true)
 {
-    builder.Services.AddSingleton(options.FirebaseDatabase);
-    builder.Services.AddSingleton<FirebaseCaptureSourceRepository>();
+    var firestoreOptions = options.Firestore;
+    builder.Services.AddSingleton(firestoreOptions);
+    builder.Services.AddSingleton(sp => new GoogleServiceAccountTokenProvider(
+        sp.GetRequiredService<HttpClient>(),
+        firestoreOptions.ClientEmail!,
+        firestoreOptions.PrivateKeyPem!));
+    builder.Services.AddSingleton<FirestoreCaptureSourceRepository>();
+    // Capture coverage audit trail: one document per clock hour in the same Firestore project.
+    builder.Services.AddSingleton<FirestoreCaptureSummaryStore>();
+    builder.Services.AddHostedService<CaptureSummaryArchiveWorker>();
     builder.Services.AddSingleton<ICaptureSourceRepository>(sp =>
         new FallbackCaptureSourceRepository(
-            sp.GetRequiredService<FirebaseCaptureSourceRepository>(),
+            sp.GetRequiredService<FirestoreCaptureSourceRepository>(),
             sp.GetRequiredService<JsonFileCaptureSourceRepository>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FallbackCaptureSourceRepository>>()));
 }
@@ -51,6 +64,7 @@ builder.Services.AddSingleton<IYtdlpBinaryProvider>(sp => sp.GetRequiredService<
 builder.Services.AddSingleton<IYouTubeCookiesAlertService, YouTubeCookiesAlertService>();
 builder.Services.AddSingleton<IYouTubeCookiesValidator, YouTubeCookiesValidator>();
 builder.Services.AddSingleton<IYouTubeHealthSnapshotProvider, YouTubeHealthSnapshotProvider>();
+builder.Services.AddSingleton<ICaptureStatusSnapshotProvider, CaptureStatusSnapshotProvider>();
 builder.Services.AddSingleton<ILiveStreamUrlResolver, YtdlpLiveStreamUrlResolver>();
 builder.Services.AddSingleton<IStartupSourceInitializationService, StartupSourceInitializationService>();
 builder.Services.AddSingleton<SourceAvailabilityReconciliationService>();
@@ -81,6 +95,9 @@ builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudi
 	sp.GetRequiredService<ICaptureAttemptObserver>(),
 	sp.GetRequiredService<IMonitoringArtifactRepository>(),
 	sp.GetRequiredService<IDetectAlertsUseCase>()));
+builder.Services.AddSingleton<ILiveCaptureProgressReader>(
+	sp => (ILiveCaptureProgressReader)sp.GetRequiredService<IAudioCapturePlugin>());
+builder.Services.AddSingleton<IClosedHourAudioReader, ClosedHourAudioSegmentReader>();
 builder.Services.AddSingleton<IContinuousCaptureUseCase>(sp => new ContinuousCaptureUseCase(
 	sp.GetRequiredService<ICaptureSourceProvider>(),
 	sp.GetRequiredService<IIngestionPluginResolver>(),

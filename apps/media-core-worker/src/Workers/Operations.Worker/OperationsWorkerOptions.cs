@@ -80,7 +80,7 @@ public sealed class OperationsWorkerOptions
 
     public string YoutubeCookiesAlertFilePath { get; set; } = "stage/cookies/youtube-auth-required.flag";
 
-    public FirebaseCaptureSourceRepositoryOptions? FirebaseDatabase { get; set; }
+    public FirestoreCaptureSourceRepositoryOptions? Firestore { get; set; }
 
     // Same connection string as apps/web-api's MONGODB_URI so both point at the one MongoDB instance.
     public string MongoConnectionString { get; set; } = "mongodb://localhost:27017";

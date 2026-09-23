@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -7,11 +8,16 @@ using System.Text.Json;
 namespace MediaOpsCore.Workers.Operations;
 
 /// <summary>
-/// Hosted service exposing two routes for the YouTube cookies workflow, on http://localhost:5000:
+/// Hosted service exposing worker-side HTTP routes on http://localhost:5000:
 ///   POST /youtube/cookies — receives fresh cookies from NestJS, validates them, writes them to
 ///     disk, clears the auth alert, and triggers an immediate reconciliation attempt.
 ///   GET  /youtube/health   — reports auth alert / cookie validity / excluded-source state.
 ///     The HTTP 200 response itself is the liveness signal callers are checking for.
+///   GET  /capture/status   — reports per-source, per-hour capture coverage for one day (see
+///     CaptureStatusSnapshotProvider), consumed by the web-ui capture status page.
+///   GET  /audio/segment    — serves a closed-hour audio segment (mp3/wav) for Alerts' audio-edit
+///     flow, consumed by NestJS's AudioService instead of it reading the worker's local D:\...
+///     opus paths directly (see IClosedHourAudioReader).
 /// </summary>
 public sealed class YouTubeCookiesHttpService : IHostedService
 {
@@ -34,6 +40,8 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     private readonly IYouTubeCookiesAlertService alertService;
     private readonly IYouTubeHealthSnapshotProvider healthSnapshotProvider;
     private readonly IYouTubeReconciliationTrigger reconciliationTrigger;
+    private readonly ICaptureStatusSnapshotProvider captureStatusSnapshotProvider;
+    private readonly IClosedHourAudioReader closedHourAudioReader;
     private HttpListener? httpListener;
     private CancellationTokenSource? cts;
 
@@ -43,7 +51,9 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         IYouTubeCookiesValidator cookiesValidator,
         IYouTubeCookiesAlertService alertService,
         IYouTubeHealthSnapshotProvider healthSnapshotProvider,
-        IYouTubeReconciliationTrigger reconciliationTrigger)
+        IYouTubeReconciliationTrigger reconciliationTrigger,
+        ICaptureStatusSnapshotProvider captureStatusSnapshotProvider,
+        IClosedHourAudioReader closedHourAudioReader)
     {
         this.logger = logger;
         this.options = options;
@@ -51,6 +61,8 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         this.alertService = alertService;
         this.healthSnapshotProvider = healthSnapshotProvider;
         this.reconciliationTrigger = reconciliationTrigger;
+        this.captureStatusSnapshotProvider = captureStatusSnapshotProvider;
+        this.closedHourAudioReader = closedHourAudioReader;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -130,6 +142,18 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "GET" && path == "/youtube/health")
             {
                 await HandleHealthRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "GET" && path == "/capture/status")
+            {
+                await HandleCaptureStatusRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "GET" && path == "/audio/segment")
+            {
+                await HandleAudioSegmentRequestAsync(context).ConfigureAwait(false);
                 return;
             }
 
@@ -259,6 +283,76 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         };
 
         await SendJsonResponse(context, 200, response).ConfigureAwait(false);
+    }
+
+    private async Task HandleCaptureStatusRequestAsync(HttpListenerContext context)
+    {
+        var dateParam = context.Request.QueryString["date"];
+        var date = DateOnly.TryParseExact(dateParam, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+            ? parsed
+            : DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-5)).DateTime);
+
+        var response = await captureStatusSnapshotProvider.GetSnapshotAsync(date).ConfigureAwait(false);
+
+        await SendJsonResponse(context, 200, response).ConfigureAwait(false);
+    }
+
+    private async Task HandleAudioSegmentRequestAsync(HttpListenerContext context)
+    {
+        var query = context.Request.QueryString;
+        var sourceId = query["sourceId"];
+        var format = query["format"] ?? "mp3";
+
+        if (string.IsNullOrWhiteSpace(sourceId)
+            || (format != "mp3" && format != "wav")
+            || !DateTimeOffset.TryParse(query["startUtc"], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var startUtc)
+            || !DateTimeOffset.TryParse(query["endUtc"], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var endUtc)
+            || !int.TryParse(query["bitrateKbps"], out var bitrateKbps)
+            || !int.TryParse(query["frequencyHz"], out var frequencyHz))
+        {
+            await SendJsonResponse(context, 400, new AudioSegmentErrorResponse
+            {
+                Message = "Missing or invalid query parameters (sourceId, startUtc, endUtc, bitrateKbps, frequencyHz, format=mp3|wav).",
+            }).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await closedHourAudioReader
+            .ExtractSegmentAsync(sourceId, startUtc, endUtc, bitrateKbps, frequencyHz, format, CancellationToken.None)
+            .ConfigureAwait(false);
+
+        switch (result)
+        {
+            case ClosedHourAudioSuccess success:
+                context.Response.StatusCode = 200;
+                context.Response.ContentType = success.ContentType;
+                context.Response.ContentLength64 = success.Bytes.Length;
+                await context.Response.OutputStream.WriteAsync(success.Bytes).ConfigureAwait(false);
+                context.Response.Close();
+                break;
+
+            case ClosedHourAudioStillRecording stillRecording:
+                await SendJsonResponse(context, 409, new AudioSegmentErrorResponse
+                {
+                    Message = $"Source '{sourceId}' is still recording this hour; {stillRecording.RecordedSeconds:F0}s captured so far.",
+                    RecordedSeconds = stillRecording.RecordedSeconds,
+                }).ConfigureAwait(false);
+                break;
+
+            case ClosedHourAudioSourceNotFound:
+                await SendJsonResponse(context, 404, new AudioSegmentErrorResponse
+                {
+                    Message = $"Unknown sourceId '{sourceId}'.",
+                }).ConfigureAwait(false);
+                break;
+
+            case ClosedHourAudioNotAvailable notAvailable:
+                await SendJsonResponse(context, 404, new AudioSegmentErrorResponse
+                {
+                    Message = notAvailable.Reason,
+                }).ConfigureAwait(false);
+                break;
+        }
     }
 
     private static string ResolveAbsolutePath(string path) =>

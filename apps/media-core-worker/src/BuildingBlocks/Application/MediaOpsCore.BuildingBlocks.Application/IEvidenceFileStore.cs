@@ -4,5 +4,7 @@ public interface IEvidenceFileStore
 {
     Task WriteJsonAsync<T>(string relativePath, T payload, CancellationToken cancellationToken = default);
 
+    Task<T?> ReadJsonAsync<T>(string relativePath, CancellationToken cancellationToken = default);
+
     Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default);
 }
