@@ -4,6 +4,7 @@ import {
   SmileFilled,
   TabletFilled,
   SettingFilled,
+  HeartFilled,
 } from "@ant-design/icons";
 
 export default {
@@ -25,6 +26,11 @@ export default {
         path: "/alerts",
         name: "Alertas",
         icon: <SmileFilled />,
+      },
+      {
+        path: "/status",
+        name: "Estatus",
+        icon: <HeartFilled />,
       },
       {
         path: "/settings",

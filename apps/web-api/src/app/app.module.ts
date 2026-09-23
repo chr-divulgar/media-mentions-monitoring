@@ -12,6 +12,7 @@ import { NotesModule } from './notes/notes.module';
 import { FirebaseAdminModule } from './firebase/firebase-admin.module';
 import { ClientsModule } from './clients/clients.module';
 import { AuthModule } from './auth/auth.module';
+import { StatusModule } from './status/status.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { AuthModule } from './auth/auth.module';
     NotesModule,
     SettingsModule,
     ClientsModule,
+    StatusModule,
   ],
   controllers: [AppController],
   providers: [AppService],

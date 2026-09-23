@@ -17,6 +17,8 @@ import {
 } from '@nestjs/platform-fastify';
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { ConfigService } from '@nestjs/config';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import { isAllowedOrigin } from './app/cors-origin';
 
 async function bootstrap() {
   const fastifyAdapter = new FastifyAdapter({
@@ -29,20 +31,9 @@ async function bootstrap() {
     fastifyAdapter,
   );
 
-  const allowedOrigins = [
-    'https://rpt-monitoreo.github.io',
-    'http://localhost:4300',
-    'http://localhost:4200',
-  ];
-
   const corsOptions: CorsOptions = {
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      // Allow any subdomain of trycloudflare.com
-      if (/^https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com$/.test(origin)) {
+      if (isAllowedOrigin(origin)) {
         return callback(null, true);
       }
       return callback(new Error('Not allowed by CORS'), false);
@@ -52,6 +43,7 @@ async function bootstrap() {
   };
 
   app.enableCors(corsOptions);
+  app.useWebSocketAdapter(new IoAdapter(app));
   app.register(compression);
   // Servir archivos estáticos del frontend
   app.register(fastifyStatic, {

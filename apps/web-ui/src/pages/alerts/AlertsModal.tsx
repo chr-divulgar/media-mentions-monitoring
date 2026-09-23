@@ -10,6 +10,7 @@ import {
   Spin,
   Steps,
 } from "antd";
+import { AxiosError } from "axios";
 import { useAlert } from "./AlertsContext";
 import { useMutation, UseMutationResult } from "react-query";
 import { CreateFileDto, FileDto, Fragment, NoteDto } from "@repo/shared/index";
@@ -19,6 +20,11 @@ import moment from "moment";
 import SummaryEdit from "../notes/SummaryEdit";
 import { useNote } from "../notes/NoteContext";
 import NoteEdit from "../notes/NoteEdit";
+
+// The backend's createFile endpoint already returns the real failure reason as
+// `{ error: string }` in its response body — show that instead of a generic label.
+const describeCreateFileError = (error: unknown, fallback: string): string =>
+  (error as AxiosError<{ error?: string }>)?.response?.data?.error ?? fallback;
 
 interface AlertsModalProps {
   visible: boolean;
@@ -175,7 +181,7 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
             <Radio.Button value={7200}>2 horas</Radio.Button>
           </Radio.Group>
           {errorSegment ? (
-            <div>Error loading Segment</div>
+            <div>{describeCreateFileError(errorSegment, "Error loading Segment")}</div>
           ) : (
             segmentData && (
               <AudioEdit
@@ -191,7 +197,7 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
     {
       title: "Resumen",
       content: errorFragment ? (
-        <div>Error loading Fragment</div>
+        <div>{describeCreateFileError(errorFragment, "Error loading Fragment")}</div>
       ) : (
         segmentData && (
           <Spin spinning={isLoadingFragment}>

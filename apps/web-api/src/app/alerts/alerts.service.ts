@@ -107,11 +107,19 @@ export class AlertsService {
       throw new Error('startDate and endDate are required');
     }
 
+    // Legacy stores local (Bogotá) wall-clock time mislabeled as UTC, so a plain 'Z' boundary
+    // already lines up with the user's intended calendar day. Worker alerts store real UTC, so
+    // the same 'Z' boundary would select a UTC day instead of a Bogotá day — e.g. a worker alert
+    // at 2026-09-15T02:17Z (21:17 the previous day in Bogotá) would wrongly count as "today" when
+    // the user picks 2026-09-15. Anchor the boundary to -05:00 for worker so it selects the same
+    // calendar day the UI displays (see getWorkerDate in AlertsTable.tsx).
+    const dayBoundarySuffix = source === 'worker' ? '-05:00' : 'Z';
+
     const findOptions: FindOneOptions<Alert> = {
       where: {
         endTime: {
-          $gte: new Date(startDate + 'T00:00:00.000Z'),
-          $lte: new Date(endDate + 'T23:59:59.999Z'),
+          $gte: new Date(`${startDate}T00:00:00.000${dayBoundarySuffix}`),
+          $lte: new Date(`${endDate}T23:59:59.999${dayBoundarySuffix}`),
         },
         ...(clientName && { clientName }),
         ...(type.length > 0 && { type: { $in: type } }),

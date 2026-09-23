@@ -1,4 +1,4 @@
-import { DatePicker, Switch } from "antd";
+import { DatePicker, Radio } from "antd";
 import dayjs from "dayjs";
 import { useState } from "react";
 import { dateFormat, DateRange, ValidDatesDto } from "@repo/shared/index";
@@ -9,6 +9,8 @@ import api from "../../services/Agent";
 // Asegúrate de tener un formato de fecha válido para dayjs
 
 const { RangePicker } = DatePicker;
+
+type AlertsView = "legacy" | "worker" | "compare";
 
 const Alerts = () => {
   const {
@@ -25,7 +27,7 @@ const Alerts = () => {
     dayjs(),
     dayjs(),
   ]);
-  const [compareEnabled, setCompareEnabled] = useState(false);
+  const [view, setView] = useState<AlertsView>("legacy");
 
   const handleCalendarChange = (dates: DateRange | null) => {
     setSelectedDates(dates);
@@ -46,14 +48,13 @@ const Alerts = () => {
         allowClear={false}
       />
       <div style={{ margin: "12px 0" }}>
-        <Switch
-          checked={compareEnabled}
-          onChange={setCompareEnabled}
-          checkedChildren="Comparando legacy vs. worker"
-          unCheckedChildren="Comparar legacy vs. worker"
-        />
+        <Radio.Group value={view} onChange={(e) => setView(e.target.value)}>
+          <Radio.Button value="legacy">Legacy</Radio.Button>
+          <Radio.Button value="worker">Worker</Radio.Button>
+          <Radio.Button value="compare">Comparar</Radio.Button>
+        </Radio.Group>
       </div>
-      {compareEnabled ? (
+      {view === "compare" ? (
         <div
           style={{
             display: "flex",
@@ -77,7 +78,7 @@ const Alerts = () => {
           </div>
         </div>
       ) : (
-        <AlertsTable selectedDates={selectedDates} />
+        <AlertsTable selectedDates={selectedDates} source={view} />
       )}
     </>
   );

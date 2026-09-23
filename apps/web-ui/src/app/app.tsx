@@ -20,6 +20,7 @@ import {
 } from "./appHelpers";
 import "./app.module.css";
 import Alerts from "../pages/alerts/Alerts";
+import CaptureStatusPage from "../pages/status/CaptureStatusPage";
 import NotesPage from "../pages/notes/NotesPage";
 import DashboardPage from "../pages/dashboard";
 import SettingsPage from "../pages/settings/SettingsPage";
@@ -161,6 +162,16 @@ function AppLayout() {
             <PrivateRoute requiredRole="admin">
               <RouteCard>
                 <Alerts />
+              </RouteCard>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/status"
+          element={
+            <PrivateRoute requiredRole="admin">
+              <RouteCard>
+                <CaptureStatusPage />
               </RouteCard>
             </PrivateRoute>
           }

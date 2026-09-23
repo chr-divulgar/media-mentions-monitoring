@@ -29,7 +29,6 @@ import {
 } from "@ant-design/icons";
 import { useQuery, useMutation, useQueryClient } from "react-query";
 import api from "../../services/Agent";
-import { YouTubeSettings } from "./YouTubeSettings";
 import type {
   PlatformDto,
   ClientDto,
@@ -1893,11 +1892,6 @@ const SettingsPage: React.FC = () => {
           />
         </Card>
       ),
-    },
-    {
-      key: "youtube",
-      label: "YouTube",
-      children: <YouTubeSettings />,
     },
     {
       key: "clients",

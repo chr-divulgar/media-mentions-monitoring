@@ -98,6 +98,7 @@ interface PlatformDoc {
   primaryUrl?: string;
   country?: string;
   fallbackStreamUrls?: string[];
+  isExcluded?: boolean;
 }
 
 function buildOptionalPlatformFields(
@@ -116,6 +117,8 @@ function buildOptionalPlatformFields(
       dto.fallbackStreamUrls !== undefined
         ? dto.fallbackStreamUrls
         : existing.fallbackStreamUrls,
+    isExcluded:
+      dto.isExcluded !== undefined ? dto.isExcluded : existing.isExcluded,
   };
 
   return Object.fromEntries(
@@ -164,6 +167,7 @@ export class SettingsService {
       ...(dto.fallbackStreamUrls?.length
         ? { fallbackStreamUrls: dto.fallbackStreamUrls }
         : {}),
+      ...(dto.isExcluded !== undefined ? { isExcluded: dto.isExcluded } : {}),
     };
     const ref = await this.db.collection(PLATFORMS_COLLECTION).add(data);
     return { id: ref.id, ...data };

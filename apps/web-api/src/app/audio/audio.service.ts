@@ -58,20 +58,32 @@ export class AudioService {
     const startSeconds =
       endSeconds > durationIn / 2 ? endSeconds - durationIn / 2 : 0;
 
-    if (await this.checkFileExists(outputPath)) {
-      const duration = await this.getAudioDuration(outputPath);
-      return { startSeconds, duration };
+    const cachedDuration = await this.tryReuseCachedFile(outputPath);
+    if (cachedDuration !== null) {
+      return { startSeconds, duration: cachedDuration };
     } else {
-      const duration = await this.extractForWindow(
-        filePath,
-        startSeconds,
-        startSeconds + durationIn,
-        durationIn,
-        16,
-        8000,
-        outputPath,
-        'mp3',
-      );
+      const duration =
+        alert.source === 'worker'
+          ? await this.extractForWindowFromWorker(
+              this.deriveSourceId(filePath),
+              fileTime,
+              startSeconds,
+              startSeconds + durationIn,
+              16,
+              8000,
+              outputPath,
+              'mp3',
+            )
+          : await this.extractForWindow(
+              filePath,
+              startSeconds,
+              startSeconds + durationIn,
+              durationIn,
+              16,
+              8000,
+              outputPath,
+              'mp3',
+            );
 
       return { startSeconds, duration };
     }
@@ -83,32 +95,113 @@ export class AudioService {
   ): Promise<AudioFile> {
     const startSeconds = createFileDto.startSecond;
     const windowEnd = startSeconds + createFileDto.duration;
+    const isWorkerAlert = createFileDto.alert?.source === 'worker';
 
-    const durations = await Promise.all([
-      this.extractForWindow(
-        filePath,
-        startSeconds,
-        windowEnd,
-        createFileDto.duration,
-        32,
-        16000,
-        outputPath,
-        'mp3',
-      ),
-      this.extractForWindow(
-        filePath,
-        startSeconds,
-        windowEnd,
-        createFileDto.duration,
-        64000,
-        16000,
-        outputPath.replace('mp3', 'wav'),
-        'wav',
-      ),
-    ]);
+    const durations = isWorkerAlert
+      ? await Promise.all([
+          this.extractForWindowFromWorker(
+            this.deriveSourceId(filePath),
+            getDateFromFile(filePath),
+            startSeconds,
+            windowEnd,
+            32,
+            16000,
+            outputPath,
+            'mp3',
+          ),
+          this.extractForWindowFromWorker(
+            this.deriveSourceId(filePath),
+            getDateFromFile(filePath),
+            startSeconds,
+            windowEnd,
+            64000,
+            16000,
+            outputPath.replace('mp3', 'wav'),
+            'wav',
+          ),
+        ])
+      : await Promise.all([
+          this.extractForWindow(
+            filePath,
+            startSeconds,
+            windowEnd,
+            createFileDto.duration,
+            32,
+            16000,
+            outputPath,
+            'mp3',
+          ),
+          this.extractForWindow(
+            filePath,
+            startSeconds,
+            windowEnd,
+            createFileDto.duration,
+            64000,
+            16000,
+            outputPath.replace('mp3', 'wav'),
+            'wav',
+          ),
+        ]);
     const duration = durations[0];
 
     return { startSeconds: startSeconds, duration };
+  }
+
+  // The worker's own /audio/segment endpoint (mirrors the shape of StatusService.getCaptureStatus's
+  // worker-HTTP call — same env var, same plain fetch, no dedicated client class). It owns every
+  // decision about what is readable: closed hours it reads directly, and the hour it is still
+  // recording it serves from a point-in-time copy of that file. There is deliberately no local
+  // pre-check here — one used to reject live-hour windows outright, which now just blocks
+  // requests the worker can actually fulfil.
+  private async extractForWindowFromWorker(
+    sourceId: string,
+    fileTime: Date,
+    windowStart: number,
+    windowEnd: number,
+    audioBitrate: number,
+    audioFrequency: number,
+    outputPath: string,
+    format: string,
+  ): Promise<number> {
+    const workerUrl = process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
+    const startUtc = new Date(fileTime.getTime() + windowStart * 1000).toISOString();
+    const endUtc = new Date(fileTime.getTime() + windowEnd * 1000).toISOString();
+    const query = new URLSearchParams({
+      sourceId,
+      startUtc,
+      endUtc,
+      bitrateKbps: String(audioBitrate),
+      frequencyHz: String(audioFrequency),
+      format,
+    });
+
+    const response = await fetch(`${workerUrl}/audio/segment?${query}`, {
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      let message = `Worker audio service responded ${response.status}`;
+      try {
+        const parsed = JSON.parse(body) as { message?: string };
+        if (parsed.message) message = parsed.message;
+      } catch {
+        // Not JSON — fall through to the generic message above.
+      }
+      throw new Error(message);
+    }
+
+    await fs.promises.writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
+    return this.getAudioDuration(outputPath);
+  }
+
+  // Recovers the sourceId a worker-produced filename encodes, e.g.
+  // ".../radio-a_2026-09-22_11-00-00.opus" -> "radio-a" — the same parsing resolveSourceFiles
+  // already does internally to find sibling hourly files.
+  private deriveSourceId(filePath: string): string {
+    const base = path.basename(filePath, path.extname(filePath));
+    const parts = base.split('_');
+    return parts.length < 3 ? base : parts.slice(0, -2).join('_');
   }
 
   // Resolves the real source file(s) for [windowStart, windowEnd] (seconds relative to
@@ -308,11 +401,14 @@ export class AudioService {
     });
   }
 
-  async getAudioFileByName(filename: string): Promise<stream.Readable | null> {
+  async getAudioFileByName(
+    filename: string,
+  ): Promise<{ stream: stream.Readable; size: number } | null> {
     const filePath = path.resolve(`./audioFiles/${filename}.mp3`);
     if (!fs.existsSync(filePath)) return null;
     try {
-      return fs.createReadStream(filePath);
+      const { size } = await fs.promises.stat(filePath);
+      return { stream: fs.createReadStream(filePath), size };
     } catch (error) {
       throw new Error(String(error));
     }
@@ -331,6 +427,26 @@ export class AudioService {
         else resolve(metadata.format.duration ?? 0);
       });
     });
+  }
+
+  // A cached file from an earlier run can be corrupt or truncated (a worker fetch interrupted
+  // mid-write, or — before this pipeline read only closed hours — a read of the source
+  // recording's still-open current hour) and existence alone doesn't catch that; every future
+  // request for that alert would keep serving the same bad file forever. Probing it is cheap and
+  // is what lets a single bad historical write self-heal instead of poisoning the cache
+  // permanently.
+  private async tryReuseCachedFile(outputPath: string): Promise<number | null> {
+    if (!(await this.checkFileExists(outputPath))) return null;
+
+    try {
+      const duration = await this.getAudioDuration(outputPath);
+      if (duration > 0) return duration;
+    } catch {
+      // Falls through to treat it as unusable below.
+    }
+
+    await fs.promises.unlink(outputPath).catch(() => undefined);
+    return null;
   }
 
   async checkFileExists(filePath: string): Promise<boolean> {

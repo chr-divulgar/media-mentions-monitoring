@@ -37,16 +37,17 @@ export class AudioController {
     @Param('filename') filename: string,
     @Res() res: FastifyReply,
   ): Promise<void> {
-    let audioStream;
+    let audioFile;
     try {
-      audioStream = await this.audioService.getAudioFileByName(filename);
-      if (!audioStream) {
+      audioFile = await this.audioService.getAudioFileByName(filename);
+      if (!audioFile) {
         res.status(HttpStatus.NOT_FOUND).send({ error: 'File not found' });
         return;
       }
       res.header('Content-Type', 'audio/mpeg');
+      res.header('Content-Length', audioFile.size);
       res.header('Accept-Ranges', 'bytes');
-      res.send(audioStream);
+      res.send(audioFile.stream);
     } catch (err) {
       res
         .status(HttpStatus.INTERNAL_SERVER_ERROR)
