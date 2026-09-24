@@ -11,14 +11,27 @@ public sealed class YtdlpLiveStreamUrlResolverTests
 {
     private const string ValidHlsUrl = "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/12345/id/abc.m3u8";
     private const string YoutubeChannelUrl = "https://www.youtube.com/@noticiascaracol/live";
+    private const string ResolvedGoogleVideoUrl = "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/12345/id/xyz.m3u8";
+    private const string PlainHttpStreamUrl = "https://radio.example.com/live.mp3";
 
     // ── CanResolve ──────────────────────────────────────────────────────────
 
     [Fact]
-    public void CanResolve_returns_true_when_media_is_television_and_platform_is_youtube()
+    public void CanResolve_returns_true_when_media_is_television_and_streamUrl_is_youtube()
     {
         var sut = BuildResolver(new FakeProcessRunner());
-        var source = MakeSource("television", "youtube");
+        var source = MakeSource(media: "television", streamUrl: YoutubeChannelUrl);
+        Assert.True(sut.CanResolve(source));
+    }
+
+    [Fact]
+    public void CanResolve_prefers_primaryUrl_over_a_resolved_streamUrl()
+    {
+        // Real shape once a YouTube source has already resolved once: streamUrl is a temporary
+        // googlevideo.com CDN manifest, not a youtube.com URL — only primaryUrl still says
+        // "this is YouTube".
+        var sut = BuildResolver(new FakeProcessRunner());
+        var source = MakeSource(media: "television", streamUrl: ResolvedGoogleVideoUrl, primaryUrl: YoutubeChannelUrl);
         Assert.True(sut.CanResolve(source));
     }
 
@@ -26,26 +39,50 @@ public sealed class YtdlpLiveStreamUrlResolverTests
     public void CanResolve_returns_false_when_media_is_radio()
     {
         var sut = BuildResolver(new FakeProcessRunner());
-        var source = MakeSource("radio", "BluRadio");
+        var source = MakeSource(media: "radio", streamUrl: YoutubeChannelUrl);
         Assert.False(sut.CanResolve(source));
     }
 
     [Fact]
-    public void CanResolve_returns_false_when_media_is_television_but_platform_is_not_youtube()
+    public void CanResolve_returns_false_when_media_is_television_but_url_is_not_youtube()
     {
         var sut = BuildResolver(new FakeProcessRunner());
-        var source = MakeSource("television", "twitch");
+        var source = MakeSource(media: "television", streamUrl: PlainHttpStreamUrl);
+        Assert.False(sut.CanResolve(source));
+    }
+
+    [Fact]
+    public void CanResolve_returns_true_for_youtu_be_short_link()
+    {
+        var sut = BuildResolver(new FakeProcessRunner());
+        var source = MakeSource(media: "television", primaryUrl: "https://youtu.be/abc123");
+        Assert.True(sut.CanResolve(source));
+    }
+
+    [Fact]
+    public void CanResolve_returns_false_for_a_lookalike_host()
+    {
+        var sut = BuildResolver(new FakeProcessRunner());
+        var source = MakeSource(media: "television", streamUrl: PlainHttpStreamUrl, primaryUrl: "https://notyoutube.com/@channel/live");
         Assert.False(sut.CanResolve(source));
     }
 
     [Theory]
-    [InlineData("Television", "YouTube")]
-    [InlineData("TELEVISION", "YOUTUBE")]
-    [InlineData("television", "youtube")]
-    public void CanResolve_is_case_insensitive(string media, string platform)
+    [InlineData("Television")]
+    [InlineData("TELEVISION")]
+    [InlineData("television")]
+    public void CanResolve_is_case_insensitive_on_media(string media)
     {
         var sut = BuildResolver(new FakeProcessRunner());
-        var source = MakeSource(media, platform);
+        var source = MakeSource(media: media, streamUrl: YoutubeChannelUrl);
+        Assert.True(sut.CanResolve(source));
+    }
+
+    [Fact]
+    public void CanResolve_matches_the_youtube_host_regardless_of_case()
+    {
+        var sut = BuildResolver(new FakeProcessRunner());
+        var source = MakeSource(media: "television", streamUrl: "https://WWW.YOUTUBE.COM/@channel/live");
         Assert.True(sut.CanResolve(source));
     }
 
@@ -223,13 +260,18 @@ public sealed class YtdlpLiveStreamUrlResolverTests
             NullLogger<YtdlpLiveStreamUrlResolver>.Instance);
     }
 
-    private static CaptureSource MakeSource(string media = "television", string platform = "youtube")
+    private static CaptureSource MakeSource(
+        string media = "television",
+        string platform = "youtube",
+        string streamUrl = PlainHttpStreamUrl,
+        string? primaryUrl = null)
         => new(
             sourceId: "noticias-caracol-live",
             tenantId: "default",
             platform: platform,
             media: media,
-            streamUrl: YoutubeChannelUrl);
+            streamUrl: streamUrl,
+            primaryUrl: primaryUrl);
 
     // ── Fakes ──────────────────────────────────────────────────────────────
 

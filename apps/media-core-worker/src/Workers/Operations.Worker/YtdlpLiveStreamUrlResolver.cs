@@ -37,7 +37,26 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
 
     public bool CanResolve(CaptureSource source)
         => source.Media.Equals("television", StringComparison.OrdinalIgnoreCase)
-        && source.Platform.Equals("youtube", StringComparison.OrdinalIgnoreCase);
+        && (IsYouTubeUrl(source.PrimaryUrl) || IsYouTubeUrl(source.StreamUrl));
+
+    // PrimaryUrl (the durable channel/live page, e.g. "https://www.youtube.com/@channel/live")
+    // is checked first: StreamUrl for a YouTube source is a resolved, expiring googlevideo.com
+    // CDN manifest once resolution has run once, so it no longer looks like YouTube at all.
+    // Host-based (not a substring Contains) to avoid a false match on a lookalike domain.
+    // internal: also used by FirestoreDocumentMapper to bootstrap a YouTube source's streamUrl
+    // from primaryUrl before this resolver has ever run (see TryMapCaptureSource).
+    internal static bool IsYouTubeUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var host = uri.Host;
+        return host.Equals("youtu.be", StringComparison.OrdinalIgnoreCase)
+            || host.Equals("youtube.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".youtube.com", StringComparison.OrdinalIgnoreCase);
+    }
 
     public async Task<LiveStreamResolutionResult> TryResolveStreamUrlAsync(
         CaptureSource source,

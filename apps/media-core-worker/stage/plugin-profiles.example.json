@@ -18,9 +18,9 @@
     "opusRotationIntervalHours": 1
   },
   {
-    "pluginId": "youtube-video",
-    "media": "video",
-    "platform": "youtube",
+    "pluginId": "television-default",
+    "media": "television",
+    "platform": null,
     "ingestionMode": "continuous",
     "flacWindowDurationSeconds": 12,
     "opusFlushIntervalSeconds": 30,

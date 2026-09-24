@@ -1,4 +1,4 @@
-﻿[
+[
   {
     "pluginId": "radio-default",
     "media": "radio",
@@ -18,22 +18,12 @@
     "opusRotationIntervalHours": 1
   },
   {
-    "pluginId": "youtube-video",
-    "media": "video",
-    "platform": "youtube",
-    "ingestionMode": "continuous",
-    "flacWindowDurationSeconds": 12,
-    "opusFlushIntervalSeconds": 30,
-    "opusRotationIntervalHours": 1
-  },
-  {
-    "pluginId": "television-youtube",
+    "pluginId": "television-default",
     "media": "television",
-    "platform": "youtube",
+    "platform": null,
     "ingestionMode": "continuous",
     "flacWindowDurationSeconds": 12,
     "opusFlushIntervalSeconds": 30,
     "opusRotationIntervalHours": 1
   }
 ]
-
