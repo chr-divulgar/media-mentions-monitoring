@@ -7,8 +7,10 @@ public sealed class AudioCaptureExecutionResult
         string opusFilePath,
         string? errorMessage = null,
         double silenceFilledSeconds = 0,
-        double capturedSeconds = 0)
+        double capturedSeconds = 0,
+        bool excludeSource = false)
     {
+        ExcludeSource = excludeSource;
         Succeeded = succeeded;
         OpusFilePath = opusFilePath;
         ErrorMessage = errorMessage;
@@ -21,6 +23,12 @@ public sealed class AudioCaptureExecutionResult
     public string OpusFilePath { get; }
 
     public string? ErrorMessage { get; }
+
+    /// <summary>
+    /// The stream is reachable but its content is unusable (e.g. it keeps replaying the same
+    /// audio), so retrying it immediately would only record the same thing again.
+    /// </summary>
+    public bool ExcludeSource { get; }
 
     /// <summary>
     /// Real audio seconds captured this rotation window (excludes silence fills).

@@ -57,6 +57,14 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             return Task.CompletedTask;
         }
 
+        if (result.ExcludeSource)
+        {
+            // Hot recovery would just re-validate the same reachable URL and record the same
+            // unusable content again. Exclude now; the scheduled reconciliation retries later.
+            _ = Task.Run(() => ExcludeSourceAsync(source, result.ErrorMessage), CancellationToken.None);
+            return Task.CompletedTask;
+        }
+
         if (!inFlightHotRecovery.TryAdd(source.SourceId, 0))
         {
             return Task.CompletedTask;
@@ -94,6 +102,24 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             {
                 break;
             }
+        }
+    }
+
+    private async Task ExcludeSourceAsync(CaptureSource source, string? reason)
+    {
+        try
+        {
+            captureSourceProvider.RemoveResolvedSource(source.SourceId);
+            await captureSourceProvider
+                .PersistExclusionAsync(source.SourceId, true, CancellationToken.None)
+                .ConfigureAwait(false);
+            logger.LogWarning(
+                "Source {SourceId} excluded without hot recovery: its stream content is unusable. StreamUrl={StreamUrl}. Reason={Reason}",
+                source.SourceId, source.StreamUrl, reason?.Split('\n')[0]);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Failed to exclude source {SourceId}.", source.SourceId);
         }
     }
 

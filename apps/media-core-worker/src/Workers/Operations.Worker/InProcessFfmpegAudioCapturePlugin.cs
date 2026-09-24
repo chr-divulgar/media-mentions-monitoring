@@ -250,6 +250,31 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         return raw is "1" or "true" or "yes";
     }
 
+    // Buffer layout, oldest to newest: [Dropped][PreviousHour][Kept].
+    internal readonly record struct StartupBurstPlacement(long BridgeSamples, long DroppedSamples, long PreviousHourSamples, long KeptSamples);
+
+    // The newest sample received is audio from "now" at the latest, so a burst of B seconds on
+    // connect really spans [now - B, now]. It fills the gap behind it: first this hour's silence
+    // bridge, then the previous hour's unrecorded tail. What still overlaps time that was already
+    // recorded (or precedes the first recording) is a duplicate and is dropped, so every hour file
+    // stays exactly one window long and consecutive hours join without overlap.
+    internal static StartupBurstPlacement PlaceStartupBurst(
+        DateTimeOffset fileEndsAt, DateTimeOffset now, long burstSamples, TimeSpan? previousHourGap)
+    {
+        var audioStartsAt = now - TimeSpan.FromSeconds(burstSamples / (double)AudioSampleRate);
+        var bridge = Math.Max(0, ToSamples(audioStartsAt - fileEndsAt));
+        var overlap = Math.Clamp(ToSamples(fileEndsAt - audioStartsAt), 0, burstSamples);
+        var toPreviousHour = previousHourGap is { } gap ? Math.Min(overlap, Math.Max(0, ToSamples(gap))) : 0;
+        return new StartupBurstPlacement(bridge, overlap - toPreviousHour, toPreviousHour, burstSamples - overlap);
+    }
+
+    // Once running, the gap behind the session is continuous audio already on disk, so the part of
+    // a frame that would end past "now" overlaps recorded time — it is dropped, never written ahead.
+    internal static long ResolveSurplusSamples(DateTimeOffset frameEndsAt, DateTimeOffset now, long frameSamples) =>
+        Math.Clamp(ToSamples(frameEndsAt - now), 0, frameSamples);
+
+    private static long ToSamples(TimeSpan duration) => (long)Math.Round(duration.TotalSeconds * AudioSampleRate);
+
     // Internal (not private) so ClosedHourAudioSegmentReader can compute the same hour
     // boundaries the capture session itself rotates on.
     internal static DateTimeOffset AlignWindow(DateTimeOffset now, TimeSpan window)
@@ -337,6 +362,14 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         // WindowCheckpoint) without instrumenting the packet-read loop itself. The timer only sets
         // the sampling cadence; what it records is the recording position, never the time it fired.
         private static readonly TimeSpan CheckpointInterval = TimeSpan.FromMinutes(5);
+        // Long enough to collect a server's connect burst, short enough that the bridge is written
+        // almost immediately.
+        private static readonly TimeSpan StartupBurstWindow = TimeSpan.FromSeconds(3);
+        private long surplusDropCount;
+        private long droppedSurplusSamples;
+        private static readonly TimeSpan LiveEdgeTolerance = TimeSpan.FromSeconds(1);
+        // 30s of surplus per 10 min = the source runs >5% faster than real time, far beyond jitter.
+        private readonly SurplusAudioDetector surplusAudioDetector = new(TimeSpan.FromMinutes(10), TimeSpan.FromSeconds(30));
         private readonly ConcurrentQueue<WindowCheckpoint> windowCheckpoints = new();
         private readonly Timer checkpointTimer;
         private readonly DateTimeOffset sessionStartedAt;
@@ -558,7 +591,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             _ = InProcessFfmpegAudioCapturePlugin.EmitArtifactAsync(monitoringArtifactRepository, artifact, logger, sourceId);
         }
 
-        private void SetFailure(string message)
+        private void SetFailure(string message, bool excludeSource = false)
         {
             lastError = message;
             completedByEndOfInput = false;
@@ -566,7 +599,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             // Notify the observer directly — no heartbeat poll needed to detect the failure.
             _ = captureAttemptObserver.ReportAsync(
                 source,
-                new AudioCaptureExecutionResult(false, activeOpusPath ?? string.Empty, message),
+                new AudioCaptureExecutionResult(false, activeOpusPath ?? string.Empty, message, excludeSource: excludeSource),
                 CancellationToken.None);
         }
 
@@ -777,14 +810,12 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
                 // Previous-window gap fill: if the source was excluded for the rest of the
                 // previous hour (e.g. failed at 13:22, recovered at 14:00), the file
-                // _13-00-00.opus is left with only partial audio. Fill the remainder with
-                // silence now so that every past file covers a complete rotation window.
+                // _13-00-00.opus is left with only partial audio. Its remainder is completed once
+                // the startup burst is known (see startupBurstPcm), because part of that burst may
+                // be audio from the end of that hour.
                 var previousWindowStart = alignedSessionStart - effectiveOpusRotationInterval;
                 var previousWindowPath = CurrentOpusPath(previousWindowStart, effectiveOpusRotationInterval);
-                if (File.Exists(previousWindowPath))
-                {
-                    FillFileWithTrailingSilence(previousWindowPath, effectiveOpusRotationInterval);
-                }
+                var windowFileIsFresh = !File.Exists(activeOpusPath);
 
                 // Resume detection: if the aligned file already exists a previous session
                 // recorded part of this hour before failing. We:
@@ -880,36 +911,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     throw new InvalidOperationException("Unable to allocate FFmpeg packets or frames.");
                 }
 
-                // Fill the silence gap (time between end of existing recording and now)
-                // before the first real audio packet arrives.
-                if (silenceGap > TimeSpan.FromSeconds(1))
-                {
-                    logger.LogInformation(
-                        "Filling {Gap:g} of silence for source {SourceId} to bridge recording gap.",
-                        silenceGap, sourceId);
-                    Interlocked.Add(ref silenceFilledThisWindowMs, (long)silenceGap.TotalMilliseconds);
-                    FillSilencePcm(
-                        silenceGap,
-                        pendingOpusPcm!,
-                        encoderFrameSize,
-                        encoderContext,
-                        encoderFrame,
-                        outputContext,
-                        outputStream,
-                        outputPacket,
-                        ref encoderSampleCursor,
-                        ref consecutiveEncoderFrameSendFailures,
-                        maxConsecutiveEncoderFrameSendFailures);
-                    var silenceGapSamples = (long)(silenceGap.TotalSeconds * AudioSampleRate);
-                    currentOpusSampleCursor += silenceGapSamples;
-                    Interlocked.Add(ref recordedPositionSamplesThisWindow, silenceGapSamples);
-
-                    // Mark the exact end of the bridge. Without this the next periodic sample is
-                    // the first one after it, so the bridged span and the real audio that follows
-                    // land in a single slice and the status page reports the whole thing as one
-                    // partial-coverage block instead of "worker was down here, recording there".
-                    RecordCheckpoint();
-                }
+                // The silence gap (end of existing recording → now) is not written yet: servers
+                // commonly send a burst of buffered past audio on connect, and that audio belongs
+                // inside the gap, not after it. Audio is held here for StartupBurstWindow, then
+                // placed by PlaceStartupBurst and the bridge shrunk accordingly.
+                PcmByteQueue? startupBurstPcm = new PcmByteQueue();
 
                 while (!cancellationTokenSource.IsCancellationRequested)
                 {
@@ -988,9 +994,156 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                         ffmpeg.swr_convert_frame(swrContext, resampledFrame, inputFrame).ThrowIfError("swr_convert_frame");
 
                         var now = SourceNow();
-                        var frameSampleCount = resampledFrame->nb_samples;
 
-                        AppendSamples(pendingOpusPcm!, resampledFrame, AudioChannels);
+                        if (startupBurstPcm is not null)
+                        {
+                            AppendSamples(startupBurstPcm, resampledFrame, AudioChannels);
+                            ffmpeg.av_frame_unref(inputFrame);
+                            if (now - sessionStartNow < StartupBurstWindow)
+                            {
+                                continue;
+                            }
+
+                            var burst = startupBurstPcm.Snapshot();
+                            startupBurstPcm = null;
+                            const int bytesPerSample = AudioChannels * AudioBytesPerSample;
+                            var burstSamples = burst.Length / bytesPerSample;
+
+                            TimeSpan? previousHourGap = null;
+                            if (windowFileIsFresh && File.Exists(previousWindowPath))
+                            {
+                                previousHourGap = effectiveOpusRotationInterval - ProbeAudioDuration(previousWindowPath);
+                            }
+
+                            var placement = PlaceStartupBurst(currentOpusStartedAt, now, burstSamples, previousHourGap);
+                            var previousHourOffset = (int)(placement.DroppedSamples * bytesPerSample);
+                            var keptOffset = previousHourOffset + (int)(placement.PreviousHourSamples * bytesPerSample);
+
+                            if (File.Exists(previousWindowPath))
+                            {
+                                FillFileWithTrailingSilence(
+                                    previousWindowPath,
+                                    effectiveOpusRotationInterval,
+                                    new ArraySegment<byte>(burst, previousHourOffset, keptOffset - previousHourOffset));
+                            }
+
+                            if (placement.PreviousHourSamples > 0)
+                            {
+                                // Transcribed into the previous hour's JSON at its real time (the
+                                // last seconds of that hour), so alerts in it are not lost.
+                                var previousHourPcm = new PcmByteQueue();
+                                previousHourPcm.AppendBytes(burst, previousHourOffset, keptOffset - previousHourOffset);
+                                byte[]? noOverlap = null;
+                                EnqueueChunkTranscription(
+                                    previousHourPcm,
+                                    alignedSessionStart - TimeSpan.FromSeconds(placement.PreviousHourSamples / (double)AudioSampleRate),
+                                    alignedSessionStart,
+                                    CurrentTranscriptionJsonPath(previousWindowPath),
+                                    ref noOverlap,
+                                    preserveOverlapForNextChunk: false);
+                            }
+
+                            logger.LogInformation(
+                                "Startup burst placed for source {SourceId}: burst={Burst:F1}s, bridge={Bridge:F1}s, previousHour={PreviousHour:F1}s, dropped={Dropped:F1}s (already recorded), kept={Kept:F1}s.",
+                                sourceId,
+                                burstSamples / (double)AudioSampleRate,
+                                placement.BridgeSamples / (double)AudioSampleRate,
+                                placement.PreviousHourSamples / (double)AudioSampleRate,
+                                placement.DroppedSamples / (double)AudioSampleRate,
+                                placement.KeptSamples / (double)AudioSampleRate);
+
+                            if (placement.BridgeSamples > 0)
+                            {
+                                var bridge = TimeSpan.FromSeconds(placement.BridgeSamples / (double)AudioSampleRate);
+                                Interlocked.Add(ref silenceFilledThisWindowMs, (long)bridge.TotalMilliseconds);
+                                FillSilencePcm(
+                                    bridge,
+                                    pendingOpusPcm!,
+                                    encoderFrameSize,
+                                    encoderContext,
+                                    encoderFrame,
+                                    outputContext,
+                                    outputStream,
+                                    outputPacket,
+                                    ref encoderSampleCursor,
+                                    ref consecutiveEncoderFrameSendFailures,
+                                    maxConsecutiveEncoderFrameSendFailures);
+                                currentOpusSampleCursor += placement.BridgeSamples;
+                                Interlocked.Add(ref recordedPositionSamplesThisWindow, placement.BridgeSamples);
+
+                                // Mark the exact end of the bridge. Without this the next periodic
+                                // sample is the first one after it, so the bridged span and the real
+                                // audio that follows land in a single slice and the status page
+                                // reports them as one partial-coverage block.
+                                RecordCheckpoint();
+                            }
+
+                            if (placement.KeptSamples > 0)
+                            {
+                                var keptBytes = burst.Length - keptOffset;
+                                pendingOpusPcm!.AppendBytes(burst, keptOffset, keptBytes);
+                                EncodeBufferedSamples(
+                                    pendingOpusPcm!,
+                                    encoderFrameSize,
+                                    encoderContext,
+                                    encoderFrame,
+                                    outputContext,
+                                    outputStream,
+                                    outputPacket,
+                                    ref encoderSampleCursor,
+                                    ref consecutiveEncoderFrameSendFailures,
+                                    maxConsecutiveEncoderFrameSendFailures);
+
+                                if (pendingFlacPcm!.Length == 0)
+                                {
+                                    flacChunkStartSample = currentOpusSampleCursor;
+                                    flacChunkTranscriptionJsonPath = currentTranscriptionJsonPath;
+                                }
+
+                                pendingFlacPcm.AppendBytes(burst, keptOffset, keptBytes);
+                                currentOpusSampleCursor += placement.KeptSamples;
+                                Interlocked.Add(ref recordedPositionSamplesThisWindow, placement.KeptSamples);
+                                Interlocked.Add(ref realCapturedSamplesThisWindow, placement.KeptSamples);
+                            }
+
+                            continue;
+                        }
+
+                        var surplusSamples = (int)ResolveSurplusSamples(
+                            ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor + resampledFrame->nb_samples),
+                            now,
+                            resampledFrame->nb_samples);
+                        if (surplusSamples > 0)
+                        {
+                            // Only surplus produced at the live edge says anything about the stream;
+                            // a resumed file that was already ahead of the clock also drops whole
+                            // frames until the clock catches up, and that is not the stream's fault.
+                            var positionLead = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor) - now;
+                            if (positionLead <= LiveEdgeTolerance
+                                && surplusAudioDetector.RecordSurplus(now, TimeSpan.FromSeconds(surplusSamples / (double)AudioSampleRate)))
+                            {
+                                throw new RepeatingStreamException(
+                                    $"Source {sourceId} keeps delivering more audio than time passes (repeating content, not a live broadcast). Stopping capture and excluding the source. TotalDropped={droppedSurplusSamples / (double)AudioSampleRate:F1}s.");
+                            }
+
+                            droppedSurplusSamples += surplusSamples;
+                            if (++surplusDropCount == 1 || surplusDropCount % 500 == 0)
+                            {
+                                logger.LogWarning(
+                                    "Source {SourceId} delivered audio ahead of the clock; dropped the surplus that overlaps already-recorded time. Drops={Drops}, TotalDropped={TotalDropped:F1}s.",
+                                    sourceId, surplusDropCount, droppedSurplusSamples / (double)AudioSampleRate);
+                            }
+
+                            if (surplusSamples >= resampledFrame->nb_samples)
+                            {
+                                ffmpeg.av_frame_unref(inputFrame);
+                                continue;
+                            }
+                        }
+
+                        var frameSampleCount = resampledFrame->nb_samples - surplusSamples;
+
+                        AppendFrameTail(pendingOpusPcm!, resampledFrame, surplusSamples);
                         EncodeBufferedSamples(
                             pendingOpusPcm!,
                             encoderFrameSize,
@@ -1004,7 +1157,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                             maxConsecutiveEncoderFrameSendFailures);
 
                         var flacChunkWasEmpty = pendingFlacPcm!.Length == 0;
-                        AppendSamples(pendingFlacPcm!, resampledFrame, AudioChannels);
+                        AppendFrameTail(pendingFlacPcm!, resampledFrame, surplusSamples);
                         if (flacChunkWasEmpty)
                         {
                             flacChunkStartSample = currentOpusSampleCursor;
@@ -1124,7 +1277,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             catch (Exception exception)
             {
                 var detailedError = exception.ToString();
-                SetFailure(detailedError);
+                SetFailure(detailedError, excludeSource: exception is RepeatingStreamException);
                 operationalMetrics.RecordCaptureRuntimeFailure(sourceId);
                 logger.LogError(exception, "Capture failed for source {SourceId}.", sourceId);
                 startupCompletionSource.TrySetResult(new AudioCaptureExecutionResult(false, activeOpusPath ?? CurrentOpusPath(), detailedError));
@@ -1311,14 +1464,20 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         // Used when a source was excluded for the rest of an hour: the partial file
         // (e.g. _13-00-00.opus with 22 min) is completed to a full rotation window
         // (60 min) so every file on disk covers a contiguous, predictable time range.
-        private unsafe void FillFileWithTrailingSilence(string filePath, TimeSpan targetDuration)
+        // tailAudio is real audio that belongs at the very end of the file (the start of a connect
+        // burst); it replaces that much of the silence so the file still ends at targetDuration.
+        private unsafe void FillFileWithTrailingSilence(string filePath, TimeSpan targetDuration, ArraySegment<byte> tailAudio = default)
         {
             var existingDuration = ProbeAudioDuration(filePath);
             var gap = targetDuration - existingDuration;
-            if (gap <= TimeSpan.FromSeconds(1))
+            var tailAudioBytes = tailAudio.Count;
+            if (gap <= TimeSpan.FromSeconds(1) && tailAudioBytes == 0)
             {
                 return;
             }
+
+            var tailDuration = TimeSpan.FromSeconds(tailAudioBytes / (double)(AudioSampleRate * AudioChannels * AudioBytesPerSample));
+            var silence = gap - tailDuration;
 
             var tempPath = filePath + ".silpad";
             AVCodecContext* enc = null;
@@ -1344,8 +1503,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 var dummyErrors = 0;
                 var frameSize = enc->frame_size > 0 ? enc->frame_size : AudioSampleRate / 2;
 
-                FillSilencePcm(gap, pcmQueue, frameSize, enc, encFrame, outCtx, outStream, pkt,
+                FillSilencePcm(silence, pcmQueue, frameSize, enc, encFrame, outCtx, outStream, pkt,
                     ref sampleCursor, ref dummyErrors, 8);
+
+                if (tailAudioBytes > 0)
+                {
+                    pcmQueue.AppendBytes(tailAudio.Array!, tailAudio.Offset, tailAudioBytes);
+                }
 
                 EncodeBufferedSamples(pcmQueue, int.MaxValue, enc, encFrame, outCtx, outStream, pkt,
                     ref sampleCursor, ref dummyErrors, 8, flushFinal: true);
@@ -1360,8 +1524,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 FinalizeResumeOutput(filePath, tempPath);
 
                 logger.LogInformation(
-                    "Trailing silence {Gap:g} appended to previous-window file for source {SourceId}: {Path}",
-                    gap, sourceId, filePath);
+                    "Previous-window file completed for source {SourceId}: silence={Silence:g}, tailAudio={TailAudio:g}, file={Path}",
+                    sourceId, silence, tailDuration, filePath);
             }
             catch (Exception ex)
             {
@@ -1606,6 +1770,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         {
             var pcmBytes = checked((int)(frame->nb_samples * channels * AudioBytesPerSample));
             pendingPcm.AppendFromFrame(frame, pcmBytes);
+        }
+
+        private static void AppendFrameTail(PcmByteQueue pendingPcm, AVFrame* frame, int skipSamples)
+        {
+            var skipBytes = skipSamples * AudioChannels * AudioBytesPerSample;
+            var pcmBytes = checked((int)(frame->nb_samples * AudioChannels * AudioBytesPerSample));
+            pendingPcm.AppendFromFrame(frame, skipBytes, pcmBytes - skipBytes);
         }
 
         private void EnqueueChunkTranscription(
@@ -2326,7 +2497,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
             public int Length => length;
 
-            public void AppendFromFrame(AVFrame* frame, int bytesToAppend)
+            public void AppendFromFrame(AVFrame* frame, int bytesToAppend) => AppendFromFrame(frame, 0, bytesToAppend);
+
+            public void AppendFromFrame(AVFrame* frame, int byteOffset, int bytesToAppend)
             {
                 if (bytesToAppend <= 0)
                 {
@@ -2334,7 +2507,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 }
 
                 EnsureWritable(bytesToAppend);
-                Marshal.Copy((IntPtr)frame->data[0], buffer, startOffset + length, bytesToAppend);
+                Marshal.Copy((IntPtr)(frame->data[0] + byteOffset), buffer, startOffset + length, bytesToAppend);
                 length += bytesToAppend;
             }
 
