@@ -140,6 +140,63 @@ public sealed class CaptureStatusSnapshotProviderTests
     }
 
     [Fact]
+    public async Task GetSnapshotAsync_should_close_an_hour_at_the_full_window_when_nothing_is_recording_it()
+    {
+        // Baseline for the test below: evidence that stops short of the hour genuinely means the
+        // recording stopped there, so the remainder is reported as no-session.
+        var provider = CreateProvider(
+            sources: [CreateSource("radio-a")],
+            evidenceStore: SeedHourEndingAt(3400));
+
+        var response = await provider.GetSnapshotAsync(ClosedDate);
+
+        var hour10 = Assert.Single(response.Sources.Single(s => s.SourceId == "radio-a").Hours, h => h.Hour == 10);
+        Assert.Equal("no-session", hour10.Segments![^1].State);
+        Assert.Equal(3600, hour10.Segments[^1].EndSeconds);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_should_keep_an_hour_open_while_its_session_is_still_recording_it()
+    {
+        // Rotation follows each session's own audio timeline, so a source running behind the wall
+        // clock is still filling the previous hour after the clock leaves it. Closing that hour on
+        // the clock's say-so painted the minutes between the last checkpoint and the rotation
+        // artifact as no-session — the gap the status page showed at every hour boundary.
+        var windowStart = new DateTimeOffset(ClosedDate.Year, ClosedDate.Month, ClosedDate.Day, 10, 0, 0, TimeSpan.FromHours(-5));
+        var reader = new FakeLiveCaptureProgressReader(
+            new Dictionary<string, IReadOnlyList<WindowCheckpoint>>
+            {
+                ["radio-a"] = [new WindowCheckpoint(3400, 3400, 0), new WindowCheckpoint(3500, 3500, 0)],
+            },
+            windowStart);
+
+        var provider = CreateProvider(
+            sources: [CreateSource("radio-a")],
+            evidenceStore: SeedHourEndingAt(3400),
+            liveCaptureProgressReader: reader);
+
+        var response = await provider.GetSnapshotAsync(ClosedDate);
+
+        var hour10 = Assert.Single(response.Sources.Single(s => s.SourceId == "radio-a").Hours, h => h.Hour == 10);
+        Assert.Equal("live", hour10.Status);
+        Assert.Equal(3500, hour10.Segments![^1].EndSeconds);
+        Assert.DoesNotContain(hour10.Segments, s => s.State == "no-session");
+    }
+
+    private static FakeEvidenceFileStore SeedHourEndingAt(double lastCheckpointSeconds)
+    {
+        var evidenceStore = new FakeEvidenceFileStore();
+        evidenceStore.Seed(
+            $"monitoringArtifacts/capture-summary-{ClosedDate:yyyy-MM-dd}_10.json",
+            new CaptureSummarySnapshot($"{ClosedDate:yyyy-MM-dd}_10", "2026-01-01T10:57:00Z", [
+                new SourceCaptureSummary(
+                    "radio-a", null, (int)lastCheckpointSeconds, 0, 100.0, "live", "10:57:00 -05:00",
+                    [new WindowCheckpoint(0, 0, 0), new WindowCheckpoint(lastCheckpointSeconds, lastCheckpointSeconds, 0)]),
+            ]));
+        return evidenceStore;
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_should_peek_in_memory_evidence_for_an_hour_not_yet_flushed_to_disk()
     {
         // Regression test: WriteSummaryFileAsync only flushes an hour to disk once the NEXT hour
@@ -235,13 +292,15 @@ public sealed class CaptureStatusSnapshotProviderTests
             nowBogota.Year, nowBogota.Month, nowBogota.Day, nowBogota.Hour, 0, 0, nowBogota.Offset);
     }
 
-    private sealed class FakeLiveCaptureProgressReader(Dictionary<string, IReadOnlyList<WindowCheckpoint>> checkpointsBySource) : ILiveCaptureProgressReader
+    private sealed class FakeLiveCaptureProgressReader(
+        Dictionary<string, IReadOnlyList<WindowCheckpoint>> checkpointsBySource,
+        DateTimeOffset? windowStart = null) : ILiveCaptureProgressReader
     {
         public IReadOnlyCollection<string> ActiveSourceIds => checkpointsBySource.Keys;
 
         public LiveCaptureProgress? TryGetLiveProgress(string sourceId) =>
             checkpointsBySource.TryGetValue(sourceId, out var checkpoints)
-                ? new LiveCaptureProgress(CurrentHourStart(), checkpoints[^1].ElapsedSeconds, checkpoints)
+                ? new LiveCaptureProgress(windowStart ?? CurrentHourStart(), checkpoints[^1].ElapsedSeconds, checkpoints)
                 : null;
     }
 }

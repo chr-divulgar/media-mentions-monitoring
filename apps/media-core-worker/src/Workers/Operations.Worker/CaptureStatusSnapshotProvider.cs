@@ -62,17 +62,26 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
         var sources = await captureSourceRepository.ListAllAsync(cancellationToken).ConfigureAwait(false);
 
         var sourceEntries = sources
-            .Select(source => new CaptureSourceStatusEntry
+            .Select(source =>
             {
-                SourceId = source.SourceId,
-                Platform = source.Platform,
-                Media = source.Media,
-                IsExcluded = source.IsExcluded,
-                Hours = Enumerable.Range(0, maxHour + 1)
-                    .Select(hour => hour == liveHour
-                        ? BuildLiveHourEntry(hour, date, source.SourceId, hourSnapshots[hour])
-                        : BuildClosedHourEntry(hour, hourSnapshots[hour], source.SourceId))
-                    .ToArray(),
+                // Which hour is still being filled is the session's call, not the clock's. A source
+                // running behind the wall clock keeps recording the previous hour for minutes after
+                // it ends, and closing it on the clock's say-so drew those last minutes as
+                // no-session — the evidence for them only lands with the rotation artifact.
+                var inProgressHour = ResolveRecordingHour(source.SourceId, date) ?? liveHour;
+
+                return new CaptureSourceStatusEntry
+                {
+                    SourceId = source.SourceId,
+                    Platform = source.Platform,
+                    Media = source.Media,
+                    IsExcluded = source.IsExcluded,
+                    Hours = Enumerable.Range(0, maxHour + 1)
+                        .Select(hour => hour == inProgressHour
+                            ? BuildLiveHourEntry(hour, date, source.SourceId, hourSnapshots[hour])
+                            : BuildClosedHourEntry(hour, hourSnapshots[hour], source.SourceId))
+                        .ToArray(),
+                };
             })
             .ToArray();
 
@@ -150,6 +159,21 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
             CoveragePercent = sourceSummary.CoveragePercent,
             Segments = segments,
         };
+    }
+
+    // The hour this source's session is still recording into, or null when it isn't recording this
+    // date at all. A session only leaves a window once its own audio timeline crosses the boundary,
+    // so this trails the wall clock for a source running behind and leads it for one running ahead.
+    private int? ResolveRecordingHour(string sourceId, DateOnly date)
+    {
+        var progress = liveCaptureProgressReader.TryGetLiveProgress(sourceId);
+        if (progress is null)
+        {
+            return null;
+        }
+
+        var windowStart = progress.WindowStartedAt.ToOffset(BogotaOffset);
+        return DateOnly.FromDateTime(windowStart.DateTime) == date ? windowStart.Hour : null;
     }
 
     private static bool BelongsToHour(DateTimeOffset windowStart, DateOnly date, int hour)

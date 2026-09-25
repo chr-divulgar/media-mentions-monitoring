@@ -20,6 +20,10 @@ public sealed class CaptureSummaryArchiveWorker : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan BogotaOffset = TimeSpan.FromHours(-5);
+    // A stalled session keeps reporting the window it froze in and never rotates out of it, so
+    // waiting for every session to leave an hour needs a ceiling — otherwise one frozen source
+    // would keep that hour out of Firestore indefinitely.
+    private static readonly TimeSpan MaxArchiveDeferral = TimeSpan.FromMinutes(15);
     private const double WindowSeconds = 3600.0;
 
     private readonly ILiveCaptureProgressReader liveCaptureProgressReader;
@@ -29,6 +33,8 @@ public sealed class CaptureSummaryArchiveWorker : BackgroundService
     private readonly ILogger<CaptureSummaryArchiveWorker> logger;
 
     private string? lastSeenHourKey;
+    private string? pendingArchiveHourKey;
+    private DateTimeOffset? pendingArchiveSince;
 
     public CaptureSummaryArchiveWorker(
         ILiveCaptureProgressReader liveCaptureProgressReader,
@@ -70,19 +76,52 @@ public sealed class CaptureSummaryArchiveWorker : BackgroundService
         }
     }
 
-    private async Task TickAsync(CancellationToken cancellationToken)
+    internal async Task TickAsync(CancellationToken cancellationToken)
     {
         var nowBogota = DateTimeOffset.UtcNow.ToOffset(BogotaOffset);
-        var hourKey = $"{nowBogota:yyyy-MM-dd_HH}";
+        var hourKey = ToHourKey(nowBogota);
 
         if (lastSeenHourKey is not null && lastSeenHourKey != hourKey)
         {
-            await ArchiveClosedHourAsync(lastSeenHourKey, cancellationToken).ConfigureAwait(false);
+            pendingArchiveHourKey = lastSeenHourKey;
+            pendingArchiveSince = nowBogota;
         }
 
         lastSeenHourKey = hourKey;
+
+        if (pendingArchiveHourKey is not null && CanArchive(pendingArchiveHourKey, nowBogota))
+        {
+            await ArchiveClosedHourAsync(pendingArchiveHourKey, cancellationToken).ConfigureAwait(false);
+            pendingArchiveHourKey = null;
+            pendingArchiveSince = null;
+        }
+
         await SnapshotInProgressHourAsync(hourKey, nowBogota, cancellationToken).ConfigureAwait(false);
     }
+
+    private bool CanArchive(string hourKey, DateTimeOffset now) =>
+        CanArchiveHour(
+            hourKey,
+            liveCaptureProgressReader.ActiveSourceIds
+                .Select(liveCaptureProgressReader.TryGetLiveProgress)
+                .Where(progress => progress is not null)
+                .Select(progress => progress!.WindowStartedAt)
+                .ToArray(),
+            pendingArchiveSince is { } since ? now - since : TimeSpan.Zero);
+
+    /// <summary>
+    /// An hour is finished when no session is still recording into it — not when the clock says so.
+    /// Rotation is driven by each session's own audio timeline, so a source running behind the wall
+    /// clock closes its hour minutes late; archiving on the clock change froze those last minutes in
+    /// Firestore as uncovered, even though the audio was captured and the local file caught up.
+    /// Pure so the decision can be unit tested without a clock.
+    /// </summary>
+    internal static bool CanArchiveHour(
+        string hourKey, IReadOnlyList<DateTimeOffset> activeWindowStarts, TimeSpan waited) =>
+        waited >= MaxArchiveDeferral
+        || !activeWindowStarts.Any(windowStart => ToHourKey(windowStart) == hourKey);
+
+    private static string ToHourKey(DateTimeOffset value) => $"{value.ToOffset(BogotaOffset):yyyy-MM-dd_HH}";
 
     private async Task SnapshotInProgressHourAsync(string hourKey, DateTimeOffset now, CancellationToken cancellationToken)
     {
