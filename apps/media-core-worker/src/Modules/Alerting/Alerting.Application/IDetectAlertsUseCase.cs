@@ -13,4 +13,8 @@ public interface IDetectAlertsUseCase
         DateTimeOffset startTime,
         DateTimeOffset endTime,
         CancellationToken cancellationToken = default);
+
+    // Called once at worker startup: resends any alert notification left incomplete by a process
+    // restart or a WhatsApp sidecar outage between detection and delivery.
+    Task RetryPendingNotificationsAsync(CancellationToken cancellationToken = default);
 }

@@ -91,5 +91,14 @@ public sealed class OperationsWorkerOptions
 
     // "workerAlert" during the shadow-run validation period; becomes "alert" at cutover (config-only change).
     public string MongoAlertCollectionName { get; set; } = "workerAlert";
+
+    // Loopback port the Node.js/Baileys sidecar listens on (see WhatsAppSidecarProcessSupervisor).
+    public int WhatsAppSidecarPort { get; set; } = 5101;
+
+    public int WhatsAppSidecarStartupTimeoutSeconds { get; set; } = 30;
+
+    // Outside the publish/output tree so Baileys' auth session survives redeploys, same reasoning
+    // as StageFilesystemRootPath.
+    public string WhatsAppAuthStatePath { get; set; } = "stage/whatsapp-auth";
 }
 

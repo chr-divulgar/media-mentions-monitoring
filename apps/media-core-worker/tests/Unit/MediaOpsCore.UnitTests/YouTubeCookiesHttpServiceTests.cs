@@ -44,7 +44,8 @@ public sealed class YouTubeCookiesHttpServiceTests : IDisposable
             new FakeHealthSnapshotProvider(),
             trigger ?? new FakeReconciliationTrigger(),
             new FakeCaptureStatusSnapshotProvider(),
-            new FakeClosedHourAudioReader());
+            new FakeClosedHourAudioReader(),
+            new HttpClient());
     }
 
     [Fact]

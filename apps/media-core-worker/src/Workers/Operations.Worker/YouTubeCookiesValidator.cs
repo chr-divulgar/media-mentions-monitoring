@@ -168,29 +168,33 @@ public sealed class YouTubeCookiesValidator : IYouTubeCookiesValidator
                 IsValid: false,
                 FileExists: File.Exists(cookiesFilePath),
                 CookieCount: cookies.Count,
-                EarliestExpiration: UnixTimeStampToDateTime(cookies.Min(c => c.Expiration)),
+                EarliestExpiration: EarliestPersistentExpiration(cookies),
                 HasYouTubeDomain: false,
                 Message: "No cookies for youtube.com domain");
         }
 
-        var earliestExp = UnixTimeStampToDateTime(cookies.Min(c => c.Expiration));
+        // Expiration == 0 in the Netscape format means "session cookie" (cleared when the
+        // browser closes, no persistent expiry date) — not "expired at the Unix epoch". A
+        // browser cookie export normally mixes session and persistent cookies, so treating 0 as
+        // the earliest expiration falsely reports every such export as expired since 1970.
+        var earliestExp = EarliestPersistentExpiration(cookies);
         var now = DateTime.UtcNow;
-        
-        if (earliestExp < now)
+
+        if (earliestExp is { } exp && exp < now)
         {
-            _logger.LogWarning("[YouTubeCookiesValidator] Cookies expired at {ExpTime}", earliestExp);
+            _logger.LogWarning("[YouTubeCookiesValidator] Cookies expired at {ExpTime}", exp);
             return new CookiesValidationResult(
                 IsValid: false,
                 FileExists: File.Exists(cookiesFilePath),
                 CookieCount: cookies.Count,
                 EarliestExpiration: earliestExp,
                 HasYouTubeDomain: true,
-                Message: $"Cookies expired at {earliestExp:O}");
+                Message: $"Cookies expired at {exp:O}");
         }
 
         _logger.LogInformation(
             "[YouTubeCookiesValidator] Cookies valid: {Count} cookies, YouTube domain present, expires {ExpTime}",
-            cookies.Count, earliestExp);
+            cookies.Count, earliestExp?.ToString("O") ?? "session-only (no persistent expiry)");
 
         return new CookiesValidationResult(
             IsValid: true,
@@ -198,7 +202,7 @@ public sealed class YouTubeCookiesValidator : IYouTubeCookiesValidator
             CookieCount: cookies.Count,
             EarliestExpiration: earliestExp,
             HasYouTubeDomain: true,
-            Message: $"Valid: {cookies.Count} cookies, YouTube domain, expires {earliestExp:O}");
+            Message: $"Valid: {cookies.Count} cookies, YouTube domain, expires {earliestExp?.ToString("O") ?? "session-only"}");
     }
 
     /// <summary>
@@ -250,6 +254,16 @@ public sealed class YouTubeCookiesValidator : IYouTubeCookiesValidator
             _logger.LogError(ex, "[YouTubeCookiesValidator] Exception during yt-dlp test");
             return false;
         }
+    }
+
+    // Null when every cookie is session-only (expiration == 0) — there is then no expiry date
+    // to check, so callers must not treat that as "expired".
+    private static DateTime? EarliestPersistentExpiration(List<NetscapeCookie> cookies)
+    {
+        var persistentExpirations = cookies.Where(c => c.Expiration != 0).Select(c => c.Expiration).ToArray();
+        return persistentExpirations.Length == 0
+            ? null
+            : UnixTimeStampToDateTime(persistentExpirations.Min());
     }
 
     private static DateTime UnixTimeStampToDateTime(long timestamp)

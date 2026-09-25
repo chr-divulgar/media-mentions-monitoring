@@ -20,7 +20,8 @@ var options = OperationsWorkerOptionsLoader.Load();
 builder.Services.AddSingleton(options);
 
 // Add hosted service for YouTube cookies HTTP endpoint
-builder.Services.AddHostedService<YouTubeCookiesHttpService>();
+builder.Services.AddSingleton<YouTubeCookiesHttpService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<YouTubeCookiesHttpService>());
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
 builder.Services.AddSingleton<StageMirrorMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IMonitoringArtifactRepository>(
@@ -84,9 +85,40 @@ builder.Services.AddSingleton(new MongoAlertingOptions
 	MonitoringDatabaseName = options.MongoMonitoringDatabaseName,
 	AlertCollectionName = options.MongoAlertCollectionName
 });
-builder.Services.AddSingleton<IClientConfigRepository, MongoClientConfigRepository>();
+// Client/keyword config (for alert detection) comes from the same Firestore "clients" collection
+// apps/web-api already manages — the config operators actually edit today. No local Mongo
+// fallback: see NullClientConfigRepository's own doc comment for why.
+if (options.Firestore?.IsEnabled == true)
+{
+	var clientConfigFirestoreOptions = new FirestoreCaptureSourceRepositoryOptions
+	{
+		ProjectId = options.Firestore.ProjectId,
+		ClientEmail = options.Firestore.ClientEmail,
+		PrivateKeyPem = options.Firestore.PrivateKeyPem,
+		CollectionPath = "clients",
+		RequestTimeoutSeconds = options.Firestore.RequestTimeoutSeconds
+	};
+	builder.Services.AddSingleton<IClientConfigRepository>(sp => new FirestoreClientConfigRepository(
+		sp.GetRequiredService<HttpClient>(),
+		sp.GetRequiredService<GoogleServiceAccountTokenProvider>(),
+		clientConfigFirestoreOptions,
+		sp.GetRequiredService<ICaptureSourceProvider>(),
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FirestoreClientConfigRepository>>()));
+}
+else
+{
+	builder.Services.AddSingleton<IClientConfigRepository, NullClientConfigRepository>();
+}
 builder.Services.AddSingleton<IAlertRepository, MongoAlertRepository>();
+builder.Services.AddSingleton(new WhatsAppSidecarOptions
+{
+	BaseUrl = $"http://localhost:{options.WhatsAppSidecarPort}"
+});
+builder.Services.AddSingleton<IAlertNotifier, HttpWhatsAppAlertNotifier>();
+builder.Services.AddSingleton<WhatsAppSidecarProcessSupervisor>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<WhatsAppSidecarProcessSupervisor>());
 builder.Services.AddSingleton<IDetectAlertsUseCase, DetectAlertsUseCase>();
+builder.Services.AddHostedService<PendingAlertNotificationRetryWorker>();
 // IAudioCapturePlugin gets observer and repository so sessions report events directly.
 builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudioCapturePlugin(
 	sp.GetRequiredService<OperationsWorkerOptions>(),
@@ -111,6 +143,13 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SourceAvailability
 
 var host = builder.Build();
 
+// Hosted services only start at host.RunAsync(), after startup source validation below — which
+// can take minutes with many sources. Start these two now so NestJS can reach the worker (status,
+// health) and the WhatsApp sidecar is already up by the time anything relays to it, instead of
+// both reporting "unreachable" for that whole window.
+await host.Services.GetRequiredService<YouTubeCookiesHttpService>().StartAsync(CancellationToken.None);
+await host.Services.GetRequiredService<WhatsAppSidecarProcessSupervisor>().StartAsync(CancellationToken.None);
+
 // Pre-warm yt-dlp binary resolution so it is ready before the first TV source capture.
 // Logs a warning and continues if yt-dlp cannot be found or downloaded.
 try
@@ -124,6 +163,20 @@ catch (Exception ex)
 }
 
 await host.Services.GetRequiredService<IStartupSourceInitializationService>().InitializeAsync();
+
+// Resend any alert notification left incomplete by a previous restart or WhatsApp outage. Placed
+// after source validation above (which takes minutes) so the WhatsApp sidecar, started earlier in
+// this file, has had time to connect/pair first.
+try
+{
+    await host.Services.GetRequiredService<IDetectAlertsUseCase>().RetryPendingNotificationsAsync();
+}
+catch (Exception ex)
+{
+    var log = host.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Program>>();
+    log.LogWarning(ex, "[Program] Retrying pending alert notifications failed at startup.");
+}
+
 // Start capture sessions once for all initially resolved sources.
 // After this point sessions are self-sustaining: failures trigger hot recovery,
 // recoveries call TriggerCaptureAsync — no periodic heartbeat required.

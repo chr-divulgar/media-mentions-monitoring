@@ -10,6 +10,9 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
     [Fact]
     public async Task UpsertAsync_should_keep_local_evidence_when_no_db_sink_is_configured()
     {
+        // Local evidence here means the hour's summary file (monitoringArtifacts/capture-summary-
+        // {hourKey}.json) — StageMirrorMonitoringArtifactRepository has not written per-artifact-id
+        // evidence files since capture evidence moved to per-hour aggregated summaries.
         var tempRoot = CreateTempDirectory();
         try
         {
@@ -23,12 +26,12 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
                 evidenceStore,
                 Array.Empty<IMonitoringArtifactDatabaseRepository>());
 
-            var artifact = CreateArtifact("artifact-no-db");
+            var capturedAt = DateTimeOffset.UtcNow;
+            var artifact = CreateArtifact("artifact-no-db", capturedAtUtc: capturedAt);
 
             await repository.UpsertAsync(artifact);
 
-            var filePath = BuildEvidencePath(tempRoot, artifact.Id);
-            Assert.True(File.Exists(filePath));
+            Assert.True(File.Exists(BuildSummaryPath(tempRoot, capturedAt)));
         }
         finally
         {
@@ -37,8 +40,12 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
     }
 
     [Fact]
-    public async Task UpsertAsync_should_delete_local_evidence_after_successful_db_persist()
+    public async Task UpsertAsync_should_write_local_evidence_and_call_the_db_sink_when_configured()
     {
+        // The local summary file is the durable source of truth and is always written for
+        // "capture" kind artifacts; a configured DB repository is an additional best-effort mirror
+        // (see UpsertAsync's try/catch around each databaseRepository call) — neither one gates
+        // the other, so there is nothing to delete once the DB sink succeeds.
         var tempRoot = CreateTempDirectory();
         try
         {
@@ -53,12 +60,12 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
                 evidenceStore,
                 new[] { dbSink });
 
-            var artifact = CreateArtifact("artifact-db-ok");
+            var capturedAt = DateTimeOffset.UtcNow;
+            var artifact = CreateArtifact("artifact-db-ok", capturedAtUtc: capturedAt);
 
             await repository.UpsertAsync(artifact);
 
-            var filePath = BuildEvidencePath(tempRoot, artifact.Id);
-            Assert.False(File.Exists(filePath));
+            Assert.True(File.Exists(BuildSummaryPath(tempRoot, capturedAt)));
             Assert.Equal(1, dbSink.UpsertCalls);
         }
         finally
@@ -83,12 +90,12 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
                 evidenceStore,
                 new[] { new FailingDatabaseRepository() });
 
-            var artifact = CreateArtifact("artifact-db-fail");
+            var capturedAt = DateTimeOffset.UtcNow;
+            var artifact = CreateArtifact("artifact-db-fail", capturedAtUtc: capturedAt);
 
             await repository.UpsertAsync(artifact);
 
-            var filePath = BuildEvidencePath(tempRoot, artifact.Id);
-            Assert.True(File.Exists(filePath));
+            Assert.True(File.Exists(BuildSummaryPath(tempRoot, capturedAt)));
         }
         finally
         {
@@ -167,9 +174,12 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
             await repository.UpsertAsync(sameHourCapture);
             await repository.UpsertAsync(nextHourCapture);
 
-            Assert.True(File.Exists(BuildEvidencePath(tempRoot, firstCapture.Id)));
-            Assert.False(File.Exists(BuildEvidencePath(tempRoot, sameHourCapture.Id)));
-            Assert.True(File.Exists(BuildEvidencePath(tempRoot, nextHourCapture.Id)));
+            // Repeated captures within the same hour upsert into that hour's single summary file
+            // rather than each producing their own evidence file — only 2 distinct hour files
+            // exist for 3 captures spanning hours 15 and 16.
+            Assert.True(File.Exists(BuildSummaryPath(tempRoot, firstCapture.CapturedAtUtc)));
+            Assert.True(File.Exists(BuildSummaryPath(tempRoot, nextHourCapture.CapturedAtUtc)));
+            Assert.Equal(2, Directory.GetFiles(Path.Combine(tempRoot, "monitoringArtifacts"), "capture-summary-*.json").Length);
         }
         finally
         {
@@ -472,6 +482,10 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
         var escapedId = Uri.EscapeDataString(artifactId);
         return Path.Combine(root, "monitoringArtifacts", $"{escapedId}.json");
     }
+
+    // Matches StageMirrorMonitoringArtifactRepository.ToHourKey / WriteSummaryFileAsync.
+    private static string BuildSummaryPath(string root, DateTimeOffset capturedAtUtc) =>
+        Path.Combine(root, "monitoringArtifacts", $"capture-summary-{capturedAtUtc:yyyy-MM-dd_HH}.json");
 
     private static string CreateTempDirectory()
     {

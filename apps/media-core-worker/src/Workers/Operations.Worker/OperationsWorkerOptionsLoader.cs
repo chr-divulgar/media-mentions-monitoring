@@ -56,7 +56,10 @@ public static class OperationsWorkerOptionsLoader
         string? MongoConnectionString,
         string? MongoConfigDatabaseName,
         string? MongoMonitoringDatabaseName,
-        string? MongoAlertCollectionName);
+        string? MongoAlertCollectionName,
+        int? WhatsAppSidecarPort,
+        int? WhatsAppSidecarStartupTimeoutSeconds,
+        string? WhatsAppAuthStatePath);
 
     public static OperationsWorkerOptions Load(string? configPath = null)
     {
@@ -334,6 +337,21 @@ public static class OperationsWorkerOptionsLoader
             options.MongoAlertCollectionName = model.MongoAlertCollectionName;
         }
 
+        if (model.WhatsAppSidecarPort.HasValue)
+        {
+            options.WhatsAppSidecarPort = model.WhatsAppSidecarPort.Value;
+        }
+
+        if (model.WhatsAppSidecarStartupTimeoutSeconds.HasValue)
+        {
+            options.WhatsAppSidecarStartupTimeoutSeconds = model.WhatsAppSidecarStartupTimeoutSeconds.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.WhatsAppAuthStatePath))
+        {
+            options.WhatsAppAuthStatePath = model.WhatsAppAuthStatePath;
+        }
+
         return NormalizeConfiguredPaths(options, applicationRoot, configDirectory);
     }
 
@@ -347,6 +365,7 @@ public static class OperationsWorkerOptionsLoader
         options.StageFilesystemRootPath = ResolveConfiguredPath(options.StageFilesystemRootPath, applicationRoot, configDirectory);
         options.YtdlpBinDirectory = ResolveConfiguredPath(options.YtdlpBinDirectory, applicationRoot, configDirectory);
         options.YoutubeCookiesAlertFilePath = ResolveConfiguredPath(options.YoutubeCookiesAlertFilePath, applicationRoot, configDirectory);
+        options.WhatsAppAuthStatePath = ResolveConfiguredPath(options.WhatsAppAuthStatePath, applicationRoot, configDirectory);
 
         if (!string.IsNullOrWhiteSpace(options.YoutubeCookiesFilePath))
         {

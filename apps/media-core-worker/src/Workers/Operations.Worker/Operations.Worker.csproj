@@ -25,5 +25,15 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Link>runtimes\win-x64\native\%(Filename)%(Extension)</Link>
     </None>
+    <None Include="native\win-x64\node\node.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>runtimes\win-x64\node\node.exe</Link>
+    </None>
+    <None Include="sidecar-whatsapp\**\*" Exclude="sidecar-whatsapp\node_modules\**\*.md;sidecar-whatsapp\node_modules\**\*.markdown;sidecar-whatsapp\node_modules\**\test\**;sidecar-whatsapp\node_modules\**\*.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Link>sidecar-whatsapp\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
   </ItemGroup>
 </Project>

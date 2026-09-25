@@ -81,8 +81,14 @@ public sealed class StartupSourceInitializationServiceTests
     }
 
     [Fact]
-    public async Task InitializeAsync_should_discover_only_failed_sources_and_replace_stream_url_when_revalidated()
+    public async Task InitializeAsync_should_exclude_a_failed_source_even_when_discovery_would_have_found_a_working_url()
     {
+        // DiscoverAndPersistFallbacksAsync only ever runs for sources whose primary streamUrl
+        // already validated (see StartupSourceInitializationService.cs) and is fire-and-forget:
+        // it persists fallbackStreamUrls for a *future* run, it never promotes a currently-failed
+        // source back into this run's resolved set. A source with no existing fallbacks and a
+        // failing streamUrl has no conservative candidate to try, so it stays excluded this run —
+        // even though FakeDiscovery below "would" have found a working URL.
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
 
         try
@@ -122,14 +128,9 @@ public sealed class StartupSourceInitializationServiceTests
             {
                 ["https://ok.example.com/live.aac"] = true,
                 ["https://bad.example.com/live.aac"] = false,
-                ["https://resolved-invalid.example.com/live.m3u8"] = false,
                 ["https://resolved.example.com/live.m3u8"] = true
             });
-            var discovery = new FakeDiscovery(
-            [
-                "https://resolved-invalid.example.com/live.m3u8",
-                "https://resolved.example.com/live.m3u8"
-            ]);
+            var discovery = new FakeDiscovery(["https://resolved.example.com/live.m3u8"]);
 
             var sut = new StartupSourceInitializationService(
                 options,
@@ -143,20 +144,14 @@ public sealed class StartupSourceInitializationServiceTests
             await sut.InitializeAsync();
             var effective = await provider.ListActiveSourcesAsync();
 
-            Assert.Equal(2, effective.Count);
+            Assert.Single(effective);
+            Assert.Equal("healthy", effective[0].SourceId);
             Assert.Contains(validator.Calls, url => string.Equals(url, "https://ok.example.com/live.aac", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(validator.Calls, url => string.Equals(url, "https://bad.example.com/live.aac", StringComparison.OrdinalIgnoreCase));
-            Assert.Contains(validator.Calls, url => string.Equals(url, "https://resolved-invalid.example.com/live.m3u8", StringComparison.OrdinalIgnoreCase));
-            Assert.Contains(validator.Calls, url => string.Equals(url, "https://resolved.example.com/live.m3u8", StringComparison.OrdinalIgnoreCase));
-
-            var recovered = effective.Single(source => source.SourceId == "failed");
-            Assert.Equal("https://resolved.example.com/live.m3u8", recovered.StreamUrl);
-            // At minimum 1 call for the failed source; healthy may also trigger a fire-and-forget call
-            Assert.True(discovery.Calls >= 1);
 
             var configuredAfterStartup = await provider.ListConfiguredSourcesAsync();
-            var persisted = configuredAfterStartup.Single(source => source.SourceId == "failed");
-            Assert.Equal("https://resolved.example.com/live.m3u8", persisted.StreamUrl);
+            var failedSource = configuredAfterStartup.Single(source => source.SourceId == "failed");
+            Assert.True(failedSource.IsExcluded);
         }
         finally
         {
@@ -168,8 +163,13 @@ public sealed class StartupSourceInitializationServiceTests
     }
 
     [Fact]
-    public async Task InitializeAsync_should_persist_discovered_stream_url_even_when_it_looks_tokenized()
+    public async Task InitializeAsync_should_persist_a_discovered_url_as_fallback_even_when_it_looks_tokenized()
     {
+        // DiscoverAndPersistFallbacksAsync fires for any source with a primaryUrl regardless of
+        // whether its own streamUrl just failed (see the unconditional `_ = ...` call before the
+        // validation-succeeded branch in StartupSourceInitializationService.cs) — but it is fire-
+        // and-forget, so the test must wait for fallbackStreamUrls to actually land on disk rather
+        // than asserting immediately after InitializeAsync returns.
         var tempFilePath = Path.Combine(Path.GetTempPath(), $"capture-sources-{Guid.NewGuid():N}.json");
 
         try
@@ -217,13 +217,10 @@ public sealed class StartupSourceInitializationServiceTests
 
             await sut.InitializeAsync();
 
-            var active = await provider.ListActiveSourcesAsync();
-            Assert.Single(active);
-            Assert.Equal(discoveredTokenizedUrl, active[0].StreamUrl);
+            Assert.Empty(await provider.ListActiveSourcesAsync());
 
-            var configuredAfterStartup = await provider.ListConfiguredSourcesAsync();
-            Assert.Single(configuredAfterStartup);
-            Assert.Equal(discoveredTokenizedUrl, configuredAfterStartup[0].StreamUrl);
+            var persisted = await WaitForFallbacksAsync(provider, "failed", expectedCount: 1);
+            Assert.Contains(discoveredTokenizedUrl, persisted.FallbackStreamUrls);
         }
         finally
         {
@@ -267,14 +264,12 @@ public sealed class StartupSourceInitializationServiceTests
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
             {
                 ["https://bad.example.com/live.aac"] = false,
-                ["https://primary.example.com/live.m3u8"] = true,
                 ["https://fallback1.example.com/live.aac"] = true,
                 ["https://fallback2.example.com/stream"] = true,
                 ["https://invalid.example.com/live.aac"] = false
             });
             var discovery = new FakeDiscovery(
             [
-                "https://primary.example.com/live.m3u8",
                 "https://fallback1.example.com/live.aac",
                 "https://invalid.example.com/live.aac",
                 "https://fallback2.example.com/stream"
@@ -291,20 +286,12 @@ public sealed class StartupSourceInitializationServiceTests
 
             await sut.InitializeAsync();
 
-            var active = await provider.ListActiveSourcesAsync();
-            Assert.Single(active);
+            Assert.Empty(await provider.ListActiveSourcesAsync());
 
-            var recovered = active[0];
-            Assert.Equal("https://primary.example.com/live.m3u8", recovered.StreamUrl);
-            Assert.Equal(2, recovered.FallbackStreamUrls.Count);
-            Assert.Contains("https://fallback1.example.com/live.aac", recovered.FallbackStreamUrls);
-            Assert.Contains("https://fallback2.example.com/stream", recovered.FallbackStreamUrls);
-
-            // Verify persisted to file
-            var configured = await provider.ListConfiguredSourcesAsync();
-            var persisted = configured.Single(s => s.SourceId == "failed");
-            Assert.Equal("https://primary.example.com/live.m3u8", persisted.StreamUrl);
-            Assert.Equal(2, persisted.FallbackStreamUrls.Count);
+            var persisted = await WaitForFallbacksAsync(provider, "failed", expectedCount: 2);
+            Assert.Contains("https://fallback1.example.com/live.aac", persisted.FallbackStreamUrls);
+            Assert.Contains("https://fallback2.example.com/stream", persisted.FallbackStreamUrls);
+            Assert.DoesNotContain("https://invalid.example.com/live.aac", persisted.FallbackStreamUrls);
         }
         finally
         {
@@ -313,6 +300,27 @@ public sealed class StartupSourceInitializationServiceTests
                 File.Delete(tempFilePath);
             }
         }
+    }
+
+    // DiscoverAndPersistFallbacksAsync is fire-and-forget by design (it must never delay startup
+    // capture) — poll instead of asserting immediately after InitializeAsync returns.
+    private static async Task<CaptureSource> WaitForFallbacksAsync(
+        StaticCaptureSourceProvider provider, string sourceId, int expectedCount)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            var configured = await provider.ListConfiguredSourcesAsync();
+            var source = configured.SingleOrDefault(s => s.SourceId == sourceId);
+            if (source is not null && source.FallbackStreamUrls.Count >= expectedCount)
+            {
+                return source;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException($"'{sourceId}' never reached {expectedCount} persisted fallback URL(s).");
     }
 
     private sealed class FakeValidator : IStartupStreamValidator

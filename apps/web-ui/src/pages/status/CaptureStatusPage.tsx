@@ -11,6 +11,7 @@ import {
 } from "@repo/shared/index";
 import api from "../../services/Agent";
 import { YouTubeSettings } from "../settings/YouTubeSettings";
+import { WhatsAppStatus } from "../settings/WhatsAppStatus";
 
 const STATUS_COLOR: Record<CaptureHourStatus, string> = {
   ok: "#52c41a",
@@ -230,6 +231,7 @@ const CaptureStatusPage = () => {
   const tabItems = [
     { key: "recording", label: "Grabación", children: <RecordingStatusTab /> },
     { key: "youtube", label: "YouTube", children: <YouTubeSettings /> },
+    { key: "whatsapp", label: "WhatsApp", children: <WhatsAppStatus /> },
   ];
 
   return <Tabs defaultActiveKey="recording" items={tabItems} />;

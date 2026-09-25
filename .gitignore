@@ -40,3 +40,11 @@ scripts/*.json
 
 # Playwright MCP temporary directory
 .playwright-mcp/
+
+# WhatsApp sidecar (apps/media-core-worker): deliberately vendored, unlike every other
+# node_modules in this repo. WhatsAppSidecarProcessSupervisor launches it as a self-contained
+# child process next to a vendored portable Node.js runtime (native/win-x64/node/), so its
+# dependencies ship with the build instead of requiring `npm install` or Node.js itself on the
+# target machine — same "no machine-level dependency" reasoning as native/win-x64/README.md
+# already documents for ffmpeg.
+!/apps/media-core-worker/src/Workers/Operations.Worker/sidecar-whatsapp/node_modules/

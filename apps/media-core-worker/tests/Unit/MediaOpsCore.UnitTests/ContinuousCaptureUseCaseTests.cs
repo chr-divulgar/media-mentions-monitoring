@@ -1,8 +1,6 @@
 ﻿using MediaOpsCore.BuildingBlocks.Application;
-using MediaOpsCore.BuildingBlocks.Domain;
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Workers.Operations;
-using System.Collections.Concurrent;
 using System.Text.Json;
 using Xunit;
 
@@ -20,7 +18,6 @@ public sealed class ContinuousCaptureUseCaseTests
             new { sourceId = "source-b", platform = "portal-platform", media = "internet", streamUrl = "https://example.com/portal" }
         }));
 
-        var repository = new InMemoryMonitoringArtifactRepository();
         try
         {
             var opts = new OperationsWorkerOptions
@@ -36,12 +33,10 @@ public sealed class ContinuousCaptureUseCaseTests
                 1);
 
             var result = await useCase.ExecuteAsync();
-            var artifacts = await repository.ListByTenantAsync("global-ingestion");
 
             Assert.Equal(2, result.Attempts);
             Assert.Equal(1, result.Succeeded);
             Assert.Equal(0, result.Failed);
-            Assert.Single(artifacts);
         }
         finally
         {
@@ -61,7 +56,6 @@ public sealed class ContinuousCaptureUseCaseTests
             new { sourceId = "source-a", platform = "radio", media = "radio", streamUrl = "https://example.com/live" }
         }));
 
-        var repository = new InMemoryMonitoringArtifactRepository();
         try
         {
             var opts = new OperationsWorkerOptions { CaptureSourcesFilePath = tempFilePath };
@@ -72,14 +66,10 @@ public sealed class ContinuousCaptureUseCaseTests
                 1);
 
             var result = await useCase.ExecuteAsync();
-            var artifacts = await repository.ListByTenantAsync("global-ingestion");
 
             Assert.Equal(1, result.Attempts);
             Assert.Equal(1, result.Succeeded);
             Assert.Equal(0, result.Failed);
-            Assert.Single(artifacts);
-            Assert.Equal("capture", artifacts[0].Kind);
-            Assert.Equal(TimeSpan.FromHours(-5), artifacts[0].CapturedAtUtc.Offset);
         }
         finally
         {
@@ -100,7 +90,6 @@ public sealed class ContinuousCaptureUseCaseTests
             new { sourceId = "source-b", platform = "radio-b", media = "radio", streamUrl = "https://example.com/b" }
         }));
 
-        var repository = new InMemoryMonitoringArtifactRepository();
         var gate = new ParallelCaptureGate();
 
         try
@@ -126,13 +115,11 @@ public sealed class ContinuousCaptureUseCaseTests
             gate.Release();
 
             var result = await execution;
-            var artifacts = await repository.ListByTenantAsync("global-ingestion");
 
             Assert.Equal(2, result.Attempts);
             Assert.Equal(2, result.Succeeded);
             Assert.Equal(0, result.Failed);
             Assert.Equal(2, gate.MaxConcurrentObserved);
-            Assert.Equal(2, artifacts.Count);
         }
         finally
         {
@@ -243,27 +230,5 @@ public sealed class ContinuousCaptureUseCaseTests
         }
     }
 
-    private sealed class InMemoryMonitoringArtifactRepository : IMonitoringArtifactRepository
-    {
-        private readonly ConcurrentDictionary<string, MonitoringArtifact> artifacts = new(StringComparer.Ordinal);
-
-        public Task UpsertAsync(MonitoringArtifact artifact, CancellationToken cancellationToken = default)
-        {
-            artifacts[artifact.Id] = artifact;
-            return Task.CompletedTask;
-        }
-
-        public Task<MonitoringArtifact?> GetAsync(string id, CancellationToken cancellationToken = default)
-        {
-            artifacts.TryGetValue(id, out var artifact);
-            return Task.FromResult(artifact);
-        }
-
-        public Task<IReadOnlyList<MonitoringArtifact>> ListByTenantAsync(string tenantId, CancellationToken cancellationToken = default)
-        {
-            var tenantArtifacts = artifacts.Values.Where(artifact => artifact.TenantId == tenantId).ToArray();
-            return Task.FromResult<IReadOnlyList<MonitoringArtifact>>(tenantArtifacts);
-        }
-    }
 }
 

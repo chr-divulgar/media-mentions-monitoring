@@ -10,8 +10,11 @@ public sealed class OperationsWorkerOptionsLoaderTests
     {
         var options = OperationsWorkerOptionsLoader.Load(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json"));
 
-        Assert.Equal("stage/capture-sources.json", options.CaptureSourcesFilePath);
-        Assert.Equal("stage/plugin-profiles.json", options.PluginProfilesFilePath);
+        // NormalizeConfiguredPaths deliberately resolves these to absolute paths (so the worker
+        // finds its config regardless of the process's current working directory) — only the
+        // relative suffix is still meaningful to assert on.
+        Assert.EndsWith(Path.Combine("stage", "capture-sources.json"), options.CaptureSourcesFilePath);
+        Assert.EndsWith(Path.Combine("stage", "plugin-profiles.json"), options.PluginProfilesFilePath);
         Assert.Equal("radio,video", options.ContinuousMediaAllowList);
         Assert.Equal(64, options.CaptureMaxDegreeOfParallelism);
         Assert.True(options.EnableStartupValidation);
@@ -73,7 +76,7 @@ public sealed class OperationsWorkerOptionsLoaderTests
             Assert.Equal(20, options.CanaryPlatformMinPercent);
             Assert.Equal(90, options.CanaryPlatformMaxPercent);
             Assert.Equal("javeriana,colmundo", options.CanaryPlatformAllowList);
-            Assert.Equal("stage-evidence-custom", options.StageFilesystemRootPath);
+            Assert.EndsWith("stage-evidence-custom", options.StageFilesystemRootPath);
             Assert.Equal(15, options.DefaultFlacWindowDurationSeconds);
             Assert.Equal(20, options.DefaultOpusFlushIntervalSeconds);
             Assert.Equal(2, options.DefaultOpusRotationIntervalHours);

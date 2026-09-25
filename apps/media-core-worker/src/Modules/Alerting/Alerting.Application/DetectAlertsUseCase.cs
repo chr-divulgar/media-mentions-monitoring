@@ -7,13 +7,22 @@ namespace MediaOpsCore.Modules.Alerting.Application;
 // (media-monitor/apps/w-service/Monitor.cs:64-155, Helper.cs:283-362).
 public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
 {
+    // How far back GetPendingNotificationsAsync looks for incomplete deliveries at startup — a
+    // story from before this window is stale enough that resending it unprompted isn't useful.
+    private static readonly TimeSpan PendingNotificationLookback = TimeSpan.FromHours(24);
+
     private readonly IClientConfigRepository clientConfigRepository;
     private readonly IAlertRepository alertRepository;
+    private readonly IAlertNotifier alertNotifier;
 
-    public DetectAlertsUseCase(IClientConfigRepository clientConfigRepository, IAlertRepository alertRepository)
+    public DetectAlertsUseCase(
+        IClientConfigRepository clientConfigRepository,
+        IAlertRepository alertRepository,
+        IAlertNotifier alertNotifier)
     {
         this.clientConfigRepository = clientConfigRepository;
         this.alertRepository = alertRepository;
+        this.alertNotifier = alertNotifier;
     }
 
     public async Task ExecuteAsync(
@@ -48,7 +57,52 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
             var type = await ClassifyAsync(platform, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false);
 
             var alert = new Alert(text, startTime, endTime, media, platform, filePath, matchedWords, client.Name, type);
-            await alertRepository.InsertAsync(alert, cancellationToken).ConfigureAwait(false);
+            var recipients = ResolveRecipients(client, media, alert);
+            var alertId = await alertRepository.InsertAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
+
+            await NotifyAsync(alertId, alert, recipients, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async Task RetryPendingNotificationsAsync(CancellationToken cancellationToken = default)
+    {
+        var pending = await alertRepository
+            .GetPendingNotificationsAsync(PendingNotificationLookback, cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var item in pending)
+        {
+            await NotifyAsync(item.AlertId, item.Alert, item.PendingRecipients, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // No recipients captured for an alert type that AlertMessageFormatter never turns into a
+    // message (RepeatedWithinMinute) — otherwise it would sit in Mongo as "pending" forever with
+    // nothing that RetryPendingNotificationsAsync could ever actually send.
+    private static IReadOnlyList<string> ResolveRecipients(ClientKeywordConfig client, string media, Alert alert)
+    {
+        if (AlertMessageFormatter.Format(alert) is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        return client.AlertRecipientsByMedia.TryGetValue(media, out var recipients) ? recipients : Array.Empty<string>();
+    }
+
+    private async Task NotifyAsync(string alertId, Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken)
+    {
+        if (recipients.Count == 0)
+        {
+            return;
+        }
+
+        // IAlertNotifier is best-effort by contract (see its doc comment) — it must not throw for
+        // expected failures, so no try/catch is needed here. One client's notification never
+        // blocks the next client's detection/persistence in this loop.
+        var succeeded = await alertNotifier.NotifyAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
+        if (succeeded.Count > 0)
+        {
+            await alertRepository.MarkRecipientsNotifiedAsync(alertId, succeeded, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -74,7 +128,7 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
             return AlertType.RepeatedWithinMinute;
         }
 
-        if (await IsDuplicateOnOtherPlatformAsync(platform, client, text, matchedWords, cancellationToken).ConfigureAwait(false))
+        if (await IsDuplicateOnOtherPlatformAsync(platform, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false))
         {
             return AlertType.RepeatedOtherPlatform;
         }
@@ -113,6 +167,7 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
         ClientKeywordConfig client,
         string text,
         IReadOnlyList<string> matchedWords,
+        DateTimeOffset endTime,
         CancellationToken cancellationToken)
     {
         var platforms = await clientConfigRepository.GetPlatformNamesAsync(cancellationToken).ConfigureAwait(false);
@@ -123,7 +178,9 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
                 .GetLastNewOrRepeatedAlertAsync(otherPlatform, client.Name, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (lastAlert is null)
+            // Same 60s window as the same-platform check above — without this, a match against
+            // an alert from days ago (a stale/old story, or leftover test data) could still fire.
+            if (lastAlert is null || (endTime - lastAlert.EndTime).TotalSeconds > 60)
             {
                 continue;
             }

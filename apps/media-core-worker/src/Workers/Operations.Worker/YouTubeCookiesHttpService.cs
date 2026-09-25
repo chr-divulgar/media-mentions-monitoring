@@ -18,6 +18,9 @@ namespace MediaOpsCore.Workers.Operations;
 ///   GET  /audio/segment    — serves a closed-hour audio segment (mp3/wav) for Alerts' audio-edit
 ///     flow, consumed by NestJS's AudioService instead of it reading the worker's local D:\...
 ///     opus paths directly (see IClosedHourAudioReader).
+///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
+///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
+///   GET  /whatsapp/qr      — relays the WhatsApp sidecar's own /qr (base64 PNG or null).
 /// </summary>
 public sealed class YouTubeCookiesHttpService : IHostedService
 {
@@ -42,6 +45,8 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     private readonly IYouTubeReconciliationTrigger reconciliationTrigger;
     private readonly ICaptureStatusSnapshotProvider captureStatusSnapshotProvider;
     private readonly IClosedHourAudioReader closedHourAudioReader;
+    private readonly HttpClient httpClient;
+    private readonly int whatsAppSidecarPort;
     private HttpListener? httpListener;
     private CancellationTokenSource? cts;
 
@@ -53,7 +58,8 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         IYouTubeHealthSnapshotProvider healthSnapshotProvider,
         IYouTubeReconciliationTrigger reconciliationTrigger,
         ICaptureStatusSnapshotProvider captureStatusSnapshotProvider,
-        IClosedHourAudioReader closedHourAudioReader)
+        IClosedHourAudioReader closedHourAudioReader,
+        HttpClient httpClient)
     {
         this.logger = logger;
         this.options = options;
@@ -63,10 +69,18 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         this.reconciliationTrigger = reconciliationTrigger;
         this.captureStatusSnapshotProvider = captureStatusSnapshotProvider;
         this.closedHourAudioReader = closedHourAudioReader;
+        this.httpClient = httpClient;
+        whatsAppSidecarPort = options.WhatsAppSidecarPort;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        // Started early by Program.cs before startup validation, then again by the host.
+        if (httpListener?.IsListening == true)
+        {
+            return Task.CompletedTask;
+        }
+
         try
         {
             httpListener = new HttpListener();
@@ -154,6 +168,18 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "GET" && path == "/audio/segment")
             {
                 await HandleAudioSegmentRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "GET" && path == "/whatsapp/status")
+            {
+                await RelayToSidecarAsync(context, "/status").ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "GET" && path == "/whatsapp/qr")
+            {
+                await RelayToSidecarAsync(context, "/qr").ConfigureAwait(false);
                 return;
             }
 
@@ -354,6 +380,64 @@ public sealed class YouTubeCookiesHttpService : IHostedService
                 break;
         }
     }
+
+    // Pure byte-for-byte proxy to the WhatsApp sidecar's own HTTP surface — no local caching or
+    // storage on the worker side, matching how /youtube/health is always fetched live.
+    //
+    // Fetching from the sidecar and writing back to our own caller are two separate failure
+    // domains, handled in two separate try blocks: if the sidecar fetch fails, nothing has been
+    // sent to our caller yet, so it is safe to fall back to a 200 "unreachable" JSON response. If
+    // writing that already-fetched body back to our caller fails instead (e.g. NestJS's own
+    // AbortSignal.timeout fires and it tears down the connection mid-write — "network name is no
+    // longer available"), headers/body are already partially sent, so HttpListenerResponse
+    // refuses any further write; trying anyway throws InvalidOperationException, which used to
+    // cascade into HandleRequest's outer catch trying (and failing) to write yet another error
+    // response. There is nothing more to send once that happens — just log and stop.
+    private async Task RelayToSidecarAsync(HttpListenerContext context, string sidecarPath)
+    {
+        byte[] body;
+        HttpStatusCode statusCode;
+        string? contentType;
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cts?.Token ?? CancellationToken.None);
+            // Baileys does synchronous crypto/handshake work on Node's single event loop during
+            // an actual login/QR-pairing event, which briefly (a few seconds) stalls every other
+            // request the sidecar serves, including this one — not an outage, just momentarily
+            // busy. Kept shorter than NestJS's own AbortSignal.timeout(6000) to the worker (see
+            // whatsapp.service.ts) so there is still headroom to write the response back before
+            // NestJS's clock runs out and aborts the connection out from under us.
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
+
+            using var response = await httpClient
+                .GetAsync($"http://localhost:{whatsAppSidecarPort}{sidecarPath}", timeoutCts.Token)
+                .ConfigureAwait(false);
+            body = await response.Content.ReadAsByteArrayAsync(timeoutCts.Token).ConfigureAwait(false);
+            statusCode = response.StatusCode;
+            contentType = response.Content.Headers.ContentType?.ToString();
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "[YouTubeCookiesHttpService] WhatsApp sidecar unreachable at {Path}.", sidecarPath);
+            await SendJsonResponse(context, 200, new WhatsAppUnreachableResponse()).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            context.Response.StatusCode = (int)statusCode;
+            context.Response.ContentType = contentType ?? "application/json";
+            context.Response.ContentLength64 = body.Length;
+            await context.Response.OutputStream.WriteAsync(body).ConfigureAwait(false);
+            context.Response.Close();
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "[YouTubeCookiesHttpService] Caller disconnected while relaying {Path}.", sidecarPath);
+        }
+    }
+
+    private sealed record WhatsAppUnreachableResponse(string Status = "worker_unreachable", string? Qr = null);
 
     private static string ResolveAbsolutePath(string path) =>
         Path.IsPathRooted(path) ? path : Path.GetFullPath(path);

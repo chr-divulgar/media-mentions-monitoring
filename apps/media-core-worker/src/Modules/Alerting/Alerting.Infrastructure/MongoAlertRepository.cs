@@ -21,9 +21,10 @@ public sealed class MongoAlertRepository : IAlertRepository
         alertCollection = database.GetCollection<BsonDocument>(options.AlertCollectionName);
     }
 
-    public Task InsertAsync(Alert alert, CancellationToken cancellationToken = default)
+    public async Task<string> InsertAsync(Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(alert);
+        ArgumentNullException.ThrowIfNull(recipients);
 
         var document = new BsonDocument
         {
@@ -35,10 +36,66 @@ public sealed class MongoAlertRepository : IAlertRepository
             { "filePath", alert.FilePath },
             { "words", new BsonArray(alert.Words) },
             { "clientName", alert.ClientName },
-            { "type", alert.Type.ToLegacyLabel() }
+            { "type", alert.Type.ToLegacyLabel() },
+            { "recipients", new BsonArray(recipients) },
+            { "notifiedRecipients", new BsonArray() },
+            { "fullyNotified", recipients.Count == 0 }
         };
 
-        return alertCollection.InsertOneAsync(document, options: null, cancellationToken);
+        await alertCollection.InsertOneAsync(document, options: null, cancellationToken).ConfigureAwait(false);
+        return document["_id"].AsObjectId.ToString();
+    }
+
+    public async Task MarkRecipientsNotifiedAsync(string alertId, IReadOnlyList<string> recipients, CancellationToken cancellationToken = default)
+    {
+        if (recipients.Count == 0)
+        {
+            return;
+        }
+
+        var filter = Builders<BsonDocument>.Filter.Eq("_id", ObjectId.Parse(alertId));
+        var update = Builders<BsonDocument>.Update.AddToSetEach("notifiedRecipients", recipients);
+        await alertCollection.UpdateOneAsync(filter, update, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        // Recompute fullyNotified from the just-updated document — a second round trip, but alert
+        // volume is low enough that this is simpler and safer than an aggregation-pipeline update.
+        var refreshed = await alertCollection.Find(filter).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (refreshed is null)
+        {
+            return;
+        }
+
+        var intended = refreshed["recipients"].AsBsonArray.Select(v => v.AsString).ToHashSet(StringComparer.Ordinal);
+        var notified = refreshed["notifiedRecipients"].AsBsonArray.Select(v => v.AsString).ToHashSet(StringComparer.Ordinal);
+
+        await alertCollection.UpdateOneAsync(
+            filter,
+            Builders<BsonDocument>.Update.Set("fullyNotified", intended.IsSubsetOf(notified)),
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<PendingAlertNotification>> GetPendingNotificationsAsync(TimeSpan lookback, CancellationToken cancellationToken = default)
+    {
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("fullyNotified", false),
+            Builders<BsonDocument>.Filter.Gte("endTime", DateTime.UtcNow - lookback));
+
+        var documents = await alertCollection.Find(filter).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var results = new List<PendingAlertNotification>(documents.Count);
+        foreach (var document in documents)
+        {
+            var intended = document["recipients"].AsBsonArray.Select(v => v.AsString).ToArray();
+            var notified = document["notifiedRecipients"].AsBsonArray.Select(v => v.AsString).ToHashSet(StringComparer.Ordinal);
+            var pending = intended.Where(number => !notified.Contains(number)).ToArray();
+
+            if (pending.Length > 0)
+            {
+                results.Add(new PendingAlertNotification(document["_id"].AsObjectId.ToString(), ToAlert(document), pending));
+            }
+        }
+
+        return results;
     }
 
     public async Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, CancellationToken cancellationToken = default)
