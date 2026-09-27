@@ -11,9 +11,16 @@ using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Segmentation.Application;
 using MediaOpsCore.Workers.Operations;
 
+// Windows Services start with C:\Windows\System32 as their working directory — every
+// relative path this worker resolves (stage/, .env, capture-sources.json, ...) assumes it is
+// the exe's own directory instead, same as running via `dotnet run` or a double-click. Set it
+// before anything below reads a relative path.
+Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
 DotEnvLoader.LoadIfPresent();
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddWindowsService(o => o.ServiceName = "MediaMentionsMonitoringWorker");
 
 var options = OperationsWorkerOptionsLoader.Load();
 
