@@ -150,12 +150,15 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SourceAvailability
 
 var host = builder.Build();
 
-// Hosted services only start at host.RunAsync(), after startup source validation below — which
-// can take minutes with many sources. Start these two now so NestJS can reach the worker (status,
-// health) and the WhatsApp sidecar is already up by the time anything relays to it, instead of
-// both reporting "unreachable" for that whole window.
-await host.Services.GetRequiredService<YouTubeCookiesHttpService>().StartAsync(CancellationToken.None);
-await host.Services.GetRequiredService<WhatsAppSidecarProcessSupervisor>().StartAsync(CancellationToken.None);
+// host.StartAsync() runs every registered IHostedService.StartAsync() (in registration order —
+// YouTubeCookiesHttpService and WhatsAppSidecarProcessSupervisor among them, so NestJS can reach
+// the worker and the sidecar is already up before anything relays to it) and, since
+// AddWindowsService() is registered above, is also what tells the Service Control Manager this
+// service is now running. Calling it here — before the manual startup steps below, which can take
+// minutes with many sources — is what keeps `sc start` from hitting its ~30s default timeout
+// (error 1053) waiting for a status update that used to only arrive at host.RunAsync(), at the
+// very end of this file.
+await host.StartAsync();
 
 // Pre-warm yt-dlp binary resolution so it is ready before the first TV source capture.
 // Logs a warning and continues if yt-dlp cannot be found or downloaded.
@@ -188,4 +191,4 @@ catch (Exception ex)
 // After this point sessions are self-sustaining: failures trigger hot recovery,
 // recoveries call TriggerCaptureAsync — no periodic heartbeat required.
 await host.Services.GetRequiredService<IContinuousCaptureUseCase>().ExecuteAsync();
-await host.RunAsync();
+await host.WaitForShutdownAsync();

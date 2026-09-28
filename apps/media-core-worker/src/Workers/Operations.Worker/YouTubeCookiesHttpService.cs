@@ -75,7 +75,8 @@ public sealed class YouTubeCookiesHttpService : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        // Started early by Program.cs before startup validation, then again by the host.
+        // Guards against a stray double-start; not expected in practice since host.StartAsync()
+        // now starts every hosted service exactly once, early in Program.cs.
         if (httpListener?.IsListening == true)
         {
             return Task.CompletedTask;

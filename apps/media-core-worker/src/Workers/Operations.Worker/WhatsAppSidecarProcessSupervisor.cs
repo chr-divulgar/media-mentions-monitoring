@@ -33,9 +33,8 @@ public sealed class WhatsAppSidecarProcessSupervisor : BackgroundService
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    // Started early by Program.cs, before host.RunAsync() starts hosted services (including this
-    // one again) — without this guard, BackgroundService.StartAsync would run ExecuteAsync twice,
-    // spawning two competing sidecar child processes on the same port.
+    // Guards against a stray double-start; not expected in practice since host.StartAsync()
+    // now starts every hosted service exactly once, early in Program.cs.
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         if (started)
