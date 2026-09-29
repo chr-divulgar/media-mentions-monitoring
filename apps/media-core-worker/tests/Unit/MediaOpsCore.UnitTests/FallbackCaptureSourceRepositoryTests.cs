@@ -16,15 +16,33 @@ public sealed class FallbackCaptureSourceRepositoryTests
         new(primary, secondary, NullLogger<FallbackCaptureSourceRepository>.Instance);
 
     [Fact]
-    public async Task ListAllAsync_should_return_primary_sources_when_primary_succeeds()
+    public async Task ListAllAsync_should_union_primary_and_secondary_sources_by_SourceId()
     {
+        // The two catalogs cover different, non-overlapping stations in practice — a real
+        // fallback (either/or) would silently drop whichever one didn't "win", so this must be a
+        // union, not a choice.
         var primary = new StubRepository([MakeSource("a"), MakeSource("b")]);
         var secondary = new StubRepository([MakeSource("c")]);
 
         var result = await Build(primary, secondary).ListAllAsync();
 
-        Assert.Equal(2, result.Count);
-        Assert.False(secondary.WasCalled);
+        Assert.Equal(3, result.Count);
+        Assert.Contains(result, s => s.SourceId == "a");
+        Assert.Contains(result, s => s.SourceId == "b");
+        Assert.Contains(result, s => s.SourceId == "c");
+        Assert.True(secondary.WasCalled);
+    }
+
+    [Fact]
+    public async Task ListAllAsync_should_prefer_primary_on_a_SourceId_collision()
+    {
+        var primary = new StubRepository([new CaptureSource("a", "global-ingestion", "P", "radio", "https://primary.example.com/stream")]);
+        var secondary = new StubRepository([new CaptureSource("a", "global-ingestion", "P", "radio", "https://secondary.example.com/stream")]);
+
+        var result = await Build(primary, secondary).ListAllAsync();
+
+        var merged = Assert.Single(result);
+        Assert.Equal("https://primary.example.com/stream", merged.StreamUrl);
     }
 
     [Fact]
@@ -83,24 +101,14 @@ public sealed class FallbackCaptureSourceRepositoryTests
     }
 
     [Fact]
-    public async Task ListAllAsync_should_propagate_secondary_exception_when_both_fail()
+    public async Task ListAllAsync_should_return_an_empty_list_when_both_repositories_fail()
     {
         var primary = new ThrowingRepository(new HttpRequestException("primary failed"));
         var secondary = new ThrowingRepository(new FileNotFoundException("secondary failed"));
 
-        await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            Build(primary, secondary).ListAllAsync());
-    }
+        var result = await Build(primary, secondary).ListAllAsync();
 
-    [Fact]
-    public async Task ListAllAsync_should_not_call_secondary_when_primary_returns_non_empty()
-    {
-        var primary = new StubRepository([MakeSource("a")]);
-        var secondary = new StubRepository([MakeSource("b")]);
-
-        await Build(primary, secondary).ListAllAsync();
-
-        Assert.False(secondary.WasCalled);
+        Assert.Empty(result);
     }
 
     [Fact]

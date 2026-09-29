@@ -5,9 +5,19 @@ using Microsoft.Extensions.Logging;
 namespace MediaOpsCore.Workers.Operations;
 
 /// <summary>
-/// Decorator that tries the primary repository first and, on any failure or empty result,
-/// falls back to the secondary repository with a structured warning log.
-/// Intended use: Firebase Realtime Database (primary) + JSON file (secondary) at startup.
+/// Decorator that unions the primary and secondary repositories' sources by SourceId (primary
+/// wins on a collision), instead of an all-or-nothing choice between them.
+///
+/// The all-or-nothing version of this class — use primary entirely if it returns anything at
+/// all, only fall back to secondary on failure/empty — silently discarded every source that
+/// only lived in the JSON file the moment Firestore's "platforms" collection had any data at
+/// all, even though the two catalogs cover almost entirely different, non-overlapping stations
+/// (Firestore holds the newer sources ops enters through the Plataformas UI; the JSON file holds
+/// the older ones the worker has been self-healing streamUrls for over months). That is not a
+/// real fallback relationship — both are genuinely partial catalogs today, and neither can safely
+/// stand in for the other going missing.
+///
+/// Intended use: Firestore (primary) + JSON file (secondary) at startup.
 /// </summary>
 public sealed class FallbackCaptureSourceRepository : ICaptureSourceRepository
 {
@@ -27,35 +37,44 @@ public sealed class FallbackCaptureSourceRepository : ICaptureSourceRepository
 
     public async Task<IReadOnlyList<CaptureSource>> ListAllAsync(CancellationToken cancellationToken = default)
     {
+        var primarySources = await TryListAsync(primary, "Primary", cancellationToken).ConfigureAwait(false);
+        var secondarySources = await TryListAsync(secondary, "Secondary", cancellationToken).ConfigureAwait(false);
+
+        var merged = new Dictionary<string, CaptureSource>(StringComparer.OrdinalIgnoreCase);
+        foreach (var source in primarySources)
+        {
+            merged[source.SourceId] = source;
+        }
+
+        foreach (var source in secondarySources)
+        {
+            // Primary wins on a genuine SourceId collision — not expected in practice today (the
+            // two catalogs currently don't overlap at all), but a sensible tie-break if they ever do.
+            merged.TryAdd(source.SourceId, source);
+        }
+
+        return merged.Values.ToArray();
+    }
+
+    private async Task<IReadOnlyList<CaptureSource>> TryListAsync(
+        ICaptureSourceRepository repository, string role, CancellationToken cancellationToken)
+    {
         try
         {
-            var sources = await primary.ListAllAsync(cancellationToken).ConfigureAwait(false);
-
-            if (sources.Count == 0)
-            {
-                logger.LogWarning(
-                    "[FallbackCaptureSourceRepository] Primary repository ({PrimaryType}) returned zero sources. " +
-                    "Falling back to {SecondaryType}.",
-                    primary.GetType().Name, secondary.GetType().Name);
-                return await secondary.ListAllAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            return sources;
+            return await repository.ListAllAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Caller cancelled the operation — do not fall back, propagate cleanly.
             throw;
         }
         catch (Exception exception)
         {
             logger.LogWarning(
                 exception,
-                "[FallbackCaptureSourceRepository] Primary repository ({PrimaryType}) failed. " +
-                "Falling back to {SecondaryType}.",
-                primary.GetType().Name, secondary.GetType().Name);
-
-            return await secondary.ListAllAsync(cancellationToken).ConfigureAwait(false);
+                "[FallbackCaptureSourceRepository] {Role} repository ({Type}) failed to list sources; treating it as empty for this merge.",
+                role,
+                repository.GetType().Name);
+            return [];
         }
     }
 
