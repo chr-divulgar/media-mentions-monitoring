@@ -7,3 +7,5 @@ stage/cookies/
 src/Workers/Operations.Worker/native/win-x64/*.dll
 src/Workers/Operations.Worker/native/win-x64/**/*.exe
 src/Workers/Operations.Worker/sidecar-whatsapp
+publish/
+
