@@ -31,6 +31,9 @@ public interface ILiveCaptureProgressReader
     // The sources recording right now. Lets callers report on live capture without reading the
     // source catalog back out of Firestore just to learn ids the worker already holds in memory.
     IReadOnlyCollection<string> ActiveSourceIds { get; }
+
+    // Sources that had a capture session which has since stopped and not been replaced.
+    IReadOnlyCollection<string> StoppedSourceIds { get; }
 }
 
 /// <summary>
@@ -63,6 +66,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
     private static readonly int RecognitionVadSearchSeconds = ResolveConfiguredInt("MEDIA_RECOGNITION_VAD_SEARCH_SECONDS", 2, 0, 5);
     // 20 ms analysis frame at 16 kHz / mono / s16 = 640 bytes
     private const int RmsAnalysisFrameBytes = AudioSampleRate * AudioChannels * AudioBytesPerSample * 20 / 1000;
+    // Per-I/O read timeout for HTTP/HLS inputs. Leaves margin for an HLS segment download while
+    // still turning a dead connection into an error that hot recovery acts on.
+    private const string HttpReadTimeoutMicroseconds = "30000000";
     private const string DefaultHttpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Safari/537.36";
     private static readonly string[] RequiredFfmpegLibraries = ["avutil", "avcodec", "avformat", "swresample"];
 
@@ -114,8 +120,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             CaptureSession.Start(ctx.source, ctx.options.AudioOutputRootPath, ctx.mediaDirectory, ctx.plan, ctx.options, ctx.logger, ctx.operationalMetrics, ctx.chunkTranscriptionPipeline, ctx.captureAttemptObserver, ctx.monitoringArtifactRepository),
             (source, options, mediaDirectory, plan, logger, operationalMetrics, chunkTranscriptionPipeline, captureAttemptObserver, monitoringArtifactRepository));
 
-        // If the existing session stopped (error or end-of-input), replace it atomically.
-        if (!session.IsRunning && !session.CompletedByEndOfInput)
+        // If the existing session stopped (error or end of stream), replace it atomically.
+        if (!session.IsRunning)
         {
             var replacement = CaptureSession.Start(source, options.AudioOutputRootPath, mediaDirectory, plan, options, logger, operationalMetrics, chunkTranscriptionPipeline, captureAttemptObserver, monitoringArtifactRepository);
             // Only replace if the stored value is still the stale one we just read.
@@ -131,13 +137,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
         if (!session.IsRunning)
         {
-            if (session.CompletedByEndOfInput && string.IsNullOrWhiteSpace(session.LastError))
-            {
-                return new AudioCaptureExecutionResult(true, session.LastOpusPath ?? session.CurrentOpusPath(),
-                    silenceFilledSeconds: session.SilenceFilledThisWindowSeconds,
-                    capturedSeconds: session.CapturedThisWindowSeconds);
-            }
-
             return new AudioCaptureExecutionResult(false, session.CurrentOpusPath(), session.LastError,
                 silenceFilledSeconds: session.SilenceFilledThisWindowSeconds,
                 capturedSeconds: session.CapturedThisWindowSeconds);
@@ -150,6 +149,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
     public IReadOnlyCollection<string> ActiveSourceIds =>
         sessions.Where(entry => entry.Value.IsRunning).Select(entry => entry.Key).ToArray();
+
+    public IReadOnlyCollection<string> StoppedSourceIds =>
+        sessions.Where(entry => !entry.Value.IsRunning).Select(entry => entry.Key).ToArray();
 
     public LiveCaptureProgress? TryGetLiveProgress(string sourceId) =>
         sessions.TryGetValue(sourceId, out var session) && session.IsRunning
@@ -338,7 +340,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         private readonly ICaptureAttemptObserver captureAttemptObserver;
         private readonly IMonitoringArtifactRepository monitoringArtifactRepository;
         private volatile string? activeOpusPath;
-        private volatile bool completedByEndOfInput;
         private volatile bool isRunning;
         private volatile string? lastError;
         // Silence injected into the current rotation window (milliseconds).
@@ -479,7 +480,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
         public bool IsRunning => isRunning && !captureTask.IsCompleted;
 
-        public bool CompletedByEndOfInput => completedByEndOfInput;
 
         public string? LastError => lastError;
 
@@ -594,7 +594,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         private void SetFailure(string message, bool excludeSource = false)
         {
             lastError = message;
-            completedByEndOfInput = false;
             isRunning = false;
             // Notify the observer directly — no heartbeat poll needed to detect the failure.
             _ = captureAttemptObserver.ReportAsync(
@@ -636,6 +635,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             byte[]? transcriptionOverlapTailPcm = null;
             ChunkingState? chunkingState = null;
             var consecutivePacketSendErrors = 0;
+            var endedByEndOfInput = false;
             var consecutiveEncoderFrameSendFailures = 0;
             const int maxConsecutivePacketSendErrors = 8;
             const int maxConsecutiveEncoderFrameSendFailures = 48;
@@ -679,6 +679,12 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
                 // HLS requires per-segment HTTP requests; 5s is too tight. Use 15s for HLS.
                 ffmpeg.av_dict_set(&inputOptions, "stimeout", isHlsStream ? "15000000" : "5000000", 0);
+                if (isHttpStream)
+                {
+                    // stimeout is RTSP-only; without rw_timeout a dead HTTP/HLS connection leaves
+                    // av_read_frame blocked forever — a "running" session that records nothing.
+                    ffmpeg.av_dict_set(&inputOptions, "rw_timeout", HttpReadTimeoutMicroseconds, 0);
+                }
 
                 if (options.EnableDecoderReconnect)
                 {
@@ -706,6 +712,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     ffmpeg.av_dict_set(&inputOptions, "probesize", "524288", 0);
                     ffmpeg.av_dict_set(&inputOptions, "analyzeduration", isHlsStream ? "10000000" : "1000000", 0);
                     ffmpeg.av_dict_set(&inputOptions, "stimeout", "5000000", 0);
+                    ffmpeg.av_dict_set(&inputOptions, "rw_timeout", HttpReadTimeoutMicroseconds, 0);
                     ffmpeg.av_dict_set(&inputOptions, "live_start_index", "-1", 0);
                     ffmpeg.av_dict_set(&inputOptions, "fflags", "nobuffer+discardcorrupt", 0);
 
@@ -923,7 +930,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     var readResult = ffmpeg.av_read_frame(inputContext, inputPacket);
                     if (readResult == ffmpeg.AVERROR_EOF)
                     {
-                        completedByEndOfInput = true;
+                        // Every source here is a live stream, so EOF means the connection ended
+                        // (expired YouTube HLS manifest, server closing the socket) — never a
+                        // finished recording. Reported as a failure at the end of finally, once
+                        // the output and resume file are released, so hot recovery reconnects.
+                        endedByEndOfInput = true;
                         break;
                     }
 
@@ -1367,6 +1378,12 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 if (inputOptions is not null)
                 {
                     ffmpeg.av_dict_free(&inputOptions);
+                }
+
+                if (endedByEndOfInput && !cancellationTokenSource.IsCancellationRequested)
+                {
+                    logger.LogWarning("Stream ended (EOF) for source {SourceId}; reporting it as a failure so hot recovery reconnects.", sourceId);
+                    SetFailure("Stream ended (EOF).");
                 }
             }
         }

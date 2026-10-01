@@ -23,6 +23,8 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     private readonly ILogger<SourceAvailabilityReconciliationService> logger;
 
     private readonly ConcurrentDictionary<string, byte> inFlightHotRecovery = new(StringComparer.OrdinalIgnoreCase);
+    // Resolved sources found with a stopped session on the previous tick — see RecoverSilentlyStoppedSourcesAsync.
+    private IReadOnlySet<string> missingOnPreviousTick = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private CancellationToken serviceStopping = CancellationToken.None;
 
     public SourceAvailabilityReconciliationService(
@@ -48,6 +50,9 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     // resolution (plugin → observer → plugin) that deadlocks at first resolution.
     // The plugin is only needed long after startup, when TriggerCaptureAsync runs.
     private IAudioCapturePlugin AudioCapturePlugin => serviceProvider.GetRequiredService<IAudioCapturePlugin>();
+
+    // Same circular-resolution reason as AudioCapturePlugin: the reader is the plugin itself.
+    private ILiveCaptureProgressReader LiveCaptureProgressReader => serviceProvider.GetRequiredService<ILiveCaptureProgressReader>();
 
     public Task ReportAsync(CaptureSource source, AudioCaptureExecutionResult result, CancellationToken cancellationToken = default)
     {
@@ -83,6 +88,15 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         {
             try
             {
+                await RecoverSilentlyStoppedSourcesAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogError(exception, "Check for silently stopped capture sessions failed.");
+            }
+
+            try
+            {
                 await ReconcileExcludedAtScheduledMinutesAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -104,6 +118,75 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             }
         }
     }
+
+    // Safety net for any session that stops without reporting a failure: the source stays in the
+    // resolved list, so scheduled reconciliation (which only looks at non-resolved sources) never
+    // retries it and it stays down for good. In-memory only — no Firestore traffic — so it runs on
+    // every tick.
+    private async Task RecoverSilentlyStoppedSourcesAsync(CancellationToken cancellationToken)
+    {
+        // Same filtered set ContinuousCaptureUseCase starts sessions for (media allow-list, canary)
+        // — a resolved source outside it never gets a session and must not be "recovered" forever.
+        var resolved = await captureSourceProvider.ListActiveSourcesAsync(cancellationToken).ConfigureAwait(false);
+        var (toRecover, stillMissing) = FindSilentlyStoppedSources(
+            resolved.Select(source => source.SourceId).ToArray(),
+            LiveCaptureProgressReader.StoppedSourceIds,
+            inFlightHotRecovery.Keys.ToArray(),
+            missingOnPreviousTick);
+        missingOnPreviousTick = stillMissing;
+
+        foreach (var source in resolved.Where(source => toRecover.Contains(source.SourceId)))
+        {
+            if (!inFlightHotRecovery.TryAdd(source.SourceId, 0))
+            {
+                continue;
+            }
+
+            logger.LogWarning(
+                "Source {SourceId} is resolved but its capture session stopped and nothing restarted it; starting hot recovery.",
+                source.SourceId);
+            _ = Task.Run(() => TryHotRecoverUntilRotationAsync(source), CancellationToken.None);
+        }
+    }
+
+    /// <summary>
+    /// Pure decision for RecoverSilentlyStoppedSourcesAsync. Only sources that HAD a session which
+    /// stopped count — a source with no session yet belongs to startup or scheduled reconciliation
+    /// (keying off "not running" instead raced startup validation, which takes over a minute). A
+    /// stopped session is also only acted on once it is still stopped on the next tick with no hot
+    /// recovery in flight: a recovery that just succeeded replaces the session a moment later, and a
+    /// failure reported while another recovery was running is dropped and must be caught here.
+    /// </summary>
+    internal static (IReadOnlySet<string> ToRecover, IReadOnlySet<string> StillMissing) FindSilentlyStoppedSources(
+        IReadOnlyCollection<string> resolvedSourceIds,
+        IReadOnlyCollection<string> stoppedSourceIds,
+        IReadOnlyCollection<string> inFlightRecoveryIds,
+        IReadOnlySet<string> missingOnPreviousTick)
+    {
+        var stopped = stoppedSourceIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var inFlight = inFlightRecoveryIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var missing = resolvedSourceIds
+            .Where(id => stopped.Contains(id) && !inFlight.Contains(id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var toRecover = missing
+            .Where(missingOnPreviousTick.Contains)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return (toRecover, missing);
+    }
+
+    // The current streamUrl comes first, same order as startup validation. BuildConservativeCandidates
+    // excludes it by design, so recovering from variants alone could never bring back a stream that
+    // simply dropped — it stayed down until the service restarted.
+    internal static IReadOnlyList<string> BuildRadioRecoveryCandidates(CaptureSource source) =>
+        [source.StreamUrl, .. StartupStreamUrlHeuristics.BuildConservativeCandidates(source)];
+
+    // Last retry slot of the rotation window the failure happened in. Computed once up front:
+    // checking `Minute == 59` on each attempt missed the slot whenever an attempt spanned the whole
+    // of minute :59, and the loop kept going for another full hour.
+    internal static DateTimeOffset ResolveHotRecoveryDeadline(DateTimeOffset sourceNow) =>
+        new(sourceNow.Year, sourceNow.Month, sourceNow.Day, sourceNow.Hour, 59, 0, sourceNow.Offset);
 
     private async Task ExcludeSourceAsync(CaptureSource source, string? reason)
     {
@@ -133,6 +216,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             captureSourceProvider.RemoveResolvedSource(failedSource.SourceId);
 
             var sourceOffset = TimeSpan.FromMinutes(failedSource.UtcOffsetMinutes);
+            var deadline = ResolveHotRecoveryDeadline(DateTimeOffset.UtcNow.ToOffset(sourceOffset));
             var attempt = 0;
 
             while (!serviceStopping.IsCancellationRequested)
@@ -169,7 +253,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
                 // Minute :59 is the last retry slot for this rotation window.
                 // Mark excluded so the reconciliation at :00 of the next hour can pick it up.
-                if (sourceNow.Minute == 59)
+                if (sourceNow >= deadline)
                 {
                     await captureSourceProvider
                         .PersistExclusionAsync(failedSource.SourceId, true, CancellationToken.None)
@@ -419,8 +503,8 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             return null;
         }
 
-        // ── Radio/video: conservative structural variants (scheme toggle, token rotation) ──
-        var candidates = StartupStreamUrlHeuristics.BuildConservativeCandidates(source);
+        // ── Radio/video: the current streamUrl, then conservative structural variants ──
+        var candidates = BuildRadioRecoveryCandidates(source);
 
         foreach (var candidate in candidates)
         {

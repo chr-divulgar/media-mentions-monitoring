@@ -25,6 +25,12 @@ public sealed class FallbackCaptureSourceRepository : ICaptureSourceRepository
     private readonly ICaptureSourceRepository secondary;
     private readonly ILogger<FallbackCaptureSourceRepository> logger;
 
+    // Which repository each SourceId came from in the last merge. Writes go only to the owner:
+    // writing a JSON-only station to Firestore cost a runQuery per attempt (and a "No document
+    // found" warning) on every hot-recovery cycle, which was a real share of the 429s.
+    private volatile IReadOnlyDictionary<string, ICaptureSourceRepository> ownerBySourceId =
+        new Dictionary<string, ICaptureSourceRepository>(StringComparer.OrdinalIgnoreCase);
+
     public FallbackCaptureSourceRepository(
         ICaptureSourceRepository primary,
         ICaptureSourceRepository secondary,
@@ -41,20 +47,41 @@ public sealed class FallbackCaptureSourceRepository : ICaptureSourceRepository
         var secondarySources = await TryListAsync(secondary, "Secondary", cancellationToken).ConfigureAwait(false);
 
         var merged = new Dictionary<string, CaptureSource>(StringComparer.OrdinalIgnoreCase);
+        var owners = new Dictionary<string, ICaptureSourceRepository>(StringComparer.OrdinalIgnoreCase);
+        var primaryStreams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var source in primarySources)
         {
             merged[source.SourceId] = source;
+            owners[source.SourceId] = primary;
+            primaryStreams.Add(StreamIdentity(source.StreamUrl));
         }
 
         foreach (var source in secondarySources)
         {
-            // Primary wins on a genuine SourceId collision — not expected in practice today (the
-            // two catalogs currently don't overlap at all), but a sensible tie-break if they ever do.
-            merged.TryAdd(source.SourceId, source);
+            // The same station often exists in both catalogs under a different SourceId (e.g.
+            // "colmundo-radio-bogota" in the JSON file, "Colmundo" in Firestore). Keeping both
+            // recorded it twice, alerted twice, and some servers cut the duplicate connection
+            // every few seconds. Primary wins, same as on a SourceId collision.
+            if (primaryStreams.Contains(StreamIdentity(source.StreamUrl)))
+            {
+                continue;
+            }
+
+            if (merged.TryAdd(source.SourceId, source))
+            {
+                owners[source.SourceId] = secondary;
+            }
         }
 
+        ownerBySourceId = owners;
         return merged.Values.ToArray();
     }
+
+    // http/https and a trailing slash reach the same stream.
+    private static string StreamIdentity(string streamUrl) =>
+        Uri.TryCreate(streamUrl.Trim(), UriKind.Absolute, out var uri)
+            ? $"{uri.Host}{uri.PathAndQuery.TrimEnd('/')}"
+            : streamUrl.Trim().TrimEnd('/');
 
     private async Task<IReadOnlyList<CaptureSource>> TryListAsync(
         ICaptureSourceRepository repository, string role, CancellationToken cancellationToken)
@@ -115,6 +142,30 @@ public sealed class FallbackCaptureSourceRepository : ICaptureSourceRepository
         string sourceId,
         CancellationToken cancellationToken)
     {
+        if (ownerBySourceId.TryGetValue(sourceId, out var owner))
+        {
+            var operation = ReferenceEquals(owner, primary) ? primaryOperation : secondaryOperation;
+            try
+            {
+                return await operation(owner).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "[FallbackCaptureSourceRepository] Owning repository ({Type}) failed during {Operation} for {SourceId}.",
+                    owner.GetType().Name,
+                    operationName,
+                    sourceId);
+                return false;
+            }
+        }
+
+        // Not seen in a merge yet — keep writing to both so nothing is lost.
         var primarySucceeded = false;
         var secondarySucceeded = false;
 

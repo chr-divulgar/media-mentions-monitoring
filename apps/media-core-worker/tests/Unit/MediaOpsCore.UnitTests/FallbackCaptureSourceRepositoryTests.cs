@@ -9,7 +9,7 @@ namespace MediaOpsCore.UnitTests;
 public sealed class FallbackCaptureSourceRepositoryTests
 {
     private static CaptureSource MakeSource(string id) =>
-        new(id, "global-ingestion", "P", "radio", "https://example.com/stream");
+        new(id, "global-ingestion", "P", "radio", $"https://example.com/{id}/stream");
 
     private static FallbackCaptureSourceRepository Build(
         ICaptureSourceRepository primary, ICaptureSourceRepository secondary) =>
@@ -31,6 +31,22 @@ public sealed class FallbackCaptureSourceRepositoryTests
         Assert.Contains(result, s => s.SourceId == "b");
         Assert.Contains(result, s => s.SourceId == "c");
         Assert.True(secondary.WasCalled);
+    }
+
+    [Fact]
+    public async Task ListAllAsync_should_drop_a_secondary_source_that_streams_the_same_url_as_a_primary_one()
+    {
+        // Same station in both catalogs under different ids: recording both doubled every file and
+        // alert, and the server kept cutting the duplicate connection.
+        var primary = new StubRepository([new CaptureSource("Colmundo", "global-ingestion", "P", "radio", "https://stream.example.com/colmundo/")]);
+        var secondary = new StubRepository([
+            new CaptureSource("colmundo-radio-bogota", "global-ingestion", "P", "radio", "http://stream.example.com/colmundo"),
+            MakeSource("only-in-json"),
+        ]);
+
+        var result = await Build(primary, secondary).ListAllAsync();
+
+        Assert.Equal(["Colmundo", "only-in-json"], result.Select(s => s.SourceId).Order());
     }
 
     [Fact]
@@ -109,6 +125,22 @@ public sealed class FallbackCaptureSourceRepositoryTests
         var result = await Build(primary, secondary).ListAllAsync();
 
         Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task UpdateStreamUrlAsync_should_write_only_to_the_repository_that_owns_the_source()
+    {
+        // Writing a JSON-only station to Firestore cost a query per hot-recovery attempt.
+        var primary = new StubRepository([MakeSource("firestore-only")]);
+        var secondary = new StubRepository([MakeSource("json-only")]);
+        var repository = Build(primary, secondary);
+        await repository.ListAllAsync();
+
+        var changed = await repository.UpdateStreamUrlAsync("json-only", "https://new.example.com/stream");
+
+        Assert.True(changed);
+        Assert.False(primary.UpdateStreamUrlWasCalled);
+        Assert.True(secondary.UpdateStreamUrlWasCalled);
     }
 
     [Fact]

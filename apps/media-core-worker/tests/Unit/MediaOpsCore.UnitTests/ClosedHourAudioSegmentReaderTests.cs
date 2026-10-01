@@ -211,6 +211,8 @@ public sealed class ClosedHourAudioSegmentReaderTests
     {
         public IReadOnlyCollection<string> ActiveSourceIds => recordedSecondsBySource.Keys;
 
+        public IReadOnlyCollection<string> StoppedSourceIds => [];
+
         public LiveCaptureProgress? TryGetLiveProgress(string sourceId) =>
             recordedSecondsBySource.TryGetValue(sourceId, out var recordedSeconds)
                 ? new LiveCaptureProgress(

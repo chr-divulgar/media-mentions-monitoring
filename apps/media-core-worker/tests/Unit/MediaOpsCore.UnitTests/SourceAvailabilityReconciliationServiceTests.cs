@@ -35,6 +35,88 @@ public sealed class SourceAvailabilityReconciliationServiceTests
             NullLogger<SourceAvailabilityReconciliationService>.Instance);
     }
 
+    private static readonly IReadOnlySet<string> NoneMissing = new HashSet<string>();
+
+    [Fact]
+    public void FindSilentlyStoppedSources_waits_one_tick_before_acting_on_a_stopped_session()
+    {
+        // A recovery that just succeeded replaces the stopped session a moment later.
+        var (toRecover, stillMissing) = SourceAvailabilityReconciliationService.FindSilentlyStoppedSources(
+            ["caracol_tv"], ["caracol_tv"], [], NoneMissing);
+
+        Assert.Empty(toRecover);
+        Assert.Contains("caracol_tv", stillMissing);
+    }
+
+    [Fact]
+    public void FindSilentlyStoppedSources_recovers_a_session_still_stopped_on_the_next_tick()
+    {
+        // The case that left caracol_tv down for hours: resolved, session stopped, nothing retrying it.
+        var (toRecover, _) = SourceAvailabilityReconciliationService.FindSilentlyStoppedSources(
+            ["caracol_tv", "blu-radio"], ["caracol_tv"], [], new HashSet<string> { "caracol_tv" });
+
+        Assert.Equal(["caracol_tv"], toRecover);
+    }
+
+    [Fact]
+    public void FindSilentlyStoppedSources_skips_running_sessions_and_sources_already_in_hot_recovery()
+    {
+        var (toRecover, stillMissing) = SourceAvailabilityReconciliationService.FindSilentlyStoppedSources(
+            ["blu-radio", "rcn_tv"], ["rcn_tv"], ["rcn_tv"], new HashSet<string> { "blu-radio", "rcn_tv" });
+
+        Assert.Empty(toRecover);
+        Assert.Empty(stillMissing);
+    }
+
+    [Fact]
+    public void FindSilentlyStoppedSources_ignores_sources_that_never_had_a_session()
+    {
+        // Startup validation takes over a minute; those sources belong to startup, not this net.
+        var (toRecover, stillMissing) = SourceAvailabilityReconciliationService.FindSilentlyStoppedSources(
+            ["caracol_tv", "blu-radio"], [], [], new HashSet<string> { "caracol_tv", "blu-radio" });
+
+        Assert.Empty(toRecover);
+        Assert.Empty(stillMissing);
+    }
+
+    [Fact]
+    public void BuildRadioRecoveryCandidates_retries_the_current_stream_url_first()
+    {
+        // Barrancas' only fallback was its own URL: variants alone left zero candidates, so a
+        // stream that merely dropped could never be recovered without restarting the service.
+        var source = new CaptureSource(
+            "emisora-comunitaria-barrancas", "tenant-1", "generic", "radio",
+            "https://streaming.example.com/8744/stream",
+            fallbackStreamUrls: ["https://streaming.example.com/8744/stream", "http://streaming.example.com/8744/stream"]);
+
+        var candidates = SourceAvailabilityReconciliationService.BuildRadioRecoveryCandidates(source);
+
+        Assert.Equal(
+            ["https://streaming.example.com/8744/stream", "http://streaming.example.com/8744/stream"],
+            candidates);
+    }
+
+    [Theory]
+    [InlineData(13, 22, 0)]
+    [InlineData(13, 0, 5)]
+    public void ResolveHotRecoveryDeadline_is_minute_59_of_the_hour_the_failure_happened_in(int hour, int minute, int second)
+    {
+        var now = new DateTimeOffset(2026, 10, 1, hour, minute, second, TimeSpan.FromHours(-5));
+
+        var deadline = SourceAvailabilityReconciliationService.ResolveHotRecoveryDeadline(now);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 1, hour, 59, 0, TimeSpan.FromHours(-5)), deadline);
+    }
+
+    [Fact]
+    public void ResolveHotRecoveryDeadline_is_already_reached_for_a_failure_during_minute_59()
+    {
+        // Same as the old `Minute == 59` check for this case — one attempt, then exclude.
+        var now = new DateTimeOffset(2026, 10, 1, 13, 59, 30, TimeSpan.FromHours(-5));
+
+        Assert.True(now >= SourceAvailabilityReconciliationService.ResolveHotRecoveryDeadline(now));
+    }
+
     [Fact]
     public async Task TriggerImmediateReconciliationAsync_recovers_excluded_youtube_source_that_now_resolves()
     {

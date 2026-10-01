@@ -298,6 +298,8 @@ public sealed class CaptureStatusSnapshotProviderTests
     {
         public IReadOnlyCollection<string> ActiveSourceIds => checkpointsBySource.Keys;
 
+        public IReadOnlyCollection<string> StoppedSourceIds => [];
+
         public LiveCaptureProgress? TryGetLiveProgress(string sourceId) =>
             checkpointsBySource.TryGetValue(sourceId, out var checkpoints)
                 ? new LiveCaptureProgress(windowStart ?? CurrentHourStart(), checkpoints[^1].ElapsedSeconds, checkpoints)
