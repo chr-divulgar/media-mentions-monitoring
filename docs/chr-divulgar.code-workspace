@@ -1,0 +1,26 @@
+{
+  "folders": [
+    {
+      "path": ".",
+    },
+  ],
+  "settings": {
+    "dotnet.preferCSharpExtension": true,
+    "chat.tools.terminal.autoApprove": {
+      "dotnet test": true,
+      "git add": true,
+      "git commit": true,
+      "Get-Item": true,
+      "Set-Content": true,
+      "Get-CimInstance": true,
+      "dotnet add": true,
+      "Get-Command": true,
+      "where.exe": true,
+      "choco": true,
+      "Push-Location": true,
+      "dotnet build": true,
+      "Pop-Location": true,
+      "ForEach-Object": true,
+    },
+  },
+}
