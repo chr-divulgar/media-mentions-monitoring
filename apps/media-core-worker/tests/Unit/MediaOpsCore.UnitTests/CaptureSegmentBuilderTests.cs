@@ -17,6 +17,39 @@ public sealed class CaptureSegmentBuilderTests
     }
 
     [Fact]
+    public void Build_should_keep_a_closing_sample_that_overshoots_the_window_end_by_milliseconds()
+    {
+        // Real blu-radio hour: rotation fires on the first packet past 3600, so the closing sample
+        // is 3600.02. Dropping it painted 3300→3600 of a fully recorded hour as no-session.
+        var checkpoints = new[]
+        {
+            new WindowCheckpoint(0, 0, 0),
+            new WindowCheckpoint(3300.35, 3300.35, 0),
+            new WindowCheckpoint(3600.02, 3600.02, 0),
+        };
+
+        var segments = CaptureSegmentBuilder.Build(checkpoints, 3600);
+
+        Assert.All(segments, s => Assert.Equal("captured", s.State));
+        Assert.Equal(3600, segments[^1].EndSeconds);
+    }
+
+    [Fact]
+    public void Build_should_still_ignore_a_sample_far_past_the_window_end()
+    {
+        var checkpoints = new[]
+        {
+            new WindowCheckpoint(0, 0, 0),
+            new WindowCheckpoint(1800, 1800, 0),
+            new WindowCheckpoint(5400, 5400, 0),
+        };
+
+        var segments = CaptureSegmentBuilder.Build(checkpoints, 3600);
+
+        Assert.Equal(new CaptureSegment(1800, 3600, "no-session"), segments[^1]);
+    }
+
+    [Fact]
     public void Build_should_add_a_leading_no_session_segment_when_the_first_checkpoint_is_mid_hour()
     {
         // Worker started 50 minutes into the hour (elapsed=3000) — the first checkpoint anchors

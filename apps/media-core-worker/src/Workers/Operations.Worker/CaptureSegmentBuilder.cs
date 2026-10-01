@@ -18,6 +18,9 @@ public static class CaptureSegmentBuilder
     // audio, and as "the worker wasn't recording" when at least this fraction is bridge silence.
     private const double DominantShareThreshold = 0.9;
 
+    // How far past the window end the closing sample may land and still belong to this window.
+    private const double ClosingSampleToleranceSeconds = 5.0;
+
     private const string CapturedState = "captured";
     private const string GapState = "gap";
     private const string NoSessionState = "no-session";
@@ -37,8 +40,14 @@ public static class CaptureSegmentBuilder
         // Never report on time that hasn't elapsed: a sample taken either side of a rotation can
         // carry an offset belonging to a different window, and pairing it with a real one would
         // otherwise paint a segment across the rest of the hour — into the future.
+        // The closing sample is the exception: rotation fires on the first packet that crosses
+        // the boundary, so it lands a few milliseconds past windowEndSeconds (e.g. 3600.02).
+        // Dropping it left the last periodic sample (3300) as the end and painted the final five
+        // minutes of a fully recorded hour as no-session — so overshoot within a small tolerance
+        // is clamped onto the window end instead.
         var ordered = checkpoints
-            .Where(c => c.ElapsedSeconds >= 0 && c.ElapsedSeconds <= windowEndSeconds)
+            .Where(c => c.ElapsedSeconds >= 0 && c.ElapsedSeconds <= windowEndSeconds + ClosingSampleToleranceSeconds)
+            .Select(c => c.ElapsedSeconds <= windowEndSeconds ? c : c with { ElapsedSeconds = windowEndSeconds })
             .OrderBy(c => c.ElapsedSeconds)
             .ToArray();
 
