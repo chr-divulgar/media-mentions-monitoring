@@ -70,7 +70,7 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
         catch (InvalidOperationException ex)
         {
             logger.LogError(ex, "[YtdlpResolver] yt-dlp binary unavailable for source {SourceId}.", source.SourceId);
-            return new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.BinaryNotFound);
+            return new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.BinaryNotFound, "No se encontró yt-dlp");
         }
 
         var args = new List<string>(runner.Args);
@@ -106,7 +106,8 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
                         logger.LogError(
                             "[YtdlpResolver] Cookies file required but not found at '{Path}' for source {SourceId}.",
                             absPath, source.SourceId);
-                        return new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.AuthRequired);
+                        return new LiveStreamResolutionResult(
+                            null, LiveStreamResolutionFailure.AuthRequired, "Falta el archivo de cookies de YouTube");
                     }
 
                     // Convert to Netscape format if needed — yt-dlp rejects raw browser cookie strings
@@ -147,7 +148,9 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
             {
                 logger.LogWarning("[YtdlpResolver] Resolution timed out after {Seconds}s for source {SourceId}.",
                     options.YtdlpResolutionTimeoutSeconds, source.SourceId);
-                return new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.Unavailable);
+                return new LiveStreamResolutionResult(
+                    null, LiveStreamResolutionFailure.Unavailable,
+                    $"yt-dlp no respondió en {options.YtdlpResolutionTimeoutSeconds} s");
             }
 
             if (!result.Succeeded)
@@ -157,7 +160,7 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
                     "[YtdlpResolver] yt-dlp exited {Code} [{Failure}] for source {SourceId}. Stderr: {Stderr}",
                     result.ExitCode, failure, source.SourceId,
                     result.StandardError?.Trim().Split('\n')[0]);
-                return new LiveStreamResolutionResult(null, failure);
+                return new LiveStreamResolutionResult(null, failure, FirstErrorLine(result.StandardError));
             }
 
             var url = result.StandardOutput?.Trim().Split('\n')[0].Trim();
@@ -166,7 +169,8 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
             {
                 logger.LogWarning("[YtdlpResolver] yt-dlp returned invalid URL '{Url}' for source {SourceId}.",
                     url, source.SourceId);
-                return new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.Unavailable);
+                return new LiveStreamResolutionResult(
+                    null, LiveStreamResolutionFailure.Unavailable, "yt-dlp devolvió una URL inválida");
             }
 
             logger.LogInformation("[YtdlpResolver] Resolved stream URL for {SourceId}: {Url}", source.SourceId, url);
@@ -231,6 +235,15 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
             tempPath = null;
             return absPath;
         }
+    }
+
+    // yt-dlp prints warnings (e.g. the missing JavaScript runtime) before the actual error, so the
+    // first line is usually not the reason; prefer the first "ERROR:" line.
+    private static string? FirstErrorLine(string? stderr)
+    {
+        var lines = stderr?.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return lines?.FirstOrDefault(line => line.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+            ?? lines?.FirstOrDefault();
     }
 
     private static LiveStreamResolutionFailure ClassifyFailure(string? stderr)

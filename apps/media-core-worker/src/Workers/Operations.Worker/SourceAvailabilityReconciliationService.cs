@@ -21,6 +21,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     private readonly ILiveStreamUrlResolver liveStreamUrlResolver;
     private readonly IYouTubeCookiesAlertService cookiesAlertService;
     private readonly ILogger<SourceAvailabilityReconciliationService> logger;
+    private readonly ISourceIncidentRecorder incidents;
 
     private readonly ConcurrentDictionary<string, byte> inFlightHotRecovery = new(StringComparer.OrdinalIgnoreCase);
     // Resolved sources found with a stopped session on the previous tick — see RecoverSilentlyStoppedSourcesAsync.
@@ -34,7 +35,8 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         IServiceProvider serviceProvider,
         ILiveStreamUrlResolver liveStreamUrlResolver,
         IYouTubeCookiesAlertService cookiesAlertService,
-        ILogger<SourceAvailabilityReconciliationService> logger)
+        ILogger<SourceAvailabilityReconciliationService> logger,
+        ISourceIncidentRecorder? incidents = null)
     {
         this.captureSourceProvider = captureSourceProvider;
         this.streamValidator = streamValidator;
@@ -43,6 +45,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         this.liveStreamUrlResolver = liveStreamUrlResolver;
         this.cookiesAlertService = cookiesAlertService;
         this.logger = logger;
+        this.incidents = incidents ?? NullSourceIncidentRecorder.Instance;
     }
 
     // Resolved lazily: this service is the ICaptureAttemptObserver that the plugin factory
@@ -61,6 +64,13 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             inFlightHotRecovery.TryRemove(source.SourceId, out _);
             return Task.CompletedTask;
         }
+
+        // Recorded before deciding what to do with it: a failure that arrives while a recovery is
+        // already running is not acted on again, but it is still part of the story of the hour.
+        incidents.Record(
+            source.SourceId,
+            result.ExcludeSource ? IncidentKinds.Excluded : IncidentKinds.Failed,
+            result.ErrorMessage);
 
         if (result.ExcludeSource)
         {
@@ -145,6 +155,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             logger.LogWarning(
                 "Source {SourceId} is resolved but its capture session stopped and nothing restarted it; starting hot recovery.",
                 source.SourceId);
+            incidents.Record(source.SourceId, IncidentKinds.Failed, "La sesión de captura se detuvo sin avisar; reconectando");
             _ = Task.Run(() => TryHotRecoverUntilRotationAsync(source), CancellationToken.None);
         }
     }
@@ -224,11 +235,12 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                 attempt++;
 
                 // Validate conservative fallbacks — no exclusion persisted on each failed attempt.
-                var recovered = await TryRecoverSourceAsync(failedSource, CancellationToken.None, persistExclusionOnFailure: false)
+                var (recovered, failureReason) = await TryRecoverSourceAsync(failedSource, CancellationToken.None, persistExclusionOnFailure: false)
                     .ConfigureAwait(false);
 
                 if (recovered is not null)
                 {
+                    incidents.Record(recovered.SourceId, IncidentKinds.Recovered, $"Reconectada en el intento {attempt}");
                     captureSourceProvider.AddOrUpdateResolvedSource(recovered);
                     await captureSourceProvider
                         .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, CancellationToken.None)
@@ -249,6 +261,8 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                     return;
                 }
 
+                incidents.Record(failedSource.SourceId, IncidentKinds.RetryFailed, failureReason);
+
                 var sourceNow = DateTimeOffset.UtcNow.ToOffset(sourceOffset);
 
                 // Minute :59 is the last retry slot for this rotation window.
@@ -258,6 +272,10 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                     await captureSourceProvider
                         .PersistExclusionAsync(failedSource.SourceId, true, CancellationToken.None)
                         .ConfigureAwait(false);
+                    incidents.Record(
+                        failedSource.SourceId,
+                        IncidentKinds.Excluded,
+                        $"Se agotaron los reintentos de la hora ({attempt}); se vuelve a intentar en la próxima revisión");
 
                     logger.LogWarning(
                         "Hot recovery exhausted for source {SourceId} after {Attempt} attempt(s) at minute :59. Marked excluded; reconciliation at :00 will retry.",
@@ -324,11 +342,14 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
         foreach (var source in excludedTvSources)
         {
-            var recovered = await TryRecoverSourceAsync(source, cancellationToken).ConfigureAwait(false);
+            var (recovered, failureReason) = await TryRecoverSourceAsync(source, cancellationToken).ConfigureAwait(false);
             if (recovered is null)
             {
+                incidents.Record(source.SourceId, IncidentKinds.RetryFailed, failureReason);
                 continue;
             }
+
+            incidents.Record(recovered.SourceId, IncidentKinds.Recovered, "Recuperada al renovar las cookies");
 
             captureSourceProvider.AddOrUpdateResolvedSource(recovered);
             await captureSourceProvider
@@ -380,12 +401,15 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
         foreach (var source in excludedSources)
         {
-            var recovered = await TryRecoverSourceAsync(source, cancellationToken).ConfigureAwait(false);
+            var (recovered, failureReason) = await TryRecoverSourceAsync(source, cancellationToken).ConfigureAwait(false);
             if (recovered is null)
             {
+                incidents.Record(source.SourceId, IncidentKinds.RetryFailed, failureReason);
                 stillExcludedIds.Add(source.SourceId);
                 continue;
             }
+
+            incidents.Record(recovered.SourceId, IncidentKinds.Recovered, $"Recuperada en la revisión de las :{operationalNow.Minute:00}");
 
             captureSourceProvider.AddOrUpdateResolvedSource(recovered);
             await captureSourceProvider
@@ -458,7 +482,10 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         }
     }
 
-    private async Task<CaptureSource?> TryRecoverSourceAsync(CaptureSource source, CancellationToken cancellationToken, bool persistExclusionOnFailure = true)
+    // The reason travels with a failed attempt: the incident log is the only place an operator can
+    // see why a source stayed down, and "no" without a why is what the recovery used to report.
+    private async Task<(CaptureSource? Recovered, string? FailureReason)> TryRecoverSourceAsync(
+        CaptureSource source, CancellationToken cancellationToken, bool persistExclusionOnFailure = true)
     {
         // ── Television/YouTube: re-resolve ephemeral HLS URL via yt-dlp ──
         if (liveStreamUrlResolver.CanResolve(source))
@@ -470,7 +497,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                     "Skipping TV recovery for {SourceId}: YouTube auth alert active. " +
                     "Waiting for operator to renew cookies and delete the flag.",
                     source.SourceId);
-                return null;
+                return (null, "YouTube pide renovar las cookies; la recuperación está en pausa hasta que se renueven");
             }
 
             var resolution = await liveStreamUrlResolver
@@ -480,7 +507,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             if (resolution.Succeeded)
             {
                 cookiesAlertService.ClearAlert();
-                return source.WithStreamUrl(resolution.Url!).WithExcluded(false);
+                return (source.WithStreamUrl(resolution.Url!).WithExcluded(false), null);
             }
 
             if (resolution.Failure == LiveStreamResolutionFailure.AuthRequired)
@@ -500,19 +527,23 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                     .ConfigureAwait(false);
             }
 
-            return null;
+            return (null, DescribeResolutionFailure(resolution));
         }
 
         // ── Radio/video: the current streamUrl, then conservative structural variants ──
         var candidates = BuildRadioRecoveryCandidates(source);
 
+        string? firstError = null;
         foreach (var candidate in candidates)
         {
             var validation = await streamValidator.ValidateAsync(candidate, cancellationToken).ConfigureAwait(false);
             if (validation.Succeeded)
             {
-                return source.WithStreamUrl(candidate).WithExcluded(false);
+                return (source.WithStreamUrl(candidate).WithExcluded(false), null);
             }
+
+            // The first candidate is the current URL, so its error is the one that explains the outage.
+            firstError ??= validation.ErrorMessage ?? "El stream no respondió";
         }
 
         if (persistExclusionOnFailure)
@@ -522,6 +553,16 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                 .ConfigureAwait(false);
         }
 
-        return null;
+        return (null, candidates.Count > 1
+            ? $"Falló la URL actual y {candidates.Count - 1} alternativa(s): {firstError}"
+            : firstError);
     }
+
+    private static string DescribeResolutionFailure(LiveStreamResolutionResult resolution) =>
+        resolution.Detail ?? resolution.Failure switch
+        {
+            LiveStreamResolutionFailure.AuthRequired => "YouTube exige autenticación (cookies vencidas o inválidas)",
+            LiveStreamResolutionFailure.BinaryNotFound => "No se encontró yt-dlp",
+            _ => "El canal no está disponible o no está en vivo",
+        };
 }

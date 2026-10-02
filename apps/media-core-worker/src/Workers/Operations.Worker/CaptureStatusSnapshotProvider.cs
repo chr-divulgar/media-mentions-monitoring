@@ -26,17 +26,20 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
     private readonly IEvidenceFileStore evidenceFileStore;
     private readonly StageMirrorMonitoringArtifactRepository monitoringArtifactRepository;
     private readonly ILiveCaptureProgressReader liveCaptureProgressReader;
+    private readonly ISourceIncidentReader? incidentReader;
 
     public CaptureStatusSnapshotProvider(
         ICaptureSourceRepository captureSourceRepository,
         IEvidenceFileStore evidenceFileStore,
         StageMirrorMonitoringArtifactRepository monitoringArtifactRepository,
-        ILiveCaptureProgressReader liveCaptureProgressReader)
+        ILiveCaptureProgressReader liveCaptureProgressReader,
+        ISourceIncidentReader? incidentReader = null)
     {
         this.captureSourceRepository = captureSourceRepository;
         this.evidenceFileStore = evidenceFileStore;
         this.monitoringArtifactRepository = monitoringArtifactRepository;
         this.liveCaptureProgressReader = liveCaptureProgressReader;
+        this.incidentReader = incidentReader;
     }
 
     public async Task<CaptureStatusResponse> GetSnapshotAsync(DateOnly date, CancellationToken cancellationToken = default)
@@ -60,6 +63,7 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
         }
 
         var sources = await captureSourceRepository.ListAllAsync(cancellationToken).ConfigureAwait(false);
+        var dayIncidents = incidentReader?.ListForDay(date) ?? [];
 
         var sourceEntries = sources
             .Select(source =>
@@ -77,9 +81,14 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
                     Media = source.Media,
                     IsExcluded = source.IsExcluded,
                     Hours = Enumerable.Range(0, maxHour + 1)
-                        .Select(hour => hour == inProgressHour
-                            ? BuildLiveHourEntry(hour, date, source.SourceId, hourSnapshots[hour])
-                            : BuildClosedHourEntry(hour, hourSnapshots[hour], source.SourceId))
+                        .Select(hour =>
+                        {
+                            var entry = hour == inProgressHour
+                                ? BuildLiveHourEntry(hour, date, source.SourceId, hourSnapshots[hour])
+                                : BuildClosedHourEntry(hour, hourSnapshots[hour], source.SourceId);
+                            entry.Incidents = IncidentsFor(dayIncidents, source.SourceId, hour);
+                            return entry;
+                        })
                         .ToArray(),
                 };
             })
@@ -181,6 +190,16 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
         var hourStart = new DateTimeOffset(date.Year, date.Month, date.Day, hour, 0, 0, BogotaOffset);
         return windowStart >= hourStart && windowStart < hourStart.AddSeconds(WindowSeconds);
     }
+
+    // The source's own incidents plus the worker-wide ones (a restart explains a gap on every
+    // source), for one clock hour. Attached to every hour entry, including the no-data ones: a
+    // source that was down all hour has no capture row, and the incidents are all there is to show.
+    private static IReadOnlyList<CaptureIncidentEntry> IncidentsFor(
+        IReadOnlyList<SourceIncident> dayIncidents, string sourceId, int hour) =>
+        IncidentCollapser.Collapse(dayIncidents.Where(incident =>
+            incident.At.ToOffset(BogotaOffset).Hour == hour
+            && (incident.SourceId == IncidentKinds.WorkerSourceId
+                || string.Equals(incident.SourceId, sourceId, StringComparison.OrdinalIgnoreCase))));
 
     private static IReadOnlyList<CaptureSegmentEntry> ToSegmentEntries(IReadOnlyList<CaptureSegment> segments) =>
         segments

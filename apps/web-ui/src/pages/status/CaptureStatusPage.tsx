@@ -1,10 +1,13 @@
-import { DatePicker, Radio, Tabs, Tooltip } from "antd";
+import { DatePicker, Modal, Radio, Tabs, Timeline, Tooltip, Typography } from "antd";
 import dayjs, { Dayjs } from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient, UseQueryResult } from "react-query";
 import { io } from "socket.io-client";
 import {
   CaptureHourStatus,
+  CaptureHourStatusDto,
+  CaptureIncidentDto,
+  CaptureIncidentKind,
   CaptureSegmentState,
   CaptureStatusResponseDto,
   dateFormat,
@@ -25,7 +28,7 @@ const STATUS_COLOR: Record<CaptureHourStatus, string> = {
 const STATUS_LABEL: Record<CaptureHourStatus, string> = {
   ok: "Sin espacios",
   "gap-filled": "Con espacios",
-  "no-session": "Worker no corría",
+  "no-session": "Sin grabación (conexión caída o reconectando)",
   excluded: "Excluida",
   "no-data": "Sin datos",
   live: "En curso",
@@ -40,7 +43,47 @@ const SEGMENT_COLOR: Record<CaptureSegmentState, string> = {
 const SEGMENT_LABEL: Record<CaptureSegmentState, string> = {
   captured: "Grabó bien",
   gap: "Quedó vacío",
-  "no-session": "Worker no corría",
+  "no-session": "Sin grabación (conexión caída o reconectando)",
+};
+
+const INCIDENT_LABEL: Record<CaptureIncidentKind, string> = {
+  failed: "Falló",
+  "retry-failed": "Reintento fallido",
+  recovered: "Recuperada",
+  excluded: "Excluida",
+  "startup-failed": "No arrancó",
+  "worker-started": "Worker iniciado",
+  "worker-stopped": "Worker detenido",
+};
+
+const INCIDENT_COLOR: Record<CaptureIncidentKind, string> = {
+  failed: "red",
+  "retry-failed": "orange",
+  recovered: "green",
+  excluded: "gray",
+  "startup-failed": "red",
+  "worker-started": "blue",
+  "worker-stopped": "blue",
+};
+
+// The worker sends times in Bogotá time ("2026-10-01T10:02:00.0000000-05:00"), so the clock text
+// is read straight from the string instead of being converted to the browser's time zone.
+const clockOf = (isoText: string) => isoText.substring(11, 16);
+
+const incidentTime = (incident: CaptureIncidentDto) =>
+  incident.until ? `${clockOf(incident.at)}–${clockOf(incident.until)}` : clockOf(incident.at);
+
+const withIncidentHint = (text: string, hour: CaptureHourStatusDto) => {
+  const count = hour.incidents?.length ?? 0;
+  if (count === 0) return text;
+  return (
+    <>
+      <div>{text}</div>
+      <div style={{ marginTop: 4 }}>
+        {count} {count === 1 ? "evento" : "eventos"} — clic para ver por qué
+      </div>
+    </>
+  );
 };
 
 const formatOffset = (hour: number, elapsedSeconds: number) => {
@@ -91,6 +134,11 @@ const RecordingStatusTab = () => {
   );
   const [mediaFilter, setMediaFilter] = useState<string | "all">("all");
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{ sourceId: string; hour: number } | null>(null);
+  // Looked up from the live data on every render so the open detail keeps updating with the socket.
+  const detailHour = detail
+    ? data?.sources.find((s) => s.sourceId === detail.sourceId)?.hours.find((h) => h.hour === detail.hour)
+    : undefined;
 
   const visibleSources = data?.sources.filter(
     (s) => mediaFilter === "all" || s.media === mediaFilter,
@@ -171,16 +219,24 @@ const RecordingStatusTab = () => {
                 {source.sourceId}
               </div>
               <div style={{ display: "flex", flex: 1, height: 22 }}>
-                {source.hours.map((h) =>
-                  h.segments && h.segments.length > 0 ? (
+                {source.hours.map((h) => {
+                  const openDetail = (e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    setDetail({ sourceId: source.sourceId, hour: h.hour });
+                  };
+                  return h.segments && h.segments.length > 0 ? (
                     <div
                       key={h.hour}
+                      onClick={openDetail}
                       style={{ flex: 1, margin: "0 1px", position: "relative", borderRadius: 2, overflow: "hidden" }}
                     >
                       {h.segments.map((segment) => (
                         <Tooltip
                           key={segment.startSeconds}
-                          title={`${formatOffset(h.hour, segment.startSeconds)}–${formatOffset(h.hour, segment.endSeconds)} — ${SEGMENT_LABEL[segment.state]}`}
+                          title={withIncidentHint(
+                            `${formatOffset(h.hour, segment.startSeconds)}–${formatOffset(h.hour, segment.endSeconds)} — ${SEGMENT_LABEL[segment.state]}`,
+                            h,
+                          )}
                         >
                           <div
                             style={{
@@ -198,11 +254,15 @@ const RecordingStatusTab = () => {
                   ) : (
                     <Tooltip
                       key={h.hour}
-                      title={`${h.hour.toString().padStart(2, "0")}:00 — ${STATUS_LABEL[h.status]}${
-                        h.coveragePercent != null ? ` (${h.coveragePercent}%)` : ""
-                      }`}
+                      title={withIncidentHint(
+                        `${h.hour.toString().padStart(2, "0")}:00 — ${STATUS_LABEL[h.status]}${
+                          h.coveragePercent != null ? ` (${h.coveragePercent}%)` : ""
+                        }`,
+                        h,
+                      )}
                     >
                       <div
+                        onClick={openDetail}
                         style={{
                           flex: 1,
                           margin: "0 1px",
@@ -215,15 +275,75 @@ const RecordingStatusTab = () => {
                         }}
                       />
                     </Tooltip>
-                  ),
-                )}
+                  );
+                })}
               </div>
             </div>
             );
           })}
         </div>
       )}
+
+      <Modal
+        open={detail != null}
+        onCancel={() => setDetail(null)}
+        footer={null}
+        width={680}
+        title={detail ? `${detail.sourceId} — ${dateStr} ${detail.hour.toString().padStart(2, "0")}:00` : ""}
+      >
+        {detailHour && <HourDetail hour={detailHour} />}
+      </Modal>
     </>
+  );
+};
+
+const HourDetail = ({ hour }: { hour: CaptureHourStatusDto }) => {
+  const incidents = hour.incidents ?? [];
+  const interrupted = (hour.segments ?? []).filter((s) => s.state !== "captured");
+
+  return (
+    <div style={{ maxHeight: 480, overflowY: "auto" }}>
+      <Typography.Paragraph>
+        {STATUS_LABEL[hour.status]}
+        {hour.coveragePercent != null ? ` — cobertura ${hour.coveragePercent}%` : ""}
+      </Typography.Paragraph>
+
+      {interrupted.length > 0 && (
+        <>
+          <Typography.Text strong>Tramos sin grabar</Typography.Text>
+          <ul style={{ marginTop: 4 }}>
+            {interrupted.map((segment) => (
+              <li key={segment.startSeconds}>
+                {formatOffset(hour.hour, segment.startSeconds)}–{formatOffset(hour.hour, segment.endSeconds)}{" "}
+                — {SEGMENT_LABEL[segment.state]}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <Typography.Text strong>Qué pasó</Typography.Text>
+      {incidents.length === 0 ? (
+        <Typography.Paragraph type="secondary" style={{ marginTop: 4 }}>
+          Sin eventos registrados para esta hora. El worker pudo estar detenido, o la hora es anterior
+          al registro de eventos.
+        </Typography.Paragraph>
+      ) : (
+        <Timeline
+          style={{ marginTop: 12 }}
+          items={incidents.map((incident) => ({
+            color: INCIDENT_COLOR[incident.kind],
+            children: (
+              <div>
+                <strong>{incidentTime(incident)}</strong> · {INCIDENT_LABEL[incident.kind]}
+                {incident.count > 1 ? ` ×${incident.count}` : ""}
+                {incident.reason && <div style={{ color: "#8c8c8c" }}>{incident.reason}</div>}
+              </div>
+            ),
+          }))}
+        />
+      )}
+    </div>
   );
 };
 

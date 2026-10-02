@@ -1,5 +1,6 @@
 using MediaOpsCore.Modules.Capture.Application;
 using MediaOpsCore.Modules.Capture.Domain;
+using System.Collections.Concurrent;
 using MediaOpsCore.Workers.Operations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -20,19 +21,122 @@ public sealed class SourceAvailabilityReconciliationServiceTests
     private static SourceAvailabilityReconciliationService CreateSut(
         FakeCaptureSourceRepository repository,
         FakeLiveStreamUrlResolver resolver,
-        FakeAlertService? alertService = null)
+        FakeAlertService? alertService = null,
+        ISourceIncidentRecorder? incidents = null,
+        FakeStreamValidator? validator = null)
     {
         var options = new OperationsWorkerOptions();
         var captureSourceProvider = new StaticCaptureSourceProvider(options, repository);
 
         return new SourceAvailabilityReconciliationService(
             captureSourceProvider,
-            new FakeStreamValidator(),
+            validator ?? new FakeStreamValidator(),
             new FakePluginResolver(),
             new ServiceCollection().BuildServiceProvider(), // AudioCapturePlugin resolution fails, swallowed by TriggerCaptureAsync's own try/catch
             resolver,
             alertService ?? new FakeAlertService(alertActive: false),
-            NullLogger<SourceAvailabilityReconciliationService>.Instance);
+            NullLogger<SourceAvailabilityReconciliationService>.Instance,
+            incidents);
+    }
+
+    [Fact]
+    public async Task TriggerImmediateReconciliationAsync_records_why_a_youtube_source_could_not_be_recovered()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var sut = CreateSut(
+            new FakeCaptureSourceRepository([YouTubeSource("caracol-tv")]),
+            new FakeLiveStreamUrlResolver(succeeds: false, detail: "ERROR: The channel is not currently live"),
+            incidents: recorder);
+
+        await sut.TriggerImmediateReconciliationAsync();
+
+        var incident = Assert.Single(recorder.Records);
+        Assert.Equal(("caracol-tv", IncidentKinds.RetryFailed), (incident.SourceId, incident.Kind));
+        Assert.Contains("not currently live", incident.Reason);
+    }
+
+    [Fact]
+    public async Task TriggerImmediateReconciliationAsync_records_the_recovery()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var sut = CreateSut(
+            new FakeCaptureSourceRepository([YouTubeSource("caracol-tv")]),
+            new FakeLiveStreamUrlResolver(succeeds: true),
+            incidents: recorder);
+
+        await sut.TriggerImmediateReconciliationAsync();
+
+        Assert.Equal(IncidentKinds.Recovered, Assert.Single(recorder.Records).Kind);
+    }
+
+    [Fact]
+    public async Task TriggerImmediateReconciliationAsync_explains_a_paused_recovery_when_cookies_need_renewal()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var sut = CreateSut(
+            new FakeCaptureSourceRepository([YouTubeSource("caracol-tv")]),
+            new FakeLiveStreamUrlResolver(succeeds: true),
+            alertService: new FakeAlertService(alertActive: true),
+            incidents: recorder);
+
+        await sut.TriggerImmediateReconciliationAsync();
+
+        var incident = Assert.Single(recorder.Records);
+        Assert.Equal(IncidentKinds.RetryFailed, incident.Kind);
+        Assert.Contains("cookies", incident.Reason);
+    }
+
+    [Fact]
+    public async Task ReportAsync_records_every_failure_with_its_reason_even_while_a_recovery_is_running()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var source = RadioSource("blu-radio", isExcluded: false);
+        var sut = CreateSut(
+            new FakeCaptureSourceRepository([source]),
+            new FakeLiveStreamUrlResolver(succeeds: false),
+            incidents: recorder);
+
+        await sut.ReportAsync(source, new AudioCaptureExecutionResult(false, "", "System.InvalidOperationException: av_interleaved_write_frame failed with FFmpeg error code -28.\n   at X()"));
+        await sut.ReportAsync(source, new AudioCaptureExecutionResult(false, "", "Stream ended (EOF)."));
+
+        var failures = recorder.Records.Where(r => r.Kind == IncidentKinds.Failed).ToArray();
+        Assert.Equal(2, failures.Length);
+        Assert.Contains("-28", failures[0].Reason);
+        Assert.Contains("EOF", failures[1].Reason);
+    }
+
+    [Fact]
+    public async Task ReportAsync_records_an_exclusion_when_the_stream_content_is_unusable()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var source = RadioSource("blu-radio", isExcluded: false);
+        var sut = CreateSut(
+            new FakeCaptureSourceRepository([source]),
+            new FakeLiveStreamUrlResolver(succeeds: false),
+            incidents: recorder);
+
+        await sut.ReportAsync(source, new AudioCaptureExecutionResult(false, "", "repeating", excludeSource: true));
+
+        var incident = Assert.Single(recorder.Records);
+        Assert.Equal(IncidentKinds.Excluded, incident.Kind);
+    }
+
+    [Fact]
+    public async Task Hot_recovery_records_each_failed_retry_with_the_validator_error()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var source = RadioSource("blu-radio", isExcluded: false);
+        var sut = CreateSut(
+            new FakeCaptureSourceRepository([source]),
+            new FakeLiveStreamUrlResolver(succeeds: false),
+            incidents: recorder,
+            validator: new FakeStreamValidator("avformat_open_input failed with FFmpeg error code -138"));
+
+        await sut.ReportAsync(source, new AudioCaptureExecutionResult(false, "", "Stream ended (EOF)."));
+        var retry = await recorder.WaitForAsync(IncidentKinds.RetryFailed);
+
+        Assert.Equal("blu-radio", retry.SourceId);
+        Assert.Contains("-138", retry.Reason);
     }
 
     private static readonly IReadOnlySet<string> NoneMissing = new HashSet<string>();
@@ -184,10 +288,35 @@ public sealed class SourceAvailabilityReconciliationServiceTests
         public void ClearAlert() { }
     }
 
-    private sealed class FakeStreamValidator : IStartupStreamValidator
+    private sealed class FakeStreamValidator(string? error = null) : IStartupStreamValidator
     {
         public Task<StartupStreamValidationResult> ValidateAsync(string streamUrl, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new StartupStreamValidationResult(Succeeded: false));
+            Task.FromResult(new StartupStreamValidationResult(Succeeded: false, ErrorMessage: error));
+    }
+
+    private sealed class FakeIncidentRecorder : ISourceIncidentRecorder
+    {
+        private readonly ConcurrentQueue<(string SourceId, string Kind, string? Reason)> records = new();
+
+        public IReadOnlyList<(string SourceId, string Kind, string? Reason)> Records => records.ToArray();
+
+        public void Record(string sourceId, string kind, string? reason = null) => records.Enqueue((sourceId, kind, reason));
+
+        // Hot recovery runs on a background task, so its records land a moment after ReportAsync returns.
+        public async Task<(string SourceId, string Kind, string? Reason)> WaitForAsync(string kind)
+        {
+            for (var attempt = 0; attempt < 100; attempt++)
+            {
+                if (records.FirstOrDefault(r => r.Kind == kind) is { Kind: not null } match)
+                {
+                    return match;
+                }
+
+                await Task.Delay(50);
+            }
+
+            throw new TimeoutException($"No '{kind}' incident was recorded.");
+        }
     }
 
     private sealed class FakePluginResolver : IIngestionPluginResolver
@@ -196,7 +325,7 @@ public sealed class SourceAvailabilityReconciliationServiceTests
             throw new NotSupportedException("Not needed: TriggerCaptureAsync runs fire-and-forget and swallows exceptions.");
     }
 
-    private sealed class FakeLiveStreamUrlResolver(bool succeeds) : ILiveStreamUrlResolver
+    private sealed class FakeLiveStreamUrlResolver(bool succeeds, string? detail = null) : ILiveStreamUrlResolver
     {
         public bool WasCalled { get; private set; }
 
@@ -210,7 +339,7 @@ public sealed class SourceAvailabilityReconciliationServiceTests
             WasCalled = true;
             return Task.FromResult(succeeds
                 ? new LiveStreamResolutionResult("https://example.com/resolved.m3u8", null)
-                : new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.Unavailable));
+                : new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.Unavailable, detail));
         }
     }
 

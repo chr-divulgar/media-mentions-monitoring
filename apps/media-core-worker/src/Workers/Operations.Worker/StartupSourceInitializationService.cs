@@ -16,6 +16,7 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
     private readonly ILiveStreamUrlResolver liveStreamUrlResolver;
     private readonly IYouTubeCookiesAlertService cookiesAlertService;
     private readonly ILogger<StartupSourceInitializationService> logger;
+    private readonly ISourceIncidentRecorder incidents;
 
     public StartupSourceInitializationService(
         OperationsWorkerOptions options,
@@ -24,7 +25,8 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
         IStartupSourceDiscoveryService sourceDiscoveryService,
         ILiveStreamUrlResolver liveStreamUrlResolver,
         IYouTubeCookiesAlertService cookiesAlertService,
-        ILogger<StartupSourceInitializationService> logger)
+        ILogger<StartupSourceInitializationService> logger,
+        ISourceIncidentRecorder? incidents = null)
     {
         this.options = options;
         this.captureSourceProvider = captureSourceProvider;
@@ -33,6 +35,7 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
         this.liveStreamUrlResolver = liveStreamUrlResolver;
         this.cookiesAlertService = cookiesAlertService;
         this.logger = logger;
+        this.incidents = incidents ?? NullSourceIncidentRecorder.Instance;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -89,6 +92,10 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
                 }
 
                 tvExcludedSourceIds.Add((source.SourceId, reason));
+                incidents.Record(
+                    source.SourceId,
+                    IncidentKinds.StartupFailed,
+                    resolution.Detail ?? $"No se pudo obtener el stream de YouTube ({reason})");
                 await captureSourceProvider
                     .PersistExclusionAsync(source.SourceId, true, cancellationToken)
                     .ConfigureAwait(false);
@@ -177,6 +184,10 @@ public sealed class StartupSourceInitializationService : IStartupSourceInitializ
             await captureSourceProvider
                 .PersistExclusionAsync(source.SourceId, true, cancellationToken)
                 .ConfigureAwait(false);
+            incidents.Record(
+                source.SourceId,
+                IncidentKinds.StartupFailed,
+                initialValidation.ErrorMessage ?? "El stream no respondió al validarlo al arrancar");
             invalidSourceIds.Add(source.SourceId);
         }
 

@@ -140,7 +140,7 @@ Estado: **N** no iniciado · **P** en progreso · **C** cumplido (solo con evide
 |---|---|---|---|---|---|---|
 | RQ-070 | Histórico de todo el contrato en línea (archivo documental), soportes adjuntos por registro, trazabilidad | ANX-35, ANX-40, ANX-44, FIC-12 | P | 40 | Audio horario en `D:\` + JSON; sin retención | F9 |
 | RQ-071 | Backups periódicos, recuperación ante incidentes y plan de contingencia | ANX-44, ANX-45, ANX-92 | N | 5 | — | F9 |
-| RQ-072 | Disponibilidad ≥ 99% mensual medida; infraestructura escalable | ANX-41, ANX-89 | P | 20 | Servicio de Windows con autorrecuperación en un solo PC | F9 |
+| RQ-072 | Disponibilidad ≥ 99% mensual medida; infraestructura escalable | ANX-41, ANX-89 | P | 25 | Servicio de Windows con autorrecuperación en un solo PC. Registro de incidentes por fuente y hora (`SourceIncidentLog`: fallo, cada reintento con su motivo, recuperación, reinicios del worker) visible en el detalle de `/status` | F9 |
 | RQ-073 | Entrega final del histórico completo en formatos abiertos: BD con 13 campos, PDF, MP3, MP4, estructura de carpetas, inventario, consistencia BD↔archivo, sin duplicados; cortes parciales | ANX-102, ANX-103, ANX-104, ANX-105, ANX-106, ANX-108, ANX-109, ANX-110, ANX-111, ANX-112 | N | 0 | — | F9 |
 | RQ-074 | Respuesta a requerimientos ≤ 1 h (mesa de ayuda con registro) | ANX-91 | N | 0 | — | F10 |
 | RQ-075 | Soporte al equipo operativo (coordinador, analistas, administrador): jornada, roles y experiencia | ANX-99, ANX-100, ANX-101 | — | — | Requisito operativo, no de software; el software lo apoya con roles y flujo editorial (RQ-019, RQ-041) | F10 |

@@ -226,10 +226,71 @@ public sealed class CaptureStatusSnapshotProviderTests
         Assert.Equal("ok", hour0.Status);
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_should_attach_the_incidents_of_the_hour_even_when_the_source_has_no_data()
+    {
+        // The case the incident log exists for: a source down all hour has no row in the summary,
+        // so the only explanation of the empty hour is what happened to it.
+        var incidents = new FakeIncidentReader(
+            Incident("radio-a", IncidentKinds.Failed, 10, 1, "El servidor cerró la conexión (EOF)"),
+            Incident("radio-a", IncidentKinds.RetryFailed, 10, 2, "sin conexión"),
+            Incident("radio-a", IncidentKinds.RetryFailed, 10, 3, "sin conexión"),
+            Incident("radio-b", IncidentKinds.Failed, 10, 4, "otra fuente"),
+            Incident("radio-a", IncidentKinds.Failed, 11, 0, "otra hora"));
+        var provider = CreateProvider(
+            sources: [CreateSource("radio-a")],
+            evidenceStore: new FakeEvidenceFileStore(),
+            incidentReader: incidents);
+
+        var response = await provider.GetSnapshotAsync(ClosedDate);
+
+        var hour10 = response.Sources.Single().Hours.Single(h => h.Hour == 10);
+        Assert.Equal("no-data", hour10.Status);
+        Assert.Equal([IncidentKinds.Failed, IncidentKinds.RetryFailed], hour10.Incidents.Select(i => i.Kind));
+        Assert.Equal(2, hour10.Incidents[1].Count);
+        Assert.Single(response.Sources.Single().Hours.Single(h => h.Hour == 11).Incidents);
+        Assert.Empty(response.Sources.Single().Hours.Single(h => h.Hour == 9).Incidents);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_should_show_worker_wide_events_on_every_source()
+    {
+        var incidents = new FakeIncidentReader(
+            Incident(IncidentKinds.WorkerSourceId, IncidentKinds.WorkerStarted, 10, 15, null));
+        var provider = CreateProvider(
+            sources: [CreateSource("radio-a"), CreateSource("radio-b")],
+            evidenceStore: new FakeEvidenceFileStore(),
+            incidentReader: incidents);
+
+        var response = await provider.GetSnapshotAsync(ClosedDate);
+
+        Assert.All(response.Sources, source =>
+            Assert.Equal(IncidentKinds.WorkerStarted, Assert.Single(source.Hours.Single(h => h.Hour == 10).Incidents).Kind));
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_should_leave_incidents_empty_when_no_reader_is_configured()
+    {
+        var provider = CreateProvider(sources: [CreateSource("radio-a")], evidenceStore: new FakeEvidenceFileStore());
+
+        var response = await provider.GetSnapshotAsync(ClosedDate);
+
+        Assert.All(response.Sources.Single().Hours, h => Assert.Empty(h.Incidents));
+    }
+
+    private static SourceIncident Incident(string sourceId, string kind, int hour, int minute, string? reason) =>
+        new(new DateTimeOffset(2026, 1, 1, hour, minute, 0, TimeSpan.FromHours(-5)), sourceId, kind, reason);
+
+    private sealed class FakeIncidentReader(params SourceIncident[] incidents) : ISourceIncidentReader
+    {
+        public IReadOnlyList<SourceIncident> ListForDay(DateOnly date) => incidents;
+    }
+
     private static CaptureStatusSnapshotProvider CreateProvider(
         IReadOnlyList<CaptureSource> sources,
         IEvidenceFileStore evidenceStore,
-        ILiveCaptureProgressReader? liveCaptureProgressReader = null)
+        ILiveCaptureProgressReader? liveCaptureProgressReader = null,
+        ISourceIncidentReader? incidentReader = null)
     {
         var monitoringArtifactRepository = new StageMirrorMonitoringArtifactRepository(
             new InMemoryMonitoringArtifactRepository(),
@@ -240,7 +301,8 @@ public sealed class CaptureStatusSnapshotProviderTests
             new FakeCaptureSourceRepository(sources),
             evidenceStore,
             monitoringArtifactRepository,
-            liveCaptureProgressReader ?? new FakeLiveCaptureProgressReader(checkpointsBySource: []));
+            liveCaptureProgressReader ?? new FakeLiveCaptureProgressReader(checkpointsBySource: []),
+            incidentReader);
     }
 
     private static CaptureSource CreateSource(string sourceId) =>

@@ -35,6 +35,11 @@ builder.Services.AddSingleton<IMonitoringArtifactRepository>(
     sp => sp.GetRequiredService<StageMirrorMonitoringArtifactRepository>());
 builder.Services.AddSingleton<IEvidenceFileStore, FileSystemEvidenceStore>();
 builder.Services.AddSingleton<IOperationalMetrics, MeterOperationalMetrics>();
+// Why a source has gaps: failures, retries and recoveries, per source and hour. The status page
+// reads it; the capture and recovery paths write it.
+builder.Services.AddSingleton(new SourceIncidentLog(Path.Combine(options.StageFilesystemRootPath, "monitoringArtifacts")));
+builder.Services.AddSingleton<ISourceIncidentRecorder>(sp => sp.GetRequiredService<SourceIncidentLog>());
+builder.Services.AddSingleton<ISourceIncidentReader>(sp => sp.GetRequiredService<SourceIncidentLog>());
 // Capture source repositories: Firestore primary (when configured, same "platforms" collection
 // and service account apps/web-api already uses) + JSON file fallback.
 builder.Services.AddSingleton<JsonFileCaptureSourceRepository>();
@@ -149,6 +154,12 @@ builder.Services.AddHostedService<DiscreteIngestionWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SourceAvailabilityReconciliationService>());
 
 var host = builder.Build();
+
+// Lets the status page tell "the worker restarted" apart from "the stream failed" on a gray stretch.
+var incidentRecorder = host.Services.GetRequiredService<ISourceIncidentRecorder>();
+incidentRecorder.Record(IncidentKinds.WorkerSourceId, IncidentKinds.WorkerStarted);
+host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(
+    () => incidentRecorder.Record(IncidentKinds.WorkerSourceId, IncidentKinds.WorkerStopped));
 
 // host.StartAsync() runs every registered IHostedService.StartAsync() (in registration order —
 // YouTubeCookiesHttpService and WhatsAppSidecarProcessSupervisor among them, so NestJS can reach
