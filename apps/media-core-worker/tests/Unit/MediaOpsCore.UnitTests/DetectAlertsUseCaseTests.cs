@@ -118,6 +118,27 @@ public sealed class DetectAlertsUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_resolves_television_media_against_recipients_configured_under_tv()
+    {
+        // CaptureSource.Media says "television" (FirestoreDocumentMapper.NormalizeMedia), but every
+        // client's recipients are keyed "tv" — without translating back, TV alerts matched nobody.
+        var repository = new InMemoryAlertRepository();
+        var notifier = new FakeAlertNotifier();
+        var client = new ClientKeywordConfig(
+            "Ecopetrol",
+            new[] { new KeywordConfig("petroleo", Array.Empty<KeywordAdContext>()) },
+            new Dictionary<string, IReadOnlyList<string>> { ["tv"] = new[] { "573000000000" } });
+        var useCase = CreateUseCase(repository, client, notifier: notifier);
+
+        await useCase.ExecuteAsync("CaracolTV", "television", "file.opus", "se derramó petroleo en el pozo", BaseTime, BaseTime.AddSeconds(20));
+
+        var alert = Assert.Single(repository.Inserted);
+        Assert.Equal("tv", alert.Media);
+        var call = Assert.Single(notifier.Calls);
+        Assert.Equal(new[] { "573000000000" }, call.Recipients);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_notifies_recipients_configured_for_the_alert_media()
     {
         var repository = new InMemoryAlertRepository();

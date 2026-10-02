@@ -39,6 +39,7 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
             return;
         }
 
+        media = NormalizeMedia(media);
         var clients = await clientConfigRepository.GetClientsAsync(cancellationToken).ConfigureAwait(false);
 
         foreach (var client in clients)
@@ -130,6 +131,13 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
 
         return new WebArticleAlertOutcome(matchedClients, matchedKeywords.ToArray(), recipientCount, notifiedCount);
     }
+
+    // CaptureSource.Media says "television" — the capture module's own plugin/profile vocabulary
+    // (FirestoreDocumentMapper.NormalizeMedia's doc comment: "Only the worker's own in-memory
+    // CaptureSource needs 'television'"). Every client's AlertRecipientsByMedia and the portal's
+    // media-type catalog say "tv", so without this, TV alerts always matched zero recipients.
+    private static string NormalizeMedia(string media) =>
+        media.Equals("television", StringComparison.OrdinalIgnoreCase) ? "tv" : media;
 
     // No recipients captured for an alert type that AlertMessageFormatter never turns into a
     // message (RepeatedWithinMinute) — otherwise it would sit in Mongo as "pending" forever with
