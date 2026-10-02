@@ -6,11 +6,10 @@ Definir un estándar de implementación orientado a requisitos contractuales, re
 
 Documentos fuente obligatorios:
 
-- `3. ANEXO_TECNICO_MONITOREO_FINAL_25-05-2026 (2) Posperidad social.md`
-- `Ficha Tecnica Monitoreo de Medios.md`
-- `REQUIREMENTS_LIVE_MATRIX.md`
-- `PROPOSAL_CONTEXT_BASE.md`
-- `CODING_STANDARDS_DOTNET10.md`
+- `PLAN_MAESTRO.md` (raíz del repo)
+- `docs/3. ANEXO_TECNICO_MONITOREO_FINAL_25-05-2026 (2) Posperidad social.md`
+- `docs/Ficha Tecnica Monitoreo de Medios.md`
+- `docs/CODING_STANDARDS_DOTNET10.md`
 
 ## 2) Principio Rector
 
@@ -18,18 +17,19 @@ Requirements-first:
 
 1. El requerimiento define el cambio.
 2. El diseño y el código se adaptan al requerimiento.
-3. Si existe conflicto entre implementación actual y requisito, prevalece el requisito (salvo aclaración contractual formal).
+3. Si existe conflicto entre implementación actual y requisito, prevalece el requisito.
+4. Ante ambigüedad del pliego se construye la lectura más exigente, configurable por cliente.
 
 ## 3) Protocolo Mínimo Antes de Implementar
 
 Todo cambio debe iniciar con:
 
-1. Identificar `Requirement ID` de la matriz (`RQ-xxx` o `A-xxx`).
+1. Identificar `Requirement ID` en `PLAN_MAESTRO.md` (`RQ-xxx` o `AMB-xxx`).
 2. Citar fuente (`ANEXO`, `Ficha` o ambos).
 3. Registrar tipo de cambio: funcional, no funcional, cumplimiento, deuda técnica.
 4. Definir evidencia de aceptación (pruebas, exportes, reportes, trazas).
 
-Si no existe `Requirement ID`, se debe crear/actualizar en `REQUIREMENTS_LIVE_MATRIX.md` antes de codificar.
+Si no existe `Requirement ID`, se debe crear/actualizar en `PLAN_MAESTRO.md` antes de codificar.
 
 ## 4) Regla de Trazabilidad Obligatoria
 
@@ -83,44 +83,17 @@ Toda IA usada para analizar o generar código debe:
 4. Pruebas a agregar y evidencia esperada.
 5. Riesgos, rollout y rollback.
 
-## 9) Gobernanza Operativa
+## 9) Gobernanza
 
-1. Revisión semanal de `REQUIREMENTS_LIVE_MATRIX.md`.
-2. Cierre prioritario de ambigüedades contractuales `A-001..A-004`.
-3. No aprobar cambios críticos sin `Requirement ID` y evidencia asociada.
-4. Mantener consistencia con `CODING_STANDARDS_DOTNET10.md`.
-5. Cada semana de cada fase debe cerrar con actualización documental técnica-contractual común del proyecto (matriz, arquitectura, cumplimiento y trazabilidad).
-6. Ninguna fase puede avanzar de semana sin corte documental versionado y trazable por Requirement IDs en documentación común del proyecto.
+1. `PLAN_MAESTRO.md` (raíz del repo) es la fuente única de requisitos (`RQ-xxx`), ambigüedades (`AMB-xxx`), fases y % de avance.
+2. Al cerrar un entregable, actualizar en `PLAN_MAESTRO.md` el estado (`N/P/C`), el % y la evidencia del `RQ-xxx` afectado.
+3. Un `RQ-xxx` no pasa a `C` sin evidencia verificable.
+4. Mantener consistencia con `docs/CODING_STANDARDS_DOTNET10.md`.
 
-## 10) Regla de Actualización Semanal por Fase (Mandatory)
-
-Para cada fase (F0, F1A, F1B, etc.), al cierre de cada semana se debe actualizar la documentación técnica común del proyecto exigible por contrato.
-
-Obligatorio por semana:
-
-1. Actualizar `REQUIREMENTS_LIVE_MATRIX.md`:
-   - Estado (`N/P/C/R`)
-   - Brecha actual
-   - Cambio requerido
-   - Evidencia de prueba
-   - Fecha objetivo/real
-2. Actualizar documentación de arquitectura/implementación común del proyecto (módulos, puertos/adapters, decisiones técnicas vigentes, impactos de cumplimiento).
-3. Actualizar estado de cumplimiento y riesgos de la fase (bloqueos, supuestos, decisiones y plan de mitigación).
-4. Mantener trazabilidad documental por Requirement ID en el índice o documento común que aplique.
-
-Alcance de esta regla:
-
-1. Aplica a documentación técnica y arquitectónica común del proyecto.
-2. No implica documentar semanalmente cada cambio técnico por archivo.
-3. No implica generar como parte de esta regla reportes funcionales de salida (alertas/notas/estadísticas), salvo obligación contractual explícita independiente.
-4. Los entregables funcionales contractuales (informes semanales, mensuales, especiales; alertas/notas; entrega de histórico) se planifican y ejecutan en el plan general de implementación del producto, no en esta gobernanza documental semanal del proyecto.
-5. La documentación semanal del proyecto debe incluir explícitamente estado de continuidad del servicio y contingencia técnica (SLA, riesgos, mitigaciones y evidencia disponible).
-
-## 11) Checklist Rápido (Pre-merge)
+## 10) Checklist Rápido (Pre-merge)
 
 1. ¿Qué requisito exacto se cumple?
 2. ¿Dónde está la evidencia verificable?
 3. ¿Qué prueba evita regresión?
 4. ¿La solución mantiene portabilidad de datos?
-5. ¿La matriz viva fue actualizada?
-6. ¿Se actualizó la documentación técnica común de la fase exigible por contrato?
+5. ¿Se actualizó el estado y el % del `RQ-xxx` en `PLAN_MAESTRO.md`?

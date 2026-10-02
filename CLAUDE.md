@@ -22,12 +22,15 @@ specific code, when the graph lacks detail, or when the graph is missing/stale.
 
 ## Architecture Overview
 
-This monorepo contains two systems that share domain concepts but have independent deployment targets:
+One product — a media-monitoring platform built to bid on public-entity tenders — made of two
+deployable parts that share domain concepts. The roadmap and requirement status live in
+`PLAN_MAESTRO.md` (repo root).
 
-### 1. Legacy NestJS API + React UI (`apps/web-api`, `apps/web-ui`)
+### 1. Portal: NestJS API + React UI (`apps/web-api`, `apps/web-ui`)
 
-A pnpm + Turborepo monorepo with a NestJS/Fastify backend and React/Vite frontend for alert
-management, transcription review, and WhatsApp distribution.
+The product's web portal (pnpm + Turborepo): NestJS/Fastify backend and React/Vite frontend for
+alert review, transcription, notes, dashboards, settings (clients, keywords, platforms) and capture
+status.
 
 **Stack**: NestJS + Fastify (port 3001), MongoDB/TypeORM, React 18 + Vite 5 + Ant Design 5.
 
@@ -48,10 +51,10 @@ management, transcription review, and WhatsApp distribution.
 **Key constraints**:
 - Windows-only deployment (mudslide CLI, hardcoded paths).
 - Python required for `scripts/getText.py` (Google Speech Recognition).
-- TypeORM MongoDB driver (legacy; not Mongoose).
+- TypeORM MongoDB driver (not Mongoose).
 - Production: UI built into `apps/web-api/public/` before API build.
 
-### 2. .NET 10 Media Core Worker (`apps/media-core-worker`)
+### 2. Media Core Worker: .NET 10 (`apps/media-core-worker`)
 
 A modular .NET 10 Background Service that continuously captures live audio/video streams,
 segments them into chunks, and monitors the capture processes. It follows Hexagonal (Clean)
@@ -97,7 +100,7 @@ src/
 
 ## Common Commands
 
-### NestJS / Node.js (legacy system)
+### Portal (NestJS / React)
 
 ```bash
 pnpm install                        # Install all dependencies
@@ -149,7 +152,7 @@ VITE_FIREBASE_AUTH_DOMAIN=...
 
 ### Mandatory for all .NET work
 
-Full details in `CODING_STANDARDS_DOTNET10.md` (repo root). Summary:
+Full details in `docs/CODING_STANDARDS_DOTNET10.md`. Summary:
 
 **Dependency rule** (non-negotiable):
 - Domain depends on nothing.
@@ -197,16 +200,18 @@ Contract (API/external), Architecture (dependency rules via ArchUnitNET or NetAr
 
 Before proposing or generating code, use these files as primary inputs:
 
-- `3. ANEXO_TECNICO_MONITOREO_FINAL_25-05-2026 (2) Posperidad social.md`
-- `Ficha Tecnica Monitoreo de Medios.md`
-- `REQUIREMENTS_LIVE_MATRIX.md`
-- `PROPOSAL_CONTEXT_BASE.md`
+- `PLAN_MAESTRO.md` — master plan: consolidated requirements (`RQ-xxx`), resolved ambiguities, phases and % progress
+- `docs/3. ANEXO_TECNICO_MONITOREO_FINAL_25-05-2026 (2) Posperidad social.md` (source `ANX-xx`)
+- `docs/Ficha Tecnica Monitoreo de Medios.md` (source `FIC-xx`)
+
+Nothing is contracted yet: the goal is to have the product built to the most demanding reading of
+these tenders before bidding. Internal history (earlier versions, migration) is out of scope.
 
 **Mandatory behavior**:
-1. Map each change to one or more Requirement IDs (`RQ-xxx` or `A-xxx`).
-2. If no Requirement ID exists, propose a matrix update first, then code.
+1. Map each change to one or more Requirement IDs (`RQ-xxx` or ambiguity `AMB-xxx` from `PLAN_MAESTRO.md`).
+2. If no Requirement ID exists, propose an update to `PLAN_MAESTRO.md` first, then code.
 3. Include acceptance evidence per requirement (tests, exports, logs, reports).
-4. Flag contractual ambiguities explicitly as assumptions.
+4. Flag tender ambiguities explicitly as assumptions (default: most demanding reading, configurable).
 
 **Required format for implementation proposals**:
 - Requirement IDs impacted
@@ -227,8 +232,8 @@ field names, inline comments, docstrings, TSDoc/JSDoc, developer-facing log mess
 **Exceptions**: user-facing text intentionally in Spanish (UI labels, report content, monitored content);
 proper nouns and legal/contract terms that must remain in original language.
 
-Do not introduce new Spanish identifiers. When touching legacy Spanish identifiers, use English for
-new code and refactor legacy names when safe.
+Do not introduce new Spanish identifiers. When touching existing Spanish identifiers, use English for
+new code and rename them when safe.
 
 ---
 

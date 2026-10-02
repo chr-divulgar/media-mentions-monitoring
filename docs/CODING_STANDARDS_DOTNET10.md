@@ -2,7 +2,7 @@
 
 ## 1) Scope
 
-This standard applies to all new .NET 10 modules and to any migration/refactor work that touches existing .NET code.
+This standard applies to all .NET 10 modules, new or existing, including refactors.
 
 Goals:
 
@@ -173,12 +173,9 @@ A task is done only if:
 - Any operational impact (alerts, metrics, retries, throughput)?
 - Are identifiers and in-code technical documentation written in English?
 
-## 12) Migration Policy for Legacy Code
-
-When touching legacy .NET code:
+## 12) Refactoring Existing Code
 
 - Do not big-bang rewrite unless approved.
-- Use strangler approach: wrap legacy behavior behind ports, then replace adapters/use cases incrementally.
 - Add characterization tests before refactoring uncertain behavior.
 
 ## 13) Non-Negotiable Rules
@@ -208,4 +205,4 @@ Allowed exceptions:
 Enforcement:
 
 - Do not introduce new Spanish identifiers or in-code technical documentation.
-- If touching legacy Spanish identifiers, use English for new code and refactor legacy names when safe.
+- If touching existing Spanish identifiers, use English for new code and rename them when safe.
