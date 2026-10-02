@@ -46,6 +46,17 @@ const SEGMENT_LABEL: Record<CaptureSegmentState, string> = {
   "no-session": "Sin grabación (conexión caída o reconectando)",
 };
 
+// The "google-news" row has no audio session — each half-hour segment is one search cycle, not a
+// recording stretch, so it gets its own wording for the same captured/gap/no-session states.
+const WEB_NEWS_SEGMENT_LABEL: Record<CaptureSegmentState, string> = {
+  captured: "Ciclo completo",
+  gap: "Ciclo con fallos",
+  "no-session": "Ciclo no corrió o falló",
+};
+
+const segmentLabelFor = (media: string | undefined, state: CaptureSegmentState) =>
+  media === "internet" ? WEB_NEWS_SEGMENT_LABEL[state] : SEGMENT_LABEL[state];
+
 const INCIDENT_LABEL: Record<CaptureIncidentKind, string> = {
   failed: "Falló",
   "retry-failed": "Reintento fallido",
@@ -54,6 +65,12 @@ const INCIDENT_LABEL: Record<CaptureIncidentKind, string> = {
   "startup-failed": "No arrancó",
   "worker-started": "Worker iniciado",
   "worker-stopped": "Worker detenido",
+  "cycle-ok": "Ciclo completado",
+  "cycle-failed": "Ciclo falló",
+  "article-alerted": "Nota alertada",
+  "article-rejected": "Nota descartada",
+  "article-failed": "Nota con error",
+  "send-failed": "Envío incompleto",
 };
 
 const INCIDENT_COLOR: Record<CaptureIncidentKind, string> = {
@@ -64,6 +81,12 @@ const INCIDENT_COLOR: Record<CaptureIncidentKind, string> = {
   "startup-failed": "red",
   "worker-started": "blue",
   "worker-stopped": "blue",
+  "cycle-ok": "green",
+  "cycle-failed": "red",
+  "article-alerted": "green",
+  "article-rejected": "gray",
+  "article-failed": "red",
+  "send-failed": "orange",
 };
 
 // The worker sends times in Bogotá time ("2026-10-01T10:02:00.0000000-05:00"), so the clock text
@@ -136,9 +159,8 @@ const RecordingStatusTab = () => {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ sourceId: string; hour: number } | null>(null);
   // Looked up from the live data on every render so the open detail keeps updating with the socket.
-  const detailHour = detail
-    ? data?.sources.find((s) => s.sourceId === detail.sourceId)?.hours.find((h) => h.hour === detail.hour)
-    : undefined;
+  const detailSource = detail ? data?.sources.find((s) => s.sourceId === detail.sourceId) : undefined;
+  const detailHour = detailSource?.hours.find((h) => h.hour === detail?.hour);
 
   const visibleSources = data?.sources.filter(
     (s) => mediaFilter === "all" || s.media === mediaFilter,
@@ -234,7 +256,7 @@ const RecordingStatusTab = () => {
                         <Tooltip
                           key={segment.startSeconds}
                           title={withIncidentHint(
-                            `${formatOffset(h.hour, segment.startSeconds)}–${formatOffset(h.hour, segment.endSeconds)} — ${SEGMENT_LABEL[segment.state]}`,
+                            `${formatOffset(h.hour, segment.startSeconds)}–${formatOffset(h.hour, segment.endSeconds)} — ${segmentLabelFor(source.media, segment.state)}`,
                             h,
                           )}
                         >
@@ -291,13 +313,13 @@ const RecordingStatusTab = () => {
         width={680}
         title={detail ? `${detail.sourceId} — ${dateStr} ${detail.hour.toString().padStart(2, "0")}:00` : ""}
       >
-        {detailHour && <HourDetail hour={detailHour} />}
+        {detailHour && <HourDetail hour={detailHour} media={detailSource?.media} />}
       </Modal>
     </>
   );
 };
 
-const HourDetail = ({ hour }: { hour: CaptureHourStatusDto }) => {
+const HourDetail = ({ hour, media }: { hour: CaptureHourStatusDto; media?: string }) => {
   const incidents = hour.incidents ?? [];
   const interrupted = (hour.segments ?? []).filter((s) => s.state !== "captured");
 
@@ -315,7 +337,7 @@ const HourDetail = ({ hour }: { hour: CaptureHourStatusDto }) => {
             {interrupted.map((segment) => (
               <li key={segment.startSeconds}>
                 {formatOffset(hour.hour, segment.startSeconds)}–{formatOffset(hour.hour, segment.endSeconds)}{" "}
-                — {SEGMENT_LABEL[segment.state]}
+                — {segmentLabelFor(media, segment.state)}
               </li>
             ))}
           </ul>

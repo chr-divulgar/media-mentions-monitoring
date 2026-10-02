@@ -76,6 +76,61 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
         }
     }
 
+    public async Task<WebArticleAlertOutcome> ExecuteWebArticleAsync(
+        string outlet,
+        string url,
+        string title,
+        string firstParagraph,
+        DateTimeOffset publishedAt,
+        CancellationToken cancellationToken = default)
+    {
+        // Title AND first paragraph both count as "the text" for keyword matching — a keyword that
+        // only shows up in the headline (common for short wire stories) must still match.
+        var text = $"{title}\n{firstParagraph}";
+        var clients = await clientConfigRepository.GetClientsAsync(cancellationToken).ConfigureAwait(false);
+
+        var matchedClients = new List<string>();
+        var matchedKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var recipientCount = 0;
+        var notifiedCount = 0;
+
+        foreach (var client in clients)
+        {
+            var clientMatchedWords = client.Keywords
+                .Select(keyword => keyword.Value)
+                .Where(value => !string.IsNullOrEmpty(value) && text.Contains(value, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (clientMatchedWords.Length == 0)
+            {
+                continue;
+            }
+
+            if (await alertRepository.ExistsForUrlAsync(url, client.Name, cancellationToken).ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            matchedClients.Add(client.Name);
+            foreach (var word in clientMatchedWords)
+            {
+                matchedKeywords.Add(word);
+            }
+
+            var alert = new Alert(
+                firstParagraph, publishedAt, publishedAt, "internet", outlet, string.Empty,
+                clientMatchedWords, client.Name, AlertType.New, title, url);
+            var recipients = ResolveRecipients(client, "internet", alert);
+            var alertId = await alertRepository.InsertAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
+
+            recipientCount += recipients.Count;
+            notifiedCount += (await NotifyAsync(alertId, alert, recipients, cancellationToken).ConfigureAwait(false)).Count;
+        }
+
+        return new WebArticleAlertOutcome(matchedClients, matchedKeywords.ToArray(), recipientCount, notifiedCount);
+    }
+
     // No recipients captured for an alert type that AlertMessageFormatter never turns into a
     // message (RepeatedWithinMinute) — otherwise it would sit in Mongo as "pending" forever with
     // nothing that RetryPendingNotificationsAsync could ever actually send.
@@ -89,11 +144,11 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
         return client.AlertRecipientsByMedia.TryGetValue(media, out var recipients) ? recipients : Array.Empty<string>();
     }
 
-    private async Task NotifyAsync(string alertId, Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<string>> NotifyAsync(string alertId, Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken)
     {
         if (recipients.Count == 0)
         {
-            return;
+            return Array.Empty<string>();
         }
 
         // IAlertNotifier is best-effort by contract (see its doc comment) — it must not throw for
@@ -104,6 +159,8 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
         {
             await alertRepository.MarkRecipientsNotifiedAsync(alertId, succeeded, cancellationToken).ConfigureAwait(false);
         }
+
+        return succeeded;
     }
 
     private async Task<AlertType> ClassifyAsync(

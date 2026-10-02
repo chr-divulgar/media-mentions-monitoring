@@ -20,6 +20,14 @@ public static class IncidentKinds
     public const string WorkerStarted = "worker-started";
     public const string WorkerStopped = "worker-stopped";
 
+    // WebNewsCaptureUseCase, recorded under SourceId "google-news" (see that class).
+    public const string CycleOk = "cycle-ok";
+    public const string CycleFailed = "cycle-failed";
+    public const string ArticleAlerted = "article-alerted";
+    public const string ArticleRejected = "article-rejected";
+    public const string ArticleFailed = "article-failed";
+    public const string SendFailed = "send-failed";
+
     /// <summary>Source id for events that concern the whole worker, not one source.</summary>
     public const string WorkerSourceId = "*";
 }

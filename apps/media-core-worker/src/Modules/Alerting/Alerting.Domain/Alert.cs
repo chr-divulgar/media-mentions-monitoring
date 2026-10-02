@@ -11,7 +11,9 @@ public sealed class Alert
         string filePath,
         IReadOnlyList<string> words,
         string clientName,
-        AlertType type)
+        AlertType type,
+        string? title = null,
+        string? url = null)
     {
         Text = text ?? throw new ArgumentNullException(nameof(text));
         StartTime = startTime;
@@ -22,6 +24,8 @@ public sealed class Alert
         Words = words ?? Array.Empty<string>();
         ClientName = string.IsNullOrWhiteSpace(clientName) ? throw new ArgumentException("Value cannot be null or whitespace.", nameof(clientName)) : clientName;
         Type = type;
+        Title = title;
+        Url = url;
     }
 
     public string Text { get; }
@@ -41,4 +45,9 @@ public sealed class Alert
     public string ClientName { get; }
 
     public AlertType Type { get; }
+
+    // Set only for web-news mentions (Media == "internet"); audio alerts leave these null.
+    public string? Title { get; }
+
+    public string? Url { get; }
 }

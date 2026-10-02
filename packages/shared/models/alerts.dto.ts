@@ -11,6 +11,9 @@ export class AlertDto {
   readonly platform?: string;
   readonly clientName?: string;
   readonly type?: string;
+  // Only set for web-news mentions (media === 'internet'); audio alerts leave these undefined.
+  readonly title?: string;
+  readonly url?: string;
   // Which collection this alert was read from (see GetAlertsDto.source). Stamped
   // by AlertsService.getAlerts so the audio-cut flow knows whether endTime/startTime
   // are real UTC (worker) or the legacy mislabeled-local-time quirk.

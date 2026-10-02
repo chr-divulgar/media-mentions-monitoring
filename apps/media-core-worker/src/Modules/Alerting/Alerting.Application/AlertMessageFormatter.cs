@@ -21,6 +21,11 @@ public static class AlertMessageFormatter
             return null;
         }
 
+        if (string.Equals(alert.Media, "internet", StringComparison.OrdinalIgnoreCase))
+        {
+            return FormatWebArticle(alert);
+        }
+
         var body = alert.Type switch
         {
             AlertType.RepeatedOtherPlatform => "Repetida",
@@ -32,6 +37,16 @@ public static class AlertMessageFormatter
             .ToTitleCase(string.Join(" , ", alert.Words));
 
         return $"*{titleCaseKeywords}*\n*{alert.Platform}*\n({alert.StartTime:HH:mm:ss}_{alert.EndTime:HH:mm:ss})\n{body}";
+    }
+
+    // A web mention has no recording window, so the (HH:mm:ss_HH:mm:ss) range the audio format
+    // uses would be meaningless here — the content itself (title, paragraph, link) is the evidence.
+    private static string FormatWebArticle(Alert alert)
+    {
+        var titleCaseKeywords = new CultureInfo("en-US", useUserOverride: false).TextInfo
+            .ToTitleCase(string.Join(" , ", alert.Words));
+
+        return $"*{titleCaseKeywords}*\n*{alert.Platform}*\n*{alert.Title}*\n{alert.Text}\n{alert.Url}";
     }
 
     // ~6 words of context before/after each keyword's first occurrence, deduped per keyword,

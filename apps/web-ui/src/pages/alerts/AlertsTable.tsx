@@ -273,7 +273,7 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
       dataIndex: "words",
       key: "words",
       ...getColumnSearchProps("text"),
-      render: (words) => words.join(", "),
+      render: (words) => (words ?? []).join(", "),
       ellipsis: true,
       width: "100px",
     },
@@ -283,6 +283,23 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
       key: "text",
       ...getColumnSearchProps("text"),
       render: (text, record) => {
+        if (record.media === "internet") {
+          // A web mention: the headline links straight to the article, and the stored text is
+          // already just the first paragraph — no audio-oriented keyword highlighting to apply.
+          return (
+            <div style={{ whiteSpace: "normal" }}>
+              {record.url ? (
+                <a href={record.url} target="_blank" rel="noreferrer">
+                  <strong>{record.title}</strong>
+                </a>
+              ) : (
+                <strong>{record.title}</strong>
+              )}
+              <div>{text}</div>
+            </div>
+          );
+        }
+
         // Apply the transformation
         const finalTransformedText = transformText(text, record.words ?? []);
 
@@ -300,12 +317,14 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
       dataIndex: "filePath",
       key: "filePath",
       ellipsis: true,
-      render: (_, record) => (
-        <Button
-          icon={<EditOutlined />}
-          onClick={() => showModal(record)}
-        ></Button>
-      ),
+      render: (_, record) =>
+        // The edit modal builds an audio segment from filePath; a web mention has no audio to cut.
+        record.media === "internet" ? null : (
+          <Button
+            icon={<EditOutlined />}
+            onClick={() => showModal(record)}
+          ></Button>
+        ),
       width: "60px",
     },
   ];

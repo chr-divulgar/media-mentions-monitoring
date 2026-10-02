@@ -1,6 +1,6 @@
 ﻿{
   "segmentationIntervalSeconds": 30,
-  "discreteWorkerIntervalSeconds": 300,
+  "discreteWorkerIntervalSeconds": 1800,
   "captureSourcesFilePath": "stage/capture-sources.json",
   "pluginProfilesFilePath": "stage/plugin-profiles.json",
   "continuousMediaAllowList": "radio,television",
@@ -31,6 +31,10 @@
   "ytdlpResolutionTimeoutSeconds": 60,
   "youtubeCookiesFilePath": "../../shared-cookies/youtube-cookies.txt",
   "youtubeCookiesAlertFilePath": "../../shared-cookies/youtube-auth-required.flag",
+  "webNewsEnabled": false,
+  "webNewsKeywordsPerQuery": 8,
+  "webNewsMaxConcurrency": 4,
+  "webNewsRequestTimeoutSeconds": 15,
 
   "firebaseDatabase": {
     "baseUrl": "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",

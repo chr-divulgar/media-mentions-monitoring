@@ -11,6 +11,9 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="8.1.0" />
     <PackageReference Include="FFmpeg.AutoGen.Bindings.DynamicallyLoaded" Version="8.1.0" />
+    <!-- HtmlArticleReader.cs: parses an outlet's page for its publish date, title and first
+         paragraph (JSON-LD / OpenGraph / DOM), far more reliably than hand-rolled regex. -->
+    <PackageReference Include="AngleSharp" Version="1.8.3" />
 
     <ProjectReference Include="..\..\Modules\Capture\Capture.Application\Capture.Application.csproj" />
     <ProjectReference Include="..\..\Modules\ProcessGuardian\ProcessGuardian.Application\ProcessGuardian.Application.csproj" />

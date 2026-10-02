@@ -24,6 +24,46 @@ public sealed class OperationsWorkerOptionsLoaderTests
     }
 
     [Fact]
+    public void Load_should_default_web_news_to_disabled()
+    {
+        var options = OperationsWorkerOptionsLoader.Load(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json"));
+
+        Assert.False(options.WebNewsEnabled);
+        Assert.Equal(8, options.WebNewsKeywordsPerQuery);
+        Assert.Equal(4, options.WebNewsMaxConcurrency);
+        Assert.Equal(15, options.WebNewsRequestTimeoutSeconds);
+    }
+
+    [Fact]
+    public void Load_should_apply_web_news_values_from_json_file()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-webnews-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            File.WriteAllText(tempPath, """
+            {
+              "webNewsEnabled": true,
+              "webNewsKeywordsPerQuery": 5,
+              "webNewsMaxConcurrency": 2,
+              "webNewsRequestTimeoutSeconds": 20
+            }
+            """);
+
+            var options = OperationsWorkerOptionsLoader.Load(tempPath);
+
+            Assert.True(options.WebNewsEnabled);
+            Assert.Equal(5, options.WebNewsKeywordsPerQuery);
+            Assert.Equal(2, options.WebNewsMaxConcurrency);
+            Assert.Equal(20, options.WebNewsRequestTimeoutSeconds);
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
     public void Load_should_apply_values_from_json_file()
     {
         var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-{Guid.NewGuid():N}.json");

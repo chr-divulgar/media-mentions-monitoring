@@ -25,6 +25,11 @@ public interface IAlertRepository
     // or the WhatsApp sidecar was down, between InsertAsync and a successful send), bounded to a
     // lookback window so a very old alert is never resent.
     Task<IReadOnlyList<PendingAlertNotification>> GetPendingNotificationsAsync(TimeSpan lookback, CancellationToken cancellationToken = default);
+
+    // Web-news dedup: a GoogleId is only ever processed once (WebNewsCaptureUseCase's own seen-ids
+    // check), but two different search results can resolve to the same real URL — this is the
+    // second, cheap guard against alerting the same client about the same article twice.
+    Task<bool> ExistsForUrlAsync(string url, string clientName, CancellationToken cancellationToken = default);
 }
 
 public sealed record PendingAlertNotification(string AlertId, Alert Alert, IReadOnlyList<string> PendingRecipients);

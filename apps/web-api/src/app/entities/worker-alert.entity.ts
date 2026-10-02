@@ -37,4 +37,11 @@ export class WorkerAlert {
 
   @Column()
   type!: string;
+
+  // Only set for web-news mentions (media === 'internet'); audio alerts leave these undefined.
+  @Column()
+  title?: string;
+
+  @Column()
+  url?: string;
 }

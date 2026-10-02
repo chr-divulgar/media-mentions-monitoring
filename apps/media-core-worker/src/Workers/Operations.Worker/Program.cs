@@ -77,7 +77,13 @@ builder.Services.AddSingleton<IYtdlpBinaryProvider>(sp => sp.GetRequiredService<
 builder.Services.AddSingleton<IYouTubeCookiesAlertService, YouTubeCookiesAlertService>();
 builder.Services.AddSingleton<IYouTubeCookiesValidator, YouTubeCookiesValidator>();
 builder.Services.AddSingleton<IYouTubeHealthSnapshotProvider, YouTubeHealthSnapshotProvider>();
-builder.Services.AddSingleton<ICaptureStatusSnapshotProvider, CaptureStatusSnapshotProvider>();
+builder.Services.AddSingleton<ICaptureStatusSnapshotProvider>(sp => new CaptureStatusSnapshotProvider(
+	sp.GetRequiredService<ICaptureSourceRepository>(),
+	sp.GetRequiredService<IEvidenceFileStore>(),
+	sp.GetRequiredService<StageMirrorMonitoringArtifactRepository>(),
+	sp.GetRequiredService<ILiveCaptureProgressReader>(),
+	sp.GetService<ISourceIncidentReader>(),
+	options.WebNewsEnabled));
 builder.Services.AddSingleton<ILiveStreamUrlResolver, YtdlpLiveStreamUrlResolver>();
 builder.Services.AddSingleton<IStartupSourceInitializationService, StartupSourceInitializationService>();
 builder.Services.AddSingleton<SourceAvailabilityReconciliationService>();
@@ -148,7 +154,39 @@ builder.Services.AddSingleton<IContinuousCaptureUseCase>(sp => new ContinuousCap
 	sp.GetRequiredService<IAudioCapturePlugin>(),
 	options.CaptureMaxDegreeOfParallelism));
 builder.Services.AddSingleton<IIncrementalSegmentationUseCase, IncrementalSegmentationUseCase>();
-builder.Services.AddSingleton<IDiscreteIngestionOrchestrator, DiscreteIngestionOrchestrator>();
+// First discrete-ingestion plugin: Google News search -> outlet page -> WhatsApp alert. Off by
+// default (see OperationsWorkerOptions.WebNewsEnabled); when disabled, DiscreteIngestionOrchestrator
+// gets no IWebNewsCaptureUseCase (GetService, not GetRequiredService) and stays a no-op.
+if (options.WebNewsEnabled)
+{
+	builder.Services.AddSingleton<INewsSearchProvider>(sp => new GoogleNewsRssSearchProvider(
+		sp.GetRequiredService<HttpClient>(),
+		options.WebNewsRequestTimeoutSeconds,
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GoogleNewsRssSearchProvider>>()));
+	builder.Services.AddSingleton<INewsLinkResolver>(sp => new GoogleNewsLinkResolver(
+		sp.GetRequiredService<HttpClient>(),
+		options.WebNewsRequestTimeoutSeconds,
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GoogleNewsLinkResolver>>()));
+	builder.Services.AddSingleton<IArticleReader>(sp => new HtmlArticleReader(
+		sp.GetRequiredService<HttpClient>(),
+		options.WebNewsRequestTimeoutSeconds,
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HtmlArticleReader>>()));
+	builder.Services.AddSingleton<IWebArticleRepository>(sp => new MongoWebArticleRepository(
+		sp.GetRequiredService<MongoAlertingOptions>()));
+	builder.Services.AddSingleton<IWebNewsCaptureUseCase>(sp => new WebNewsCaptureUseCase(
+		sp.GetRequiredService<IClientConfigRepository>(),
+		sp.GetRequiredService<IDetectAlertsUseCase>(),
+		sp.GetRequiredService<INewsSearchProvider>(),
+		sp.GetRequiredService<INewsLinkResolver>(),
+		sp.GetRequiredService<IArticleReader>(),
+		sp.GetRequiredService<IWebArticleRepository>(),
+		sp.GetRequiredService<ISourceIncidentRecorder>(),
+		options.WebNewsKeywordsPerQuery,
+		options.WebNewsMaxConcurrency));
+}
+builder.Services.AddSingleton<IDiscreteIngestionOrchestrator>(sp => new DiscreteIngestionOrchestrator(
+	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DiscreteIngestionOrchestrator>>(),
+	sp.GetService<IWebNewsCaptureUseCase>()));
 builder.Services.AddHostedService<IncrementalSegmentationWorker>();
 builder.Services.AddHostedService<DiscreteIngestionWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SourceAvailabilityReconciliationService>());

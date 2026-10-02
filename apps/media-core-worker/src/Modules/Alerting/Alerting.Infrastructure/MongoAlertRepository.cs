@@ -13,6 +13,7 @@ public sealed class MongoAlertRepository : IAlertRepository
     private static readonly string[] RepeatCheckTypes = { "Nueva", "RepetidaOtraPlataforma" };
 
     private readonly IMongoCollection<BsonDocument> alertCollection;
+    private int urlIndexEnsured;
 
     public MongoAlertRepository(MongoAlertingOptions options)
     {
@@ -37,6 +38,8 @@ public sealed class MongoAlertRepository : IAlertRepository
             { "words", new BsonArray(alert.Words) },
             { "clientName", alert.ClientName },
             { "type", alert.Type.ToLegacyLabel() },
+            { "title", alert.Title is null ? BsonNull.Value : alert.Title },
+            { "url", alert.Url is null ? BsonNull.Value : alert.Url },
             { "recipients", new BsonArray(recipients) },
             { "notifiedRecipients", new BsonArray() },
             { "fullyNotified", recipients.Count == 0 }
@@ -98,6 +101,41 @@ public sealed class MongoAlertRepository : IAlertRepository
         return results;
     }
 
+    public async Task<bool> ExistsForUrlAsync(string url, string clientName, CancellationToken cancellationToken = default)
+    {
+        await EnsureUrlIndexAsync(cancellationToken).ConfigureAwait(false);
+
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("url", url),
+            Builders<BsonDocument>.Filter.Eq("clientName", clientName));
+
+        return await alertCollection.Find(filter).AnyAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // Created lazily on first use rather than in the constructor: index creation is I/O the
+    // constructor shouldn't block startup on, and most of this repository's lifetime (audio
+    // alerts) never calls ExistsForUrlAsync at all.
+    private async Task EnsureUrlIndexAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref urlIndexEnsured, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            var keys = Builders<BsonDocument>.IndexKeys.Ascending("url").Ascending("clientName");
+            await alertCollection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(keys), cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Missing index only costs a collection scan on ExistsForUrlAsync, at the volume this
+            // runs at today — never worth failing alert detection over.
+            Interlocked.Exchange(ref urlIndexEnsured, 0);
+        }
+    }
+
     public async Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, CancellationToken cancellationToken = default)
     {
         var filter = Builders<BsonDocument>.Filter.And(
@@ -124,6 +162,8 @@ public sealed class MongoAlertRepository : IAlertRepository
             document.TryGetValue("filePath", out var filePath) ? filePath.AsString : string.Empty,
             document["words"].AsBsonArray.Select(word => word.AsString).ToArray(),
             document["clientName"].AsString,
-            AlertTypeExtensions.FromLegacyLabel(document["type"].AsString));
+            AlertTypeExtensions.FromLegacyLabel(document["type"].AsString),
+            document.TryGetValue("title", out var title) && !title.IsBsonNull ? title.AsString : null,
+            document.TryGetValue("url", out var url) && !url.IsBsonNull ? url.AsString : null);
     }
 }

@@ -206,6 +206,74 @@ public sealed class DetectAlertsUseCaseTests
         Assert.Empty(notifier.Calls);
     }
 
+    private static readonly DateTimeOffset PublishedAt = new(2026, 6, 3, 9, 0, 0, TimeSpan.FromHours(-5));
+
+    [Fact]
+    public async Task ExecuteWebArticleAsync_alerts_a_client_whose_keyword_matches_the_title_or_paragraph()
+    {
+        var repository = new InMemoryAlertRepository();
+        var notifier = new FakeAlertNotifier();
+        var client = new ClientKeywordConfig(
+            "Ecopetrol",
+            new[] { new KeywordConfig("petroleo", Array.Empty<KeywordAdContext>()) },
+            new Dictionary<string, IReadOnlyList<string>> { ["internet"] = new[] { "573000000000" } });
+        var useCase = CreateUseCase(repository, client, notifier: notifier);
+
+        var outcome = await useCase.ExecuteWebArticleAsync(
+            "El Tiempo", "https://eltiempo.com/nota", "Sube el petroleo", "El barril subió esta semana.", PublishedAt);
+
+        Assert.Equal(new[] { "Ecopetrol" }, outcome.MatchedClients);
+        Assert.Equal(new[] { "petroleo" }, outcome.MatchedKeywords);
+        Assert.Equal(1, outcome.RecipientCount);
+        Assert.Equal(1, outcome.NotifiedCount);
+        var alert = Assert.Single(repository.Inserted);
+        Assert.Equal("internet", alert.Media);
+        Assert.Equal("El Tiempo", alert.Platform);
+        Assert.Equal("Sube el petroleo", alert.Title);
+        Assert.Equal("https://eltiempo.com/nota", alert.Url);
+        Assert.Equal(AlertType.New, alert.Type);
+    }
+
+    [Fact]
+    public async Task ExecuteWebArticleAsync_matches_no_clients_when_no_keyword_appears()
+    {
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "petroleo"));
+
+        var outcome = await useCase.ExecuteWebArticleAsync(
+            "El Tiempo", "https://eltiempo.com/otra", "Clima de hoy", "Lloverá en la tarde.", PublishedAt);
+
+        Assert.Empty(outcome.MatchedClients);
+        Assert.Empty(repository.Inserted);
+    }
+
+    [Fact]
+    public async Task ExecuteWebArticleAsync_does_not_alert_the_same_client_for_the_same_url_twice()
+    {
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "petroleo"));
+        await useCase.ExecuteWebArticleAsync("El Tiempo", "https://eltiempo.com/nota", "Sube el petroleo", "texto", PublishedAt);
+
+        var outcome = await useCase.ExecuteWebArticleAsync("El Tiempo", "https://eltiempo.com/nota", "Sube el petroleo", "texto", PublishedAt);
+
+        Assert.Empty(outcome.MatchedClients);
+        Assert.Single(repository.Inserted);
+    }
+
+    [Fact]
+    public async Task ExecuteWebArticleAsync_does_not_apply_the_repeated_within_minute_rule()
+    {
+        // Two unrelated web articles from the same outlet moments apart must not collapse into
+        // RepeatedWithinMinute — that rule exists for one continuous audio stream, not web outlets.
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "petroleo"));
+        await useCase.ExecuteWebArticleAsync("El Tiempo", "https://eltiempo.com/a", "Petroleo sube", "texto a", PublishedAt);
+
+        await useCase.ExecuteWebArticleAsync("El Tiempo", "https://eltiempo.com/b", "Mas petroleo", "texto b", PublishedAt.AddSeconds(10));
+
+        Assert.All(repository.Inserted, alert => Assert.Equal(AlertType.New, alert.Type));
+    }
+
     private static DetectAlertsUseCase CreateUseCase(
         InMemoryAlertRepository repository,
         ClientKeywordConfig client,
@@ -318,6 +386,10 @@ public sealed class DetectAlertsUseCaseTests
                 .ToArray();
             return Task.FromResult(pending);
         }
+
+        public Task<bool> ExistsForUrlAsync(string url, string clientName, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Inserted.Any(alert =>
+                alert.Url == url && alert.ClientName == clientName));
 
         private Dictionary<string, Alert> AlertsById { get; } = new();
     }

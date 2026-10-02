@@ -100,5 +100,16 @@ public sealed class OperationsWorkerOptions
     // Outside the publish/output tree so Baileys' auth session survives redeploys, same reasoning
     // as StageFilesystemRootPath.
     public string WhatsAppAuthStatePath { get; set; } = "stage/whatsapp-auth";
+
+    // Off by default: the Google News RSS endpoint behind this is unofficial, and enabling it
+    // starts making real outbound requests every DiscreteWorkerInterval. Turn on explicitly once
+    // verified (see PLAN_MAESTRO.md's web-news plan for the manual verification steps).
+    public bool WebNewsEnabled { get; set; } = false;
+
+    public int WebNewsKeywordsPerQuery { get; set; } = 8;
+
+    public int WebNewsMaxConcurrency { get; set; } = 4;
+
+    public int WebNewsRequestTimeoutSeconds { get; set; } = 15;
 }
 

@@ -19,7 +19,14 @@ export type CaptureIncidentKind =
   | 'excluded'
   | 'startup-failed'
   | 'worker-started'
-  | 'worker-stopped';
+  | 'worker-stopped'
+  // WebNewsCaptureUseCase, recorded under the synthetic "google-news" source (see status.gateway).
+  | 'cycle-ok'
+  | 'cycle-failed'
+  | 'article-alerted'
+  | 'article-rejected'
+  | 'article-failed'
+  | 'send-failed';
 
 // One entry of the incident timeline of an hour: why a source stopped recording and what the
 // worker did about it. Runs of identical failed retries arrive already collapsed (until + count).

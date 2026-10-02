@@ -59,7 +59,11 @@ public static class OperationsWorkerOptionsLoader
         string? MongoAlertCollectionName,
         int? WhatsAppSidecarPort,
         int? WhatsAppSidecarStartupTimeoutSeconds,
-        string? WhatsAppAuthStatePath);
+        string? WhatsAppAuthStatePath,
+        bool? WebNewsEnabled,
+        int? WebNewsKeywordsPerQuery,
+        int? WebNewsMaxConcurrency,
+        int? WebNewsRequestTimeoutSeconds);
 
     public static OperationsWorkerOptions Load(string? configPath = null)
     {
@@ -350,6 +354,26 @@ public static class OperationsWorkerOptionsLoader
         if (!string.IsNullOrWhiteSpace(model.WhatsAppAuthStatePath))
         {
             options.WhatsAppAuthStatePath = model.WhatsAppAuthStatePath;
+        }
+
+        if (model.WebNewsEnabled.HasValue)
+        {
+            options.WebNewsEnabled = model.WebNewsEnabled.Value;
+        }
+
+        if (model.WebNewsKeywordsPerQuery.HasValue)
+        {
+            options.WebNewsKeywordsPerQuery = model.WebNewsKeywordsPerQuery.Value;
+        }
+
+        if (model.WebNewsMaxConcurrency.HasValue)
+        {
+            options.WebNewsMaxConcurrency = model.WebNewsMaxConcurrency.Value;
+        }
+
+        if (model.WebNewsRequestTimeoutSeconds.HasValue)
+        {
+            options.WebNewsRequestTimeoutSeconds = model.WebNewsRequestTimeoutSeconds.Value;
         }
 
         return NormalizeConfiguredPaths(options, applicationRoot, configDirectory);

@@ -27,19 +27,22 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
     private readonly StageMirrorMonitoringArtifactRepository monitoringArtifactRepository;
     private readonly ILiveCaptureProgressReader liveCaptureProgressReader;
     private readonly ISourceIncidentReader? incidentReader;
+    private readonly bool webNewsEnabled;
 
     public CaptureStatusSnapshotProvider(
         ICaptureSourceRepository captureSourceRepository,
         IEvidenceFileStore evidenceFileStore,
         StageMirrorMonitoringArtifactRepository monitoringArtifactRepository,
         ILiveCaptureProgressReader liveCaptureProgressReader,
-        ISourceIncidentReader? incidentReader = null)
+        ISourceIncidentReader? incidentReader = null,
+        bool webNewsEnabled = false)
     {
         this.captureSourceRepository = captureSourceRepository;
         this.evidenceFileStore = evidenceFileStore;
         this.monitoringArtifactRepository = monitoringArtifactRepository;
         this.liveCaptureProgressReader = liveCaptureProgressReader;
         this.incidentReader = incidentReader;
+        this.webNewsEnabled = webNewsEnabled;
     }
 
     public async Task<CaptureStatusResponse> GetSnapshotAsync(DateOnly date, CancellationToken cancellationToken = default)
@@ -94,10 +97,44 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
             })
             .ToArray();
 
+        var allSourceEntries = webNewsEnabled
+            ? sourceEntries.Append(BuildWebNewsSourceEntry(dayIncidents, maxHour)).ToArray()
+            : sourceEntries;
+
         return new CaptureStatusResponse
         {
             Date = date.ToString("yyyy-MM-dd"),
-            Sources = sourceEntries,
+            Sources = allSourceEntries,
+        };
+    }
+
+    // Synthetic row: it has no entry in the capture-source catalog, no audio session and no
+    // checkpoints — every field here comes purely from WebNewsCaptureUseCase's own incidents.
+    private static CaptureSourceStatusEntry BuildWebNewsSourceEntry(IReadOnlyList<SourceIncident> dayIncidents, int maxHour)
+    {
+        var hours = Enumerable.Range(0, maxHour + 1)
+            .Select(hour =>
+            {
+                var hourIncidents = RawIncidentsFor(dayIncidents, WebNewsCaptureUseCase.SourceId, hour);
+                var (status, segments) = WebNewsHourStatusBuilder.Build(hourIncidents, BogotaOffset);
+
+                return new CaptureHourStatusEntry
+                {
+                    Hour = hour,
+                    Status = status,
+                    Segments = segments,
+                    Incidents = IncidentCollapser.Collapse(hourIncidents),
+                };
+            })
+            .ToArray();
+
+        return new CaptureSourceStatusEntry
+        {
+            SourceId = WebNewsCaptureUseCase.SourceId,
+            Platform = "Google",
+            Media = "internet",
+            IsExcluded = false,
+            Hours = hours,
         };
     }
 
@@ -196,10 +233,15 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
     // source that was down all hour has no capture row, and the incidents are all there is to show.
     private static IReadOnlyList<CaptureIncidentEntry> IncidentsFor(
         IReadOnlyList<SourceIncident> dayIncidents, string sourceId, int hour) =>
-        IncidentCollapser.Collapse(dayIncidents.Where(incident =>
+        IncidentCollapser.Collapse(RawIncidentsFor(dayIncidents, sourceId, hour));
+
+    private static IReadOnlyList<SourceIncident> RawIncidentsFor(
+        IReadOnlyList<SourceIncident> dayIncidents, string sourceId, int hour) =>
+        dayIncidents.Where(incident =>
             incident.At.ToOffset(BogotaOffset).Hour == hour
             && (incident.SourceId == IncidentKinds.WorkerSourceId
-                || string.Equals(incident.SourceId, sourceId, StringComparison.OrdinalIgnoreCase))));
+                || string.Equals(incident.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
 
     private static IReadOnlyList<CaptureSegmentEntry> ToSegmentEntries(IReadOnlyList<CaptureSegment> segments) =>
         segments

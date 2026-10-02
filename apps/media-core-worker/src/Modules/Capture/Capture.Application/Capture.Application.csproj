@@ -7,5 +7,9 @@
   <ItemGroup>
     <ProjectReference Include="..\Capture.Domain\Capture.Domain.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Application\MediaOpsCore.BuildingBlocks.Application\MediaOpsCore.BuildingBlocks.Application.csproj" />
+    <!-- WebNews/WebNewsCaptureUseCase.cs raises alerts and reads client/keyword config through
+         Alerting.Application's ports — both are Application layer, so this stays within the
+         dependency rule (Application depends on Application, never on Infrastructure). -->
+    <ProjectReference Include="..\..\Alerting\Alerting.Application\Alerting.Application.csproj" />
   </ItemGroup>
 </Project>

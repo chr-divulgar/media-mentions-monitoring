@@ -278,6 +278,38 @@ public sealed class CaptureStatusSnapshotProviderTests
         Assert.All(response.Sources.Single().Hours, h => Assert.Empty(h.Incidents));
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_adds_the_synthetic_google_news_row_only_when_web_news_is_enabled()
+    {
+        var provider = CreateProvider(sources: [CreateSource("radio-a")], evidenceStore: new FakeEvidenceFileStore(), webNewsEnabled: false);
+
+        var response = await provider.GetSnapshotAsync(ClosedDate);
+
+        Assert.DoesNotContain(response.Sources, s => s.SourceId == "google-news");
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_builds_the_google_news_row_purely_from_incidents()
+    {
+        var incidents = new FakeIncidentReader(
+            Incident("google-news", IncidentKinds.CycleOk, 10, 1, null),
+            Incident("google-news", IncidentKinds.CycleOk, 10, 31, null));
+        var provider = CreateProvider(
+            sources: [CreateSource("radio-a")],
+            evidenceStore: new FakeEvidenceFileStore(),
+            incidentReader: incidents,
+            webNewsEnabled: true);
+
+        var response = await provider.GetSnapshotAsync(ClosedDate);
+
+        var googleSource = response.Sources.Single(s => s.SourceId == "google-news");
+        Assert.Equal("Google", googleSource.Platform);
+        Assert.Equal("internet", googleSource.Media);
+        var hour10 = googleSource.Hours.Single(h => h.Hour == 10);
+        Assert.Equal("ok", hour10.Status);
+        Assert.Equal(2, hour10.Segments!.Count);
+    }
+
     private static SourceIncident Incident(string sourceId, string kind, int hour, int minute, string? reason) =>
         new(new DateTimeOffset(2026, 1, 1, hour, minute, 0, TimeSpan.FromHours(-5)), sourceId, kind, reason);
 
@@ -290,7 +322,8 @@ public sealed class CaptureStatusSnapshotProviderTests
         IReadOnlyList<CaptureSource> sources,
         IEvidenceFileStore evidenceStore,
         ILiveCaptureProgressReader? liveCaptureProgressReader = null,
-        ISourceIncidentReader? incidentReader = null)
+        ISourceIncidentReader? incidentReader = null,
+        bool webNewsEnabled = false)
     {
         var monitoringArtifactRepository = new StageMirrorMonitoringArtifactRepository(
             new InMemoryMonitoringArtifactRepository(),
@@ -302,7 +335,8 @@ public sealed class CaptureStatusSnapshotProviderTests
             evidenceStore,
             monitoringArtifactRepository,
             liveCaptureProgressReader ?? new FakeLiveCaptureProgressReader(checkpointsBySource: []),
-            incidentReader);
+            incidentReader,
+            webNewsEnabled);
     }
 
     private static CaptureSource CreateSource(string sourceId) =>
