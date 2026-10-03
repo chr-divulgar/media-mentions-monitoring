@@ -16,49 +16,31 @@ public sealed class FallbackCaptureSourceRepositoryTests
         new(primary, secondary, NullLogger<FallbackCaptureSourceRepository>.Instance);
 
     [Fact]
-    public async Task ListAllAsync_should_union_primary_and_secondary_sources_by_SourceId()
+    public async Task ListAllAsync_should_return_only_primary_sources_when_primary_succeeds()
     {
-        // The two catalogs cover different, non-overlapping stations in practice — a real
-        // fallback (either/or) would silently drop whichever one didn't "win", so this must be a
-        // union, not a choice.
+        // Firestore is the single source of truth once it answers — the JSON file is not merged
+        // in, even though it holds other sources, so it never produces a duplicate capture.
         var primary = new StubRepository([MakeSource("a"), MakeSource("b")]);
         var secondary = new StubRepository([MakeSource("c")]);
 
         var result = await Build(primary, secondary).ListAllAsync();
 
-        Assert.Equal(3, result.Count);
-        Assert.Contains(result, s => s.SourceId == "a");
-        Assert.Contains(result, s => s.SourceId == "b");
-        Assert.Contains(result, s => s.SourceId == "c");
-        Assert.True(secondary.WasCalled);
+        Assert.Equal(["a", "b"], result.Select(s => s.SourceId).Order());
+        Assert.False(secondary.WasCalled);
     }
 
     [Fact]
-    public async Task ListAllAsync_should_drop_a_secondary_source_that_streams_the_same_url_as_a_primary_one()
+    public async Task ListAllAsync_should_return_an_empty_primary_result_as_is_without_falling_back()
     {
-        // Same station in both catalogs under different ids: recording both doubled every file and
-        // alert, and the server kept cutting the duplicate connection.
-        var primary = new StubRepository([new CaptureSource("Colmundo", "global-ingestion", "P", "radio", "https://stream.example.com/colmundo/")]);
-        var secondary = new StubRepository([
-            new CaptureSource("colmundo-radio-bogota", "global-ingestion", "P", "radio", "http://stream.example.com/colmundo"),
-            MakeSource("only-in-json"),
-        ]);
+        // An empty-but-successful response is a real answer ("no sources configured"), not a
+        // connection failure — it must not trigger a fallback to the JSON file.
+        var primary = new StubRepository([]);
+        var secondary = new StubRepository([MakeSource("c")]);
 
         var result = await Build(primary, secondary).ListAllAsync();
 
-        Assert.Equal(["Colmundo", "only-in-json"], result.Select(s => s.SourceId).Order());
-    }
-
-    [Fact]
-    public async Task ListAllAsync_should_prefer_primary_on_a_SourceId_collision()
-    {
-        var primary = new StubRepository([new CaptureSource("a", "global-ingestion", "P", "radio", "https://primary.example.com/stream")]);
-        var secondary = new StubRepository([new CaptureSource("a", "global-ingestion", "P", "radio", "https://secondary.example.com/stream")]);
-
-        var result = await Build(primary, secondary).ListAllAsync();
-
-        var merged = Assert.Single(result);
-        Assert.Equal("https://primary.example.com/stream", merged.StreamUrl);
+        Assert.Empty(result);
+        Assert.False(secondary.WasCalled);
     }
 
     [Fact]
@@ -71,18 +53,6 @@ public sealed class FallbackCaptureSourceRepositoryTests
 
         Assert.Single(result);
         Assert.Equal("c", result[0].SourceId);
-    }
-
-    [Fact]
-    public async Task ListAllAsync_should_call_secondary_when_primary_returns_zero_sources()
-    {
-        var primary = new StubRepository([]);
-        var secondary = new StubRepository([MakeSource("c")]);
-
-        var result = await Build(primary, secondary).ListAllAsync();
-
-        Assert.Single(result);
-        Assert.True(secondary.WasCalled);
     }
 
     [Fact]
@@ -128,43 +98,29 @@ public sealed class FallbackCaptureSourceRepositoryTests
     }
 
     [Fact]
-    public async Task UpdateStreamUrlAsync_should_write_only_to_the_repository_that_owns_the_source()
-    {
-        // Writing a JSON-only station to Firestore cost a query per hot-recovery attempt.
-        var primary = new StubRepository([MakeSource("firestore-only")]);
-        var secondary = new StubRepository([MakeSource("json-only")]);
-        var repository = Build(primary, secondary);
-        await repository.ListAllAsync();
-
-        var changed = await repository.UpdateStreamUrlAsync("json-only", "https://new.example.com/stream");
-
-        Assert.True(changed);
-        Assert.False(primary.UpdateStreamUrlWasCalled);
-        Assert.True(secondary.UpdateStreamUrlWasCalled);
-    }
-
-    [Fact]
-    public async Task UpdateStreamUrlAsync_should_write_to_secondary_even_when_primary_succeeds()
+    public async Task UpdateStreamUrlAsync_should_write_to_primary_when_primary_is_available()
     {
         var primary = new StubRepository([MakeSource("a")]);
         var secondary = new StubRepository([MakeSource("a")]);
+        var repository = Build(primary, secondary);
+        await repository.ListAllAsync();
 
-        var changed = await Build(primary, secondary)
-            .UpdateStreamUrlAsync("a", "https://new.example.com/stream");
+        var changed = await repository.UpdateStreamUrlAsync("a", "https://new.example.com/stream");
 
         Assert.True(changed);
         Assert.True(primary.UpdateStreamUrlWasCalled);
-        Assert.True(secondary.UpdateStreamUrlWasCalled);
+        Assert.False(secondary.UpdateStreamUrlWasCalled);
     }
 
     [Fact]
-    public async Task UpdateStreamUrlAsync_should_return_true_when_primary_fails_and_secondary_succeeds()
+    public async Task UpdateStreamUrlAsync_should_write_to_secondary_once_primary_is_unreachable()
     {
         var primary = new ThrowingRepository(new HttpRequestException("primary failed"));
         var secondary = new StubRepository([MakeSource("a")]);
+        var repository = Build(primary, secondary);
+        await repository.ListAllAsync();
 
-        var changed = await Build(primary, secondary)
-            .UpdateStreamUrlAsync("a", "https://new.example.com/stream");
+        var changed = await repository.UpdateStreamUrlAsync("a", "https://new.example.com/stream");
 
         Assert.True(changed);
         Assert.True(secondary.UpdateStreamUrlWasCalled);
