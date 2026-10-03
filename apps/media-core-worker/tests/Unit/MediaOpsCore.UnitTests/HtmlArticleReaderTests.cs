@@ -139,6 +139,30 @@ public sealed class HtmlArticleReaderTests
     }
 
     [Fact]
+    public async Task ParseAsync_excludes_a_paragraph_that_is_really_a_related_content_teaser_link()
+    {
+        // Regression: a "related articles" carousel renders its title/date as <p>s inside an <a> —
+        // real body prose is never link text, so this must not be read as the article's own text,
+        // even if a teaser title happens to mention a client by name (e.g. a pun headline).
+        const string html = """
+            <html><body><article>
+              <div class="wrap-teaser-caricatura">
+                <a href="/otra-nota">
+                  <p class="lp-caricatura-title">Caricatura de hoy sobre la situación de Ecopetrol y su futuro en el país entero</p>
+                  <p class="lp-caricatura-date">01 Oct, 2026</p>
+                </a>
+              </div>
+              <p>Este es el párrafo real de la noticia actual, lo suficientemente largo como para contar.</p>
+            </article></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.StartsWith("Este es el párrafo real", content.FirstParagraph);
+        Assert.DoesNotContain("Ecopetrol", content.FullText);
+    }
+
+    [Fact]
     public async Task ParseAsync_parses_a_free_form_spanish_date_with_month_name()
     {
         const string html = """

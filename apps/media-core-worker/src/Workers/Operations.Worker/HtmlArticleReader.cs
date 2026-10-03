@@ -19,7 +19,12 @@ public sealed partial class HtmlArticleReader : IArticleReader
     // share-bar label rather than the lead paragraph.
     private const int MinFirstParagraphLength = 80;
     private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Safari/537.36";
-    private static readonly string[] NonBodyTags = ["figcaption", "figure", "aside", "nav", "footer"];
+    // "a" excludes the "related content" / "more from this section" teaser cards every outlet's
+    // template wraps in an anchor (title + date as two <p>s inside <a href="...">) — real body
+    // prose is never itself link text, so this generically keeps those cards out without having to
+    // name every outlet's "related" CSS class. Confirmed against a real page (La Patria's cartoon
+    // "related" carousel) whose teaser titles could otherwise pass the length/prose checks below.
+    private static readonly string[] NonBodyTags = ["figcaption", "figure", "aside", "nav", "footer", "a"];
 
     private readonly HttpClient httpClient;
     private readonly int requestTimeoutSeconds;
