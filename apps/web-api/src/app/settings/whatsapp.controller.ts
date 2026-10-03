@@ -1,6 +1,6 @@
 import { Controller, Get, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { WhatsAppService } from './whatsapp.service';
-import { WhatsAppStatusDto, WhatsAppQrDto } from '@repo/shared';
+import { WhatsAppStatusDto, WhatsAppQrDto, WhatsAppGroupsDto } from '@repo/shared';
 
 @Controller('settings')
 export class WhatsAppController {
@@ -19,6 +19,23 @@ export class WhatsAppController {
         {
           status: HttpStatus.INTERNAL_SERVER_ERROR,
           error: `Error checking WhatsApp status: ${errorMsg}`,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('whatsapp/groups')
+  async getWhatsAppGroups(): Promise<WhatsAppGroupsDto> {
+    try {
+      return await this.whatsAppService.getGroups();
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error listing WhatsApp groups: ${errorMsg}`);
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: `Error listing WhatsApp groups: ${errorMsg}`,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );

@@ -21,6 +21,8 @@ namespace MediaOpsCore.Workers.Operations;
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
 ///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
 ///   GET  /whatsapp/qr      — relays the WhatsApp sidecar's own /qr (base64 PNG or null).
+///   GET  /whatsapp/groups  — relays the sidecar's /groups: the WhatsApp groups the linked number
+///     belongs to, offered in the web-ui as alert recipients.
 /// </summary>
 public sealed class YouTubeCookiesHttpService : IHostedService
 {
@@ -181,6 +183,13 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "GET" && path == "/whatsapp/qr")
             {
                 await RelayToSidecarAsync(context, "/qr").ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "GET" && path == "/whatsapp/groups")
+            {
+                // Listing every group the linked number is in can take longer than a status poll.
+                await RelayToSidecarAsync(context, "/groups", TimeSpan.FromSeconds(10)).ConfigureAwait(false);
                 return;
             }
 
@@ -394,7 +403,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     // refuses any further write; trying anyway throws InvalidOperationException, which used to
     // cascade into HandleRequest's outer catch trying (and failing) to write yet another error
     // response. There is nothing more to send once that happens — just log and stop.
-    private async Task RelayToSidecarAsync(HttpListenerContext context, string sidecarPath)
+    private async Task RelayToSidecarAsync(HttpListenerContext context, string sidecarPath, TimeSpan? timeout = null)
     {
         byte[] body;
         HttpStatusCode statusCode;
@@ -408,7 +417,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             // busy. Kept shorter than NestJS's own AbortSignal.timeout(6000) to the worker (see
             // whatsapp.service.ts) so there is still headroom to write the response back before
             // NestJS's clock runs out and aborts the connection out from under us.
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
+            timeoutCts.CancelAfter(timeout ?? TimeSpan.FromSeconds(4));
 
             using var response = await httpClient
                 .GetAsync($"http://localhost:{whatsAppSidecarPort}{sidecarPath}", timeoutCts.Token)

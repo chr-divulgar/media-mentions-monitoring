@@ -35,6 +35,8 @@ import type {
   MediaTypeDto,
   WordDto,
   SlotDto,
+  WhatsAppGroupDto,
+  WhatsAppGroupsDto,
 } from "@repo/shared";
 
 const { Title, Text } = Typography;
@@ -931,6 +933,7 @@ const ClientModal: React.FC<{
   initial: ClientDto | null;
   mediaTypes: MediaTypeDto[];
   usersWithPhone: FirebaseUserDto[];
+  whatsAppGroups: WhatsAppGroupDto[];
   onClose: () => void;
   onSave: (dto: ClientDto) => void;
   loading: boolean;
@@ -939,6 +942,7 @@ const ClientModal: React.FC<{
   initial,
   mediaTypes,
   usersWithPhone,
+  whatsAppGroups,
   onClose,
   onSave,
   loading,
@@ -977,10 +981,29 @@ const ClientModal: React.FC<{
     });
   };
 
-  const userOptions = usersWithPhone.map((u) => ({
-    label: `${u.displayName || u.email} (${u.phone})`,
-    value: u.phone!,
-  }));
+  // A group's JID is stored in the same alerts/notes arrays as phone numbers — the worker's
+  // WhatsApp sidecar sends to anything containing "@" as-is.
+  const userOptions = [
+    {
+      label: "Usuarios",
+      options: usersWithPhone.map((u) => ({
+        label: `${u.displayName || u.email} (${u.phone})`,
+        value: u.phone!,
+      })),
+    },
+    ...(whatsAppGroups.length > 0
+      ? [
+          {
+            label: "Grupos de WhatsApp",
+            options: whatsAppGroups.map((g) => ({
+              // Group names aren't unique; the id's tail tells same-named groups apart.
+              label: `Grupo: ${g.name.trim()} (…${g.id.split("@")[0].slice(-4)})`,
+              value: g.id,
+            })),
+          },
+        ]
+      : []),
+  ];
 
   const contactSection = (
     fieldName: "alerts" | "notes",
@@ -1002,7 +1025,7 @@ const ClientModal: React.FC<{
         >
           <Select
             mode="multiple"
-            placeholder="Seleccionar usuarios"
+            placeholder="Seleccionar usuarios o grupos"
             options={userOptions}
             optionFilterProp="label"
             allowClear
@@ -1320,7 +1343,7 @@ const ClientModal: React.FC<{
       label: "Alertas",
       children: contactSection(
         "alerts",
-        "Usuarios que recibirán alertas por cada medio.",
+        "Usuarios o grupos de WhatsApp que recibirán alertas por cada medio. Los grupos aparecen solo con WhatsApp conectado y el número vinculado dentro del grupo.",
       ),
     },
 
@@ -1329,7 +1352,7 @@ const ClientModal: React.FC<{
       label: "Notas",
       children: contactSection(
         "notes",
-        "Usuarios que recibirán notas por cada medio.",
+        "Usuarios o grupos de WhatsApp que recibirán notas por cada medio.",
       ),
     },
   ];
@@ -1449,6 +1472,17 @@ const SettingsPage: React.FC = () => {
 
   const usersWithPhone = users.filter(
     (u) => u.phone && /^\+?[1-9]\d{6,14}$/.test(u.phone),
+  );
+
+  // Only needed to fill the client modal's recipient pickers; a failed or empty fetch just means
+  // no group options, never an error for the page.
+  const { data: whatsAppGroups = [] } = useQuery(
+    "whatsappGroups",
+    async () => {
+      const response = await api.get("/settings/whatsapp/groups");
+      return (response.data as WhatsAppGroupsDto).groups;
+    },
+    { staleTime: 60000, retry: false },
   );
 
   // ── Platform mutations ────────────────────────────────
@@ -2031,6 +2065,7 @@ const SettingsPage: React.FC = () => {
         initial={clientModal.data}
         mediaTypes={mediaTypes}
         usersWithPhone={usersWithPhone}
+        whatsAppGroups={whatsAppGroups}
         onClose={() => setClientModal({ open: false, data: null })}
         onSave={(dto) => saveClient.mutate(dto)}
         loading={saveClient.isLoading}

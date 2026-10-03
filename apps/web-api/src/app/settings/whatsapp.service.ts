@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { WhatsAppStatusDto, WhatsAppQrDto } from '@repo/shared';
+import { WhatsAppStatusDto, WhatsAppQrDto, WhatsAppGroupsDto } from '@repo/shared';
 
 // Mirrors the worker's WhatsAppUnreachableResponse / sidecar relay shape
 // (GET /whatsapp/status, GET /whatsapp/qr — see YouTubeCookiesHttpService.cs).
@@ -37,6 +37,30 @@ export class WhatsAppService {
         `[WhatsAppService] Worker status check failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       return { status: 'worker_unreachable' };
+    }
+  }
+
+  async getGroups(): Promise<WhatsAppGroupsDto> {
+    const workerUrl = process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
+
+    try {
+      // Above the worker's own 10s relay timeout (see /whatsapp/groups in YouTubeCookiesHttpService.cs).
+      const response = await fetch(`${workerUrl}/whatsapp/groups`, {
+        signal: AbortSignal.timeout(12000),
+      });
+
+      if (!response.ok) {
+        return { groups: [] };
+      }
+
+      // The worker answers { status: 'worker_unreachable' } (no groups key) when the sidecar is down.
+      const data = (await response.json()) as Partial<WhatsAppGroupsDto>;
+      return { groups: data.groups ?? [] };
+    } catch (error) {
+      this.logger.warn(
+        `[WhatsAppService] Worker groups fetch failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { groups: [] };
     }
   }
 
