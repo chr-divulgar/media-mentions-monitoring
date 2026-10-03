@@ -96,6 +96,21 @@ const clockOf = (isoText: string) => isoText.substring(11, 16);
 const incidentTime = (incident: CaptureIncidentDto) =>
   incident.until ? `${clockOf(incident.at)}–${clockOf(incident.until)}` : clockOf(incident.at);
 
+// Rejected/failed web-news incidents end with " — <url>" (see WebNewsCaptureUseCase) so an
+// operator can open the actual note straight from the status popup.
+const URL_PATTERN = /(https?:\/\/\S+)/;
+
+const linkifyReason = (reason: string) =>
+  reason.split(URL_PATTERN).map((part, index) =>
+    index % 2 === 1 ? (
+      <a key={index} href={part} target="_blank" rel="noreferrer">
+        {part}
+      </a>
+    ) : (
+      part
+    ),
+  );
+
 const withIncidentHint = (text: string, hour: CaptureHourStatusDto) => {
   const count = hour.incidents?.length ?? 0;
   if (count === 0) return text;
@@ -359,7 +374,7 @@ const HourDetail = ({ hour, media }: { hour: CaptureHourStatusDto; media?: strin
               <div>
                 <strong>{incidentTime(incident)}</strong> · {INCIDENT_LABEL[incident.kind]}
                 {incident.count > 1 ? ` ×${incident.count}` : ""}
-                {incident.reason && <div style={{ color: "#8c8c8c" }}>{incident.reason}</div>}
+                {incident.reason && <div style={{ color: "#8c8c8c" }}>{linkifyReason(incident.reason)}</div>}
               </div>
             ),
           }))}
