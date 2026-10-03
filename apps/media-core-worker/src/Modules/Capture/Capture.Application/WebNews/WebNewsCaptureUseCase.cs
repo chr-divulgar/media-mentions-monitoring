@@ -188,22 +188,28 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
 
     private async Task<ArticleOutcome> ProcessArticleAsync(NewsSearchItem item, CancellationToken cancellationToken)
     {
+        // The real article URL once resolved, or Google's own interstitial link as a fallback for
+        // every message recorded before (or without) a successful resolution — an operator checking
+        // a rejected or failed note from the status page always has something to click through to.
+        var linkForIncidents = item.GoogleLink;
+
         try
         {
             var linkResolution = await newsLinkResolver.ResolveAsync(item, cancellationToken).ConfigureAwait(false);
             if (!linkResolution.Succeeded)
             {
                 await SaveAsync(item, item.GoogleLink, WebArticleStatus.Failed, item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
-                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — no se pudo resolver el enlace: {linkResolution.ErrorMessage}");
+                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — no se pudo resolver el enlace: {linkResolution.ErrorMessage} — {linkForIncidents}");
                 return ArticleOutcome.Failed;
             }
 
             var url = linkResolution.Url!;
+            linkForIncidents = url;
             var content = await articleReader.ReadAsync(url, cancellationToken).ConfigureAwait(false);
             if (!content.Succeeded)
             {
                 await SaveAsync(item, url, WebArticleStatus.Failed, content.Title ?? item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
-                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — no se pudo extraer el contenido: {content.ErrorMessage}");
+                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — no se pudo extraer el contenido: {content.ErrorMessage} — {linkForIncidents}");
                 return ArticleOutcome.Failed;
             }
 
@@ -212,7 +218,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             if (content.PublishedAt is null)
             {
                 await SaveAsync(item, url, WebArticleStatus.NoDate, title, content.FirstParagraph, [], [], cancellationToken).ConfigureAwait(false);
-                incidentRecorder.Record(SourceId, IncidentKinds.ArticleRejected, $"{item.Outlet} — {title} — sin fecha en la página");
+                incidentRecorder.Record(SourceId, IncidentKinds.ArticleRejected, $"{item.Outlet} — {title} — sin fecha en la página — {linkForIncidents}");
                 return ArticleOutcome.Rejected;
             }
 
@@ -221,7 +227,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
                 await SaveAsync(item, url, WebArticleStatus.NotToday, title, content.FirstParagraph, [], [], cancellationToken).ConfigureAwait(false);
                 incidentRecorder.Record(
                     SourceId, IncidentKinds.ArticleRejected,
-                    $"{item.Outlet} — {title} — no es de hoy ({content.PublishedAt:dd-MMM HH:mm})");
+                    $"{item.Outlet} — {title} — no es de hoy ({content.PublishedAt:dd-MMM HH:mm}) — {linkForIncidents}");
                 return ArticleOutcome.Rejected;
             }
 
@@ -232,7 +238,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             if (outcome.MatchedClients.Count == 0)
             {
                 await SaveAsync(item, url, WebArticleStatus.NoKeyword, title, content.FirstParagraph, [], [], cancellationToken).ConfigureAwait(false);
-                incidentRecorder.Record(SourceId, IncidentKinds.ArticleRejected, $"{item.Outlet} — {title} — sin palabra clave");
+                incidentRecorder.Record(SourceId, IncidentKinds.ArticleRejected, $"{item.Outlet} — {title} — sin palabra clave — {linkForIncidents}");
                 return ArticleOutcome.Rejected;
             }
 
@@ -257,7 +263,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // One bad article must never take the whole cycle down with it.
-            incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — error inesperado: {exception.Message}");
+            incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — error inesperado: {exception.Message} — {linkForIncidents}");
             return ArticleOutcome.Failed;
         }
     }

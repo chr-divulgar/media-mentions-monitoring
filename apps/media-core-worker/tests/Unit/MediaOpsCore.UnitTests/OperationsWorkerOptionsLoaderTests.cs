@@ -31,7 +31,8 @@ public sealed class OperationsWorkerOptionsLoaderTests
         Assert.False(options.WebNewsEnabled);
         Assert.Equal(8, options.WebNewsKeywordsPerQuery);
         Assert.Equal(4, options.WebNewsMaxConcurrency);
-        Assert.Equal(15, options.WebNewsRequestTimeoutSeconds);
+        Assert.Equal(20, options.WebNewsRequestTimeoutSeconds);
+        Assert.Equal(3, options.WebNewsMaxFailedAttempts);
     }
 
     [Fact]
@@ -46,7 +47,8 @@ public sealed class OperationsWorkerOptionsLoaderTests
               "webNewsEnabled": true,
               "webNewsKeywordsPerQuery": 5,
               "webNewsMaxConcurrency": 2,
-              "webNewsRequestTimeoutSeconds": 20
+              "webNewsRequestTimeoutSeconds": 25,
+              "webNewsMaxFailedAttempts": 5
             }
             """);
 
@@ -55,7 +57,8 @@ public sealed class OperationsWorkerOptionsLoaderTests
             Assert.True(options.WebNewsEnabled);
             Assert.Equal(5, options.WebNewsKeywordsPerQuery);
             Assert.Equal(2, options.WebNewsMaxConcurrency);
-            Assert.Equal(20, options.WebNewsRequestTimeoutSeconds);
+            Assert.Equal(25, options.WebNewsRequestTimeoutSeconds);
+            Assert.Equal(5, options.WebNewsMaxFailedAttempts);
         }
         finally
         {

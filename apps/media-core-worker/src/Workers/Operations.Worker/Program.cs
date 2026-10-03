@@ -172,7 +172,8 @@ if (options.WebNewsEnabled)
 		options.WebNewsRequestTimeoutSeconds,
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HtmlArticleReader>>()));
 	builder.Services.AddSingleton<IWebArticleRepository>(sp => new MongoWebArticleRepository(
-		sp.GetRequiredService<MongoAlertingOptions>()));
+		sp.GetRequiredService<MongoAlertingOptions>(),
+		options.WebNewsMaxFailedAttempts));
 	builder.Services.AddSingleton<IWebNewsCaptureUseCase>(sp => new WebNewsCaptureUseCase(
 		sp.GetRequiredService<IClientConfigRepository>(),
 		sp.GetRequiredService<IDetectAlertsUseCase>(),

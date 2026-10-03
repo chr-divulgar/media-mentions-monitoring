@@ -15,18 +15,31 @@ public sealed class MongoWebArticleRepository : IWebArticleRepository
     private const string CollectionName = "webArticle";
 
     private readonly IMongoCollection<BsonDocument> collection;
+    private readonly int maxFailedAttempts;
     private int indexEnsured;
 
-    public MongoWebArticleRepository(MongoAlertingOptions options)
+    public MongoWebArticleRepository(MongoAlertingOptions options, int maxFailedAttempts)
     {
         ArgumentNullException.ThrowIfNull(options);
         var database = new MongoClient(options.ConnectionString).GetDatabase(options.MonitoringDatabaseName);
         collection = database.GetCollection<BsonDocument>(CollectionName);
+        this.maxFailedAttempts = maxFailedAttempts;
     }
 
     public async Task<IReadOnlySet<string>> GetSeenGoogleIdsAsync(TimeSpan lookback, CancellationToken cancellationToken = default)
     {
-        var filter = Builders<BsonDocument>.Filter.Gte("discoveredAt", DateTime.UtcNow - lookback);
+        // A "failed" article (timeout, HTTP error, unreadable page) stays eligible for retry on a
+        // later cycle instead of being treated as done for the rest of the lookback window — some
+        // failures are transient. Once it reaches the attempt cap it is excluded like any other
+        // resolved article, so a site that blocks every request isn't retried for a full day.
+        // Records saved before this field existed have no attemptCount at all; Gte on a missing
+        // field never matches, which correctly keeps retrying them rather than skipping them.
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Gte("discoveredAt", DateTime.UtcNow - lookback),
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Ne("status", WebArticleStatus.Failed),
+                Builders<BsonDocument>.Filter.Gte("attemptCount", maxFailedAttempts)));
+
         var documents = await collection.Find(filter).Project(Builders<BsonDocument>.Projection.Include("googleId"))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
@@ -38,6 +51,33 @@ public sealed class MongoWebArticleRepository : IWebArticleRepository
         ArgumentNullException.ThrowIfNull(record);
         await EnsureIndexAsync(cancellationToken).ConfigureAwait(false);
 
+        var filter = Builders<BsonDocument>.Filter.Eq("googleId", record.GoogleId);
+
+        if (record.Status == WebArticleStatus.Failed)
+        {
+            // $inc on a field that doesn't exist yet (first failure, or an upsert creating the
+            // document) starts it at the increment amount — attemptCount reaches 1 here, not 0.
+            var update = Builders<BsonDocument>.Update
+                .Set("googleId", record.GoogleId)
+                .Set("url", record.Url)
+                .Set("outlet", record.Outlet)
+                .Set("title", record.Title ?? (BsonValue)BsonNull.Value)
+                .Set("firstParagraph", record.FirstParagraph ?? (BsonValue)BsonNull.Value)
+                .Set("publishedAt", record.PublishedAt?.UtcDateTime ?? (BsonValue)BsonNull.Value)
+                .Set("status", record.Status)
+                .Set("matchedKeywords", new BsonArray(record.MatchedKeywords))
+                .Set("clients", new BsonArray(record.Clients))
+                .Set("discoveredAt", record.DiscoveredAt.UtcDateTime)
+                .Inc("attemptCount", 1);
+
+            await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        // A terminal outcome (alerted, or a content-based rejection like no-date/no-keyword)
+        // replaces the document wholesale — any earlier failed attempts for this id no longer
+        // matter once it resolves, so attemptCount resets rather than carrying over.
         var document = new BsonDocument
         {
             { "googleId", record.GoogleId },
@@ -50,9 +90,11 @@ public sealed class MongoWebArticleRepository : IWebArticleRepository
             { "matchedKeywords", new BsonArray(record.MatchedKeywords) },
             { "clients", new BsonArray(record.Clients) },
             { "discoveredAt", record.DiscoveredAt.UtcDateTime },
+            { "attemptCount", 0 },
         };
 
-        await collection.InsertOneAsync(document, options: null, cancellationToken).ConfigureAwait(false);
+        await collection.ReplaceOneAsync(filter, document, new ReplaceOptions { IsUpsert = true }, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     // Lazy, not constructor-time: index creation is I/O the host shouldn't block startup on, and

@@ -38,6 +38,8 @@ public sealed partial class HtmlArticleReader : IArticleReader
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+            request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            request.Headers.TryAddWithoutValidation("Accept-Language", "es-CO,es;q=0.9,en;q=0.8");
 
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(requestTimeoutSeconds));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
@@ -72,6 +74,14 @@ public sealed partial class HtmlArticleReader : IArticleReader
         var publishedAt = ExtractPublishedAt(document);
         var firstParagraph = ExtractFirstParagraph(document) ?? ExtractMetaContent(document, "og:description");
 
+        // Only the lead sentence is kept — the rest adds length without adding to what an alert
+        // needs to say. The 80-char "is this a real paragraph" check above already ran on the full
+        // text, so a paragraph that merely opens with a short sentence is never discarded by this.
+        if (firstParagraph is not null)
+        {
+            firstParagraph = TruncateAtFirstSentence(firstParagraph);
+        }
+
         return new ArticleContent(title, firstParagraph, publishedAt, null);
     }
 
@@ -88,22 +98,46 @@ public sealed partial class HtmlArticleReader : IArticleReader
         return ExtractMetaContent(document, "og:title") ?? document.QuerySelector("title")?.TextContent?.Trim();
     }
 
+    // Tried in order, stopping at the first one that actually parses — not just the first one that
+    // exists. A site publishing a value in its first candidate tag that our parser can't read used
+    // to hide perfectly good values in every candidate tried after it (see DateCandidates' doc
+    // comment history: the old code chained candidates with `??`, which only moves on when a
+    // selector finds nothing, not when its text fails to parse).
+    private static readonly Func<IDocument, string?>[] DateCandidates =
+    [
+        d => d.QuerySelector("meta[property='article:published_time']")?.GetAttribute("content"),
+        d => d.QuerySelector("meta[name='article:published_time']")?.GetAttribute("content"),
+        d => d.QuerySelector("meta[itemprop='datePublished']")?.GetAttribute("content"),
+        d => d.QuerySelector("meta[name='date']")?.GetAttribute("content"),
+        d => d.QuerySelector("meta[name='pubdate']")?.GetAttribute("content"),
+        d => d.QuerySelector("meta[name='publish-date']")?.GetAttribute("content"),
+        d => d.QuerySelector("meta[name='sailthru.date']")?.GetAttribute("content"),
+        d => d.QuerySelector("meta[name='parsely-pub-date']")?.GetAttribute("content"),
+        d => d.QuerySelector("meta[name='DC.date.issued']")?.GetAttribute("content"),
+        d => d.QuerySelector("time[datetime]")?.GetAttribute("datetime"),
+        // Some sites print the date as a <time> tag's visible text with no datetime attribute at all.
+        d => d.QuerySelector("time")?.TextContent,
+    ];
+
     private static DateTimeOffset? ExtractPublishedAt(IDocument document)
     {
         foreach (var script in document.QuerySelectorAll("script[type='application/ld+json']"))
         {
-            if (TryFindJsonLdString(script.TextContent, "datePublished") is { } raw && TryParseDate(raw, out var parsed))
+            if (TryFindJsonLdString(script.TextContent, "datePublished") is { } raw && TryParseFlexibleDate(raw, out var parsed))
             {
                 return parsed;
             }
         }
 
-        var candidate =
-            document.QuerySelector("meta[property='article:published_time']")?.GetAttribute("content") ??
-            document.QuerySelector("meta[itemprop='datePublished']")?.GetAttribute("content") ??
-            document.QuerySelector("time[datetime]")?.GetAttribute("datetime");
+        foreach (var candidate in DateCandidates)
+        {
+            if (candidate(document) is { } raw && TryParseFlexibleDate(raw, out var parsed))
+            {
+                return parsed;
+            }
+        }
 
-        return TryParseDate(candidate, out var result) ? result : null;
+        return null;
     }
 
     private static string? ExtractFirstParagraph(IDocument document)
@@ -150,10 +184,62 @@ public sealed partial class HtmlArticleReader : IArticleReader
         return string.IsNullOrWhiteSpace(content) ? null : content.Trim();
     }
 
-    private static bool TryParseDate(string? raw, out DateTimeOffset value) =>
-        DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.None, out value);
+    private static readonly CultureInfo Spanish = CultureInfo.GetCultureInfo("es-CO");
+    private static readonly TimeSpan BogotaOffset = TimeSpan.FromHours(-5);
+
+    // One machine-generated format (ISO-8601 etc.) won't read a human-written Spanish date and vice
+    // versa, so this tries progressively looser strategies instead of picking one up front: exact
+    // ISO-ish parsing, then .NET's own Spanish-culture date recognition (handles "2 de octubre de
+    // 2026", "2 oct. 2026" for free, no format list needed), then a short list of explicit formats
+    // as a safety net for the one example that prompted this: "10 oct 2026".
+    private static readonly string[] SpanishDateFormats =
+    [
+        "dd/MM/yyyy", "dd-MM-yyyy", "dd.MM.yyyy",
+        "d 'de' MMMM 'de' yyyy", "d MMMM yyyy", "d MMM yyyy", "d MMM. yyyy",
+    ];
+
+    private static bool TryParseFlexibleDate(string? raw, out DateTimeOffset value)
+    {
+        var text = raw?.Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            value = default;
+            return false;
+        }
+
+        // Structured sources (JSON-LD, article:published_time, ...) are expected to carry their own
+        // explicit offset or "Z" per spec, so DateTimeOffset.TryParse is trusted to read it as-is.
+        if (DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out value))
+        {
+            return true;
+        }
+
+        // Free-text dates ("10 oct 2026", "2 de octubre de 2026") never carry a time zone of their
+        // own. Parsed as a plain DateTime — not DateTimeOffset, which for zone-less text silently
+        // defaults to whatever zone the HOST MACHINE happens to be running in — then anchored to
+        // Bogota explicitly, the same zone the rest of this feature uses (see WebNewsClock.IsToday).
+        if (DateTime.TryParse(text, Spanish, DateTimeStyles.None, out var spanishLocal))
+        {
+            value = new DateTimeOffset(spanishLocal, BogotaOffset);
+            return true;
+        }
+
+        if (DateTime.TryParseExact(text, SpanishDateFormats, Spanish, DateTimeStyles.None, out var exactLocal))
+        {
+            value = new DateTimeOffset(exactLocal, BogotaOffset);
+            return true;
+        }
+
+        return false;
+    }
 
     private static string CollapseWhitespace(string text) => WhitespaceRun().Replace(text, " ").Trim();
+
+    // Only the lead sentence survives — the rest is deliberately dropped to keep alerts short. An
+    // abbreviation like "Dr. García" still cuts early; that trade-off was accepted over building an
+    // abbreviation list. Text with no sentence-ending punctuation at all is left whole.
+    private static string TruncateAtFirstSentence(string text) =>
+        FirstSentence().Match(text) is { Success: true } match ? match.Value : text;
 
     // JSON-LD news markup is sometimes a single object, sometimes an array of them, and sometimes
     // wrapped in a top-level "@graph" array — this walks all three shapes looking for one string
@@ -201,4 +287,7 @@ public sealed partial class HtmlArticleReader : IArticleReader
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRun();
+
+    [GeneratedRegex(@"^.*?[.!?](?=\s|$)", RegexOptions.Singleline)]
+    private static partial Regex FirstSentence();
 }

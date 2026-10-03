@@ -180,6 +180,39 @@ public sealed class WebNewsCaptureUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteCycleAsync_includes_the_article_url_in_a_rejected_notes_reason()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "petroleo")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/nota-x" },
+            reader: new FakeArticleReader { Content = new ArticleContent("Clima", "Hoy lloverá en la tarde", PublishedToday, null) },
+            recorder: recorder);
+
+        await sut.ExecuteCycleAsync();
+
+        var rejected = recorder.Records.Single(r => r.Kind == IncidentKinds.ArticleRejected);
+        Assert.Contains("https://eltiempo.com/nota-x", rejected.Reason);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_includes_googles_own_link_when_the_real_url_could_not_be_resolved()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "petroleo")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { ErrorMessage = "Google no entregó la firma" },
+            recorder: recorder);
+
+        await sut.ExecuteCycleAsync();
+
+        var failed = recorder.Records.Single(r => r.Kind == IncidentKinds.ArticleFailed);
+        Assert.Contains("https://news.google.com/rss/articles/a1", failed.Reason);
+    }
+
+    [Fact]
     public async Task ExecuteCycleAsync_records_a_failed_link_resolution_without_saving_a_resolved_url()
     {
         var recorder = new FakeIncidentRecorder();

@@ -63,7 +63,8 @@ public static class OperationsWorkerOptionsLoader
         bool? WebNewsEnabled,
         int? WebNewsKeywordsPerQuery,
         int? WebNewsMaxConcurrency,
-        int? WebNewsRequestTimeoutSeconds);
+        int? WebNewsRequestTimeoutSeconds,
+        int? WebNewsMaxFailedAttempts);
 
     public static OperationsWorkerOptions Load(string? configPath = null)
     {
@@ -374,6 +375,11 @@ public static class OperationsWorkerOptionsLoader
         if (model.WebNewsRequestTimeoutSeconds.HasValue)
         {
             options.WebNewsRequestTimeoutSeconds = model.WebNewsRequestTimeoutSeconds.Value;
+        }
+
+        if (model.WebNewsMaxFailedAttempts.HasValue)
+        {
+            options.WebNewsMaxFailedAttempts = model.WebNewsMaxFailedAttempts.Value;
         }
 
         return NormalizeConfiguredPaths(options, applicationRoot, configDirectory);

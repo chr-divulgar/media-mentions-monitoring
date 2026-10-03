@@ -34,7 +34,8 @@
   "webNewsEnabled": false,
   "webNewsKeywordsPerQuery": 8,
   "webNewsMaxConcurrency": 4,
-  "webNewsRequestTimeoutSeconds": 15,
+  "webNewsRequestTimeoutSeconds": 20,
+  "webNewsMaxFailedAttempts": 3,
 
   "firebaseDatabase": {
     "baseUrl": "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",

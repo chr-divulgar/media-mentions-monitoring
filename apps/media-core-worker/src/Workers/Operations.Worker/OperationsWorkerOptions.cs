@@ -110,6 +110,13 @@ public sealed class OperationsWorkerOptions
 
     public int WebNewsMaxConcurrency { get; set; } = 4;
 
-    public int WebNewsRequestTimeoutSeconds { get; set; } = 15;
+    public int WebNewsRequestTimeoutSeconds { get; set; } = 20;
+
+    // A failed article (timeout, HTTP error, unreadable page) is retried on later cycles instead of
+    // being given up on for the rest of the 24h seen-window, since some failures are transient — but
+    // only up to this many attempts, so a site that blocks every request (WAF/bot protection) isn't
+    // hammered for a full day. 3 attempts 30 minutes apart gives a transient failure about an hour
+    // to clear on its own.
+    public int WebNewsMaxFailedAttempts { get; set; } = 3;
 }
 

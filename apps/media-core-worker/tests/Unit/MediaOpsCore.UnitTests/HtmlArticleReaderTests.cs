@@ -73,4 +73,106 @@ public sealed class HtmlArticleReaderTests
 
         Assert.StartsWith("Este es un párrafo lo suficientemente largo", content.FirstParagraph);
     }
+
+    [Fact]
+    public async Task ParseAsync_keeps_only_the_first_sentence_of_a_multi_sentence_paragraph()
+    {
+        const string html = """
+            <html><body><article>
+              <p>El barril de petroleo subió esta semana. Analistas lo atribuyen al anuncio de la OPEP sobre nuevos recortes de producción en la región y advierten más volatilidad.</p>
+            </article></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal("El barril de petroleo subió esta semana.", content.FirstParagraph);
+    }
+
+    [Fact]
+    public async Task ParseAsync_keeps_the_whole_paragraph_when_it_has_no_sentence_ending_punctuation()
+    {
+        const string html = """
+            <html><body><article>
+              <p>El barril de petroleo subió esta semana sin ningún punto final en todo este texto tan largo</p>
+            </article></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal("El barril de petroleo subió esta semana sin ningún punto final en todo este texto tan largo", content.FirstParagraph);
+    }
+
+    [Fact]
+    public async Task ParseAsync_parses_a_free_form_spanish_date_with_month_name()
+    {
+        const string html = """
+            <html><head>
+              <meta name="date" content="2 de octubre de 2026" />
+            </head><body></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 2, 0, 0, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
+    }
+
+    [Fact]
+    public async Task ParseAsync_parses_a_short_numeric_month_abbreviation_spanish_date()
+    {
+        const string html = """
+            <html><head>
+              <meta name="pubdate" content="10 oct 2026" />
+            </head><body></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 10, 0, 0, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
+    }
+
+    [Fact]
+    public async Task ParseAsync_tries_the_next_date_candidate_when_the_first_one_fails_to_parse()
+    {
+        // Regression: the old code only moved to the next selector when the first was MISSING,
+        // never when its text existed but failed to parse — so a bad value in the first tag hid a
+        // perfectly good one in every tag checked after it.
+        const string html = """
+            <html><head>
+              <meta property="article:published_time" content="no es una fecha" />
+              <meta itemprop="datePublished" content="2026-10-02T09:00:00-05:00" />
+            </head><body></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 2, 9, 0, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
+    }
+
+    [Fact]
+    public async Task ParseAsync_reads_date_from_additional_known_meta_labels()
+    {
+        const string html = """
+            <html><head>
+              <meta name="sailthru.date" content="2026-10-02T09:00:00-05:00" />
+            </head><body></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 2, 9, 0, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
+    }
+
+    [Fact]
+    public async Task ParseAsync_reads_the_date_from_a_time_tags_visible_text_when_it_has_no_datetime_attribute()
+    {
+        const string html = """
+            <html><body>
+              <time>10 oct 2026</time>
+            </body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 10, 0, 0, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
+    }
 }
