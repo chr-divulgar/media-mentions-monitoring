@@ -156,7 +156,7 @@ public sealed partial class HtmlArticleReader : IArticleReader
             }
 
             var text = CollapseWhitespace(paragraph.TextContent);
-            if (text.Length >= MinFirstParagraphLength)
+            if (text.Length >= MinFirstParagraphLength && LooksLikeProse(text))
             {
                 return text;
             }
@@ -164,6 +164,14 @@ public sealed partial class HtmlArticleReader : IArticleReader
 
         return null;
     }
+
+    // A long string isn't necessarily a paragraph — image credits, tag lists and share-bar labels
+    // can also clear the length check. Real Spanish prose reliably uses a few short function words
+    // ("de", "la", "que", ...) that a run of captions or keywords strung together normally doesn't;
+    // requiring more than one match filters a single incidental word (e.g. "Foto de archivo").
+    private const int MinStopwordMatches = 2;
+
+    private static bool LooksLikeProse(string text) => StopwordRun().Matches(text).Count >= MinStopwordMatches;
 
     private static bool IsInsideNonBodyElement(IElement element)
     {
@@ -290,4 +298,7 @@ public sealed partial class HtmlArticleReader : IArticleReader
 
     [GeneratedRegex(@"^.*?[.!?](?=\s|$)", RegexOptions.Singleline)]
     private static partial Regex FirstSentence();
+
+    [GeneratedRegex(@"\b(de|la|el|en|que|y|los|las|un|una|del|con|por|para)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex StopwordRun();
 }

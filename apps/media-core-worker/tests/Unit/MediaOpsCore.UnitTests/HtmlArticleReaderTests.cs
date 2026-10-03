@@ -103,6 +103,23 @@ public sealed class HtmlArticleReaderTests
     }
 
     [Fact]
+    public async Task ParseAsync_skips_a_long_tag_list_that_is_not_a_real_paragraph()
+    {
+        // Regression: the length check alone let a run of keywords/tags through once it passed 80
+        // chars, even though it reads nothing like a sentence (no articles, prepositions, etc.).
+        const string html = """
+            <html><body><article>
+              <p>Colombia, Ecopetrol, Ambiente, Licencias, Produccion, Bucare, Petroleo, Economia, Energia, Internacional</p>
+              <p>Este es un párrafo lo suficientemente largo como para ser considerado el primer párrafo real de la noticia completa.</p>
+            </article></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.StartsWith("Este es un párrafo lo suficientemente largo", content.FirstParagraph);
+    }
+
+    [Fact]
     public async Task ParseAsync_parses_a_free_form_spanish_date_with_month_name()
     {
         const string html = """
