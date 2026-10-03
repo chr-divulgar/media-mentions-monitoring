@@ -83,11 +83,13 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
         string title,
         string firstParagraph,
         DateTimeOffset publishedAt,
+        string? matchText = null,
         CancellationToken cancellationToken = default)
     {
-        // Title AND first paragraph both count as "the text" for keyword matching — a keyword that
-        // only shows up in the headline (common for short wire stories) must still match.
-        var text = $"{title}\n{firstParagraph}";
+        // Title AND the full article body (falling back to just the lead paragraph when no more
+        // body text was captured) both count as "the text" for keyword matching — a keyword that
+        // only shows up in the headline, or several paragraphs into the story, must still match.
+        var text = $"{title}\n{matchText ?? firstParagraph}";
         var clients = await clientConfigRepository.GetClientsAsync(cancellationToken).ConfigureAwait(false);
 
         var matchedClients = new List<string>();

@@ -256,6 +256,22 @@ public sealed class DetectAlertsUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteWebArticleAsync_matches_a_keyword_that_only_appears_in_the_full_body_not_the_lead_paragraph()
+    {
+        // Regression: a keyword several paragraphs into the story (e.g. "Hocol, empresa del Grupo
+        // Ecopetrol...") was invisible to matching when only the short lead paragraph was scanned.
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "ecopetrol"));
+
+        var outcome = await useCase.ExecuteWebArticleAsync(
+            "LaRepublica.co", "https://larepublica.co/nota", "Hocol y Colgas estrenan una red de gas",
+            "La primera fase contempla una inversión cercana a $6.300 millones.", PublishedAt,
+            matchText: "La primera fase contempla una inversión cercana a $6.300 millones. Colgas, Hocol, empresa del Grupo Ecopetrol, y la Alcaldía pusieron en operación la red.");
+
+        Assert.Equal(new[] { "Ecopetrol" }, outcome.MatchedClients);
+    }
+
+    [Fact]
     public async Task ExecuteWebArticleAsync_matches_no_clients_when_no_keyword_appears()
     {
         var repository = new InMemoryAlertRepository();

@@ -29,6 +29,10 @@ public interface IDetectAlertsUseCase
         string title,
         string firstParagraph,
         DateTimeOffset publishedAt,
+        // The full article body to scan for a keyword — a client's name can show up several
+        // paragraphs after the lead one firstParagraph displays. Null falls back to firstParagraph
+        // (e.g. when the page only yielded a meta description, there is nothing more to scan).
+        string? matchText = null,
         CancellationToken cancellationToken = default);
 }
 

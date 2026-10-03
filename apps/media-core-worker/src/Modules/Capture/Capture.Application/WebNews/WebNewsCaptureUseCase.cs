@@ -232,7 +232,9 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             }
 
             var outcome = await detectAlertsUseCase
-                .ExecuteWebArticleAsync(item.Outlet, url, title, content.FirstParagraph ?? string.Empty, content.PublishedAt.Value, cancellationToken)
+                .ExecuteWebArticleAsync(
+                    item.Outlet, url, title, content.FirstParagraph ?? string.Empty, content.PublishedAt.Value,
+                    matchText: content.FullText, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
 
             if (outcome.MatchedClients.Count == 0)

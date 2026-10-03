@@ -180,6 +180,29 @@ public sealed class WebNewsCaptureUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteCycleAsync_passes_the_articles_full_text_to_keyword_matching_not_just_the_lead_paragraph()
+    {
+        // Regression: a client's keyword several paragraphs into the body (not the short lead
+        // paragraph an alert displays) must still be checked.
+        var alertUseCase = new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["Ecopetrol"], 1, 1) };
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "Ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://larepublica.co/nota" },
+            reader: new FakeArticleReader
+            {
+                Content = new ArticleContent(
+                    "Hocol y Colgas estrenan una red de gas", "La primera fase contempla una inversión.", PublishedToday, null,
+                    FullText: "La primera fase contempla una inversión. Colgas, Hocol, empresa del Grupo Ecopetrol, pusieron en operación la red."),
+            },
+            detectAlertsUseCase: alertUseCase);
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Contains("Ecopetrol", alertUseCase.LastMatchText);
+    }
+
+    [Fact]
     public async Task ExecuteCycleAsync_includes_the_article_url_in_a_rejected_notes_reason()
     {
         var recorder = new FakeIncidentRecorder();
@@ -354,14 +377,18 @@ public sealed class WebNewsCaptureUseCaseTests
     private sealed class FakeDetectAlertsUseCase : IDetectAlertsUseCase
     {
         public WebArticleAlertOutcome Outcome { get; set; } = new([], [], 0, 0);
+        public string? LastMatchText { get; private set; }
 
         public Task ExecuteAsync(string platform, string media, string filePath, string text, DateTimeOffset startTime, DateTimeOffset endTime, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
 
         public Task RetryPendingNotificationsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-        public Task<WebArticleAlertOutcome> ExecuteWebArticleAsync(string outlet, string url, string title, string firstParagraph, DateTimeOffset publishedAt, CancellationToken cancellationToken = default) =>
-            Task.FromResult(Outcome);
+        public Task<WebArticleAlertOutcome> ExecuteWebArticleAsync(string outlet, string url, string title, string firstParagraph, DateTimeOffset publishedAt, string? matchText = null, CancellationToken cancellationToken = default)
+        {
+            LastMatchText = matchText;
+            return Task.FromResult(Outcome);
+        }
     }
 
     private sealed class FakeIncidentRecorder : ISourceIncidentRecorder

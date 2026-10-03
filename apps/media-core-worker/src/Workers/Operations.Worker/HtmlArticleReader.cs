@@ -72,17 +72,23 @@ public sealed partial class HtmlArticleReader : IArticleReader
 
         var title = ExtractTitle(document);
         var publishedAt = ExtractPublishedAt(document);
-        var firstParagraph = ExtractFirstParagraph(document) ?? ExtractMetaContent(document, "og:description");
+        var paragraphs = ExtractQualifyingParagraphs(document);
+        var metaDescription = paragraphs.Count == 0 ? ExtractMetaContent(document, "og:description") : null;
+        var firstParagraph = paragraphs.Count > 0 ? paragraphs[0] : metaDescription;
+        // Keyword matching needs every paragraph a client's name could appear in, not just the
+        // lead one an alert displays — see ArticleContent.FullText's doc comment.
+        var fullText = paragraphs.Count > 0 ? string.Join(" ", paragraphs) : metaDescription;
 
-        // Only the lead sentence is kept — the rest adds length without adding to what an alert
-        // needs to say. The 80-char "is this a real paragraph" check above already ran on the full
-        // text, so a paragraph that merely opens with a short sentence is never discarded by this.
+        // Only the lead sentence is kept for display — the rest adds length without adding to what
+        // an alert needs to say. The 80-char "is this a real paragraph" check already ran on the
+        // full text, so a paragraph that merely opens with a short sentence is never discarded by
+        // this. FullText above is built from the untruncated paragraphs, before this runs.
         if (firstParagraph is not null)
         {
             firstParagraph = TruncateAtFirstSentence(firstParagraph);
         }
 
-        return new ArticleContent(title, firstParagraph, publishedAt, null);
+        return new ArticleContent(title, firstParagraph, publishedAt, null, fullText);
     }
 
     private static string? ExtractTitle(IDocument document)
@@ -140,14 +146,15 @@ public sealed partial class HtmlArticleReader : IArticleReader
         return null;
     }
 
-    private static string? ExtractFirstParagraph(IDocument document)
+    private static IReadOnlyList<string> ExtractQualifyingParagraphs(IDocument document)
     {
         var scope = document.QuerySelector("article") ?? document.Body;
         if (scope is null)
         {
-            return null;
+            return [];
         }
 
+        var paragraphs = new List<string>();
         foreach (var paragraph in scope.QuerySelectorAll("p"))
         {
             if (IsInsideNonBodyElement(paragraph))
@@ -158,11 +165,11 @@ public sealed partial class HtmlArticleReader : IArticleReader
             var text = CollapseWhitespace(paragraph.TextContent);
             if (text.Length >= MinFirstParagraphLength && LooksLikeProse(text))
             {
-                return text;
+                paragraphs.Add(text);
             }
         }
 
-        return null;
+        return paragraphs;
     }
 
     // A long string isn't necessarily a paragraph — image credits, tag lists and share-bar labels

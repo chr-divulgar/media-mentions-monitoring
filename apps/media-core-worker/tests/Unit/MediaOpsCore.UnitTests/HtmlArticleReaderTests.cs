@@ -120,6 +120,25 @@ public sealed class HtmlArticleReaderTests
     }
 
     [Fact]
+    public async Task ParseAsync_includes_every_qualifying_paragraph_in_FullText_for_keyword_matching()
+    {
+        // FirstParagraph stays short (lead sentence only, for the alert) but FullText must carry a
+        // mention that only shows up several paragraphs into the story — see Ecopetrol/Hocol bug.
+        const string html = """
+            <html><body><article>
+              <p>La primera fase contempla una inversión cercana a 6.300 millones y busca conectar mil hogares.</p>
+              <p>Colgas, Hocol, empresa del Grupo Ecopetrol, y la Alcaldía de Tierralta pusieron en operación la red.</p>
+            </article></body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal("La primera fase contempla una inversión cercana a 6.300 millones y busca conectar mil hogares.", content.FirstParagraph);
+        Assert.Contains("Ecopetrol", content.FullText);
+        Assert.Contains("primera fase", content.FullText);
+    }
+
+    [Fact]
     public async Task ParseAsync_parses_a_free_form_spanish_date_with_month_name()
     {
         const string html = """
