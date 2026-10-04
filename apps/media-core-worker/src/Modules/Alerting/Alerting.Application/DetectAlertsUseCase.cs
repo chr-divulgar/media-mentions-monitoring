@@ -164,7 +164,12 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
             return Array.Empty<string>();
         }
 
-        return client.AlertRecipientsByMedia.TryGetValue(media, out var recipients) ? recipients : Array.Empty<string>();
+        var phones = client.AlertRecipientsByMedia.TryGetValue(media, out var numbers) ? numbers : Array.Empty<string>();
+        var emails = client.AlertEmailsByMedia is not null && client.AlertEmailsByMedia.TryGetValue(media, out var addresses)
+            ? addresses
+            : Array.Empty<string>();
+
+        return emails.Count == 0 ? phones : phones.Concat(emails).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private async Task<IReadOnlyList<string>> NotifyAsync(string alertId, Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken)

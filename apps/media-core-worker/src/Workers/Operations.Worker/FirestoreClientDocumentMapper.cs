@@ -31,7 +31,7 @@ internal static class FirestoreClientDocumentMapper
             .Select(keyword => keyword!)
             .ToArray();
 
-        return new ClientKeywordConfig(name, keywords, GetStringArrayMap(fields, "alerts"));
+        return new ClientKeywordConfig(name, keywords, GetStringArrayMap(fields, "alerts"), GetStringArrayMap(fields, "alertEmails"));
     }
 
     private static KeywordConfig? ToKeywordConfig(JsonElement wordFields)

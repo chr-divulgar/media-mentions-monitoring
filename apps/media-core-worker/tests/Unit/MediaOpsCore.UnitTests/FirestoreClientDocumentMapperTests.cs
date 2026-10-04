@@ -43,4 +43,19 @@ public sealed class FirestoreClientDocumentMapperTests
 
         Assert.Equal(AlertLevel.Informative, Assert.Single(client!.Keywords).Level);
     }
+
+    [Fact]
+    public void TryMapClient_reads_the_alert_email_addresses_by_media()
+    {
+        var client = FirestoreClientDocumentMapper.TryMapClient(Document("""
+            {"fields":{
+              "name":{"stringValue":"Ecopetrol"},
+              "alertEmails":{"mapValue":{"fields":{
+                "tv":{"arrayValue":{"values":[{"stringValue":"ana@entidad.gov.co"}]}}
+              }}}
+            }}
+            """));
+
+        Assert.Equal(["ana@entidad.gov.co"], client!.AlertEmailsByMedia!["tv"]);
+    }
 }

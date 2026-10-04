@@ -198,6 +198,36 @@ public sealed class OperationsWorkerOptionsLoaderTests
         Assert.Null(options.Firestore);
     }
 
+    [Fact]
+    public void Load_should_enable_the_email_channel_only_when_smtp_host_and_from_are_set()
+    {
+        using var env = new EnvironmentVariableScope(
+            ("SMTP_HOST", "smtp.example.com"),
+            ("SMTP_FROM", "alertas@example.com"),
+            ("SMTP_PORT", "2525"),
+            ("SMTP_USER", "user"),
+            ("SMTP_PASSWORD", "secret"),
+            ("SMTP_ENABLE_SSL", "false"));
+
+        var options = OperationsWorkerOptionsLoader.Load();
+
+        Assert.NotNull(options.Smtp);
+        Assert.Equal("smtp.example.com", options.Smtp!.Host);
+        Assert.Equal("alertas@example.com", options.Smtp.From);
+        Assert.Equal(2525, options.Smtp.Port);
+        Assert.False(options.Smtp.EnableSsl);
+    }
+
+    [Fact]
+    public void Load_should_leave_smtp_null_when_the_host_is_missing()
+    {
+        using var env = new EnvironmentVariableScope(
+            ("SMTP_HOST", null),
+            ("SMTP_FROM", "alertas@example.com"));
+
+        Assert.Null(OperationsWorkerOptionsLoader.Load().Smtp);
+    }
+
     // Sets environment variables for the duration of a test and restores their previous values
     // (including "was absent") on dispose — keeps FIREBASE_* tests isolated from whatever the
     // real process environment (or another test) happens to have set.

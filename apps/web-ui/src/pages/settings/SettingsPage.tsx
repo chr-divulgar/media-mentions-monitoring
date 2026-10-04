@@ -933,6 +933,7 @@ const ClientModal: React.FC<{
   initial: ClientDto | null;
   mediaTypes: MediaTypeDto[];
   usersWithPhone: FirebaseUserDto[];
+  usersWithEmail: FirebaseUserDto[];
   whatsAppGroups: WhatsAppGroupDto[];
   onClose: () => void;
   onSave: (dto: ClientDto) => void;
@@ -942,6 +943,7 @@ const ClientModal: React.FC<{
   initial,
   mediaTypes,
   usersWithPhone,
+  usersWithEmail,
   whatsAppGroups,
   onClose,
   onSave,
@@ -958,6 +960,7 @@ const ClientModal: React.FC<{
       words: initial?.words?.length ? initial.words : [{ value: "", adds: [] }],
       topics: initial?.topics ?? [],
       alerts: initial?.alerts ?? {},
+      alertEmails: initial?.alertEmails ?? {},
       notes: initial?.notes ?? {},
     }),
     [open, initial],
@@ -977,6 +980,7 @@ const ClientModal: React.FC<{
       words,
       topics,
       alerts: values.alerts ?? initial?.alerts ?? {},
+      alertEmails: values.alertEmails ?? initial?.alertEmails ?? {},
       notes: values.notes ?? initial?.notes ?? {},
     });
   };
@@ -1005,6 +1009,11 @@ const ClientModal: React.FC<{
       : []),
   ];
 
+  const emailOptions = usersWithEmail.map((u) => ({
+    label: `${u.displayName || u.email} (${u.email})`,
+    value: u.email,
+  }));
+
   const contactSection = (
     fieldName: "alerts" | "notes",
     description: string,
@@ -1032,6 +1041,23 @@ const ClientModal: React.FC<{
           />
         </Form.Item>
       ))}
+      {fieldName === "alerts" &&
+        mediaTypes.map((mt) => (
+          <Form.Item
+            key={`email-${mt.name}`}
+            name={["alertEmails", mt.name!]}
+            label={`Correo · ${mt.label}`}
+            style={{ marginBottom: 8 }}
+          >
+            <Select
+              mode="multiple"
+              placeholder="Usuarios que reciben esta alerta por correo"
+              options={emailOptions}
+              optionFilterProp="label"
+              allowClear
+            />
+          </Form.Item>
+        ))}
     </div>
   );
 
@@ -1485,6 +1511,8 @@ const SettingsPage: React.FC = () => {
       setSelectedMedia(mediaTypes[0].name ?? "");
     }
   }, [mediaTypes, selectedMedia]);
+
+  const usersWithEmail = users.filter((u) => u.email && !u.disabled);
 
   const usersWithPhone = users.filter(
     (u) => u.phone && /^\+?[1-9]\d{6,14}$/.test(u.phone),
@@ -2081,6 +2109,7 @@ const SettingsPage: React.FC = () => {
         initial={clientModal.data}
         mediaTypes={mediaTypes}
         usersWithPhone={usersWithPhone}
+        usersWithEmail={usersWithEmail}
         whatsAppGroups={whatsAppGroups}
         onClose={() => setClientModal({ open: false, data: null })}
         onSave={(dto) => saveClient.mutate(dto)}

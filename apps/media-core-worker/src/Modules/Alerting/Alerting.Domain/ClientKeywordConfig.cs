@@ -10,4 +10,7 @@ public sealed record KeywordConfig(string Value, IReadOnlyList<KeywordAdContext>
 public sealed record ClientKeywordConfig(
     string Name,
     IReadOnlyList<KeywordConfig> Keywords,
-    IReadOnlyDictionary<string, IReadOnlyList<string>> AlertRecipientsByMedia);
+    IReadOnlyDictionary<string, IReadOnlyList<string>> AlertRecipientsByMedia,
+    // mediaName -> email addresses (Firestore `clients.alertEmails`); optional so a client with no
+    // email channel configured keeps working exactly as before.
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? AlertEmailsByMedia = null);

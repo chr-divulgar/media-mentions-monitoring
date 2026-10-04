@@ -132,7 +132,18 @@ builder.Services.AddSingleton(new WhatsAppSidecarOptions
 {
 	BaseUrl = $"http://localhost:{options.WhatsAppSidecarPort}"
 });
-builder.Services.AddSingleton<IAlertNotifier, HttpWhatsAppAlertNotifier>();
+builder.Services.AddSingleton<HttpWhatsAppAlertNotifier>();
+if (options.Smtp is not null)
+{
+	builder.Services.AddSingleton(options.Smtp);
+	builder.Services.AddSingleton<SmtpAlertEmailNotifier>();
+}
+// Email recipients go over SMTP when it is configured and are skipped otherwise; every other
+// recipient (phone number, WhatsApp group id) goes to the WhatsApp sidecar.
+builder.Services.AddSingleton<IAlertNotifier>(sp => new RoutingAlertNotifier(
+	sp.GetRequiredService<HttpWhatsAppAlertNotifier>(),
+	options.Smtp is null ? null : sp.GetRequiredService<SmtpAlertEmailNotifier>(),
+	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RoutingAlertNotifier>>()));
 builder.Services.AddSingleton<WhatsAppSidecarProcessSupervisor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WhatsAppSidecarProcessSupervisor>());
 builder.Services.AddSingleton<IDetectAlertsUseCase, DetectAlertsUseCase>();

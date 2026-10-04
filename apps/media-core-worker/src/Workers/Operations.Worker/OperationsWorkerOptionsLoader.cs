@@ -316,6 +316,32 @@ public static class OperationsWorkerOptionsLoader
             };
         }
 
+        // Email channel for alerts; like the Firebase credentials, only ever read from the environment.
+        var smtpHost = Environment.GetEnvironmentVariable("SMTP_HOST");
+        var smtpFrom = Environment.GetEnvironmentVariable("SMTP_FROM");
+        if (!string.IsNullOrWhiteSpace(smtpHost) && !string.IsNullOrWhiteSpace(smtpFrom))
+        {
+            var smtp = new MediaOpsCore.Modules.Alerting.Infrastructure.SmtpAlertOptions
+            {
+                Host = smtpHost.Trim(),
+                From = smtpFrom.Trim(),
+                User = Environment.GetEnvironmentVariable("SMTP_USER"),
+                Password = Environment.GetEnvironmentVariable("SMTP_PASSWORD"),
+            };
+
+            if (int.TryParse(Environment.GetEnvironmentVariable("SMTP_PORT"), out var smtpPort))
+            {
+                smtp.Port = smtpPort;
+            }
+
+            if (bool.TryParse(Environment.GetEnvironmentVariable("SMTP_ENABLE_SSL"), out var smtpSsl))
+            {
+                smtp.EnableSsl = smtpSsl;
+            }
+
+            options.Smtp = smtp;
+        }
+
         // MONGODB_URI matches the env var name apps/web-api already uses, so both point at one instance.
         var mongoConnectionStringEnv = Environment.GetEnvironmentVariable("MONGODB_URI");
         if (!string.IsNullOrWhiteSpace(mongoConnectionStringEnv))

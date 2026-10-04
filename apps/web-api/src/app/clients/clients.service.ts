@@ -41,6 +41,7 @@ export class ClientsService {
       words: dto.words ?? [],
       topics: dto.topics ?? [],
       alerts: dto.alerts ?? {},
+      alertEmails: dto.alertEmails ?? {},
       notes: dto.notes ?? {},
     };
     const ref = await this.clientsCol.add(payload);
@@ -58,6 +59,7 @@ export class ClientsService {
     if (dto.words !== undefined) payload['words'] = dto.words;
     if (dto.topics !== undefined) payload['topics'] = dto.topics;
     if (dto.alerts !== undefined) payload['alerts'] = dto.alerts;
+    if (dto.alertEmails !== undefined) payload['alertEmails'] = dto.alertEmails;
     if (dto.notes !== undefined) payload['notes'] = dto.notes;
 
     await ref.update(payload);

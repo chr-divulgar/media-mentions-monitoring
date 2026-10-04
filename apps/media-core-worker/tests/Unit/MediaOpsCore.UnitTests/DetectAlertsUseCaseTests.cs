@@ -292,6 +292,24 @@ public sealed class DetectAlertsUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_notifies_the_configured_email_addresses_alongside_the_phone_numbers()
+    {
+        var repository = new InMemoryAlertRepository();
+        var notifier = new FakeAlertNotifier();
+        var client = new ClientKeywordConfig(
+            "Ecopetrol",
+            new[] { new KeywordConfig("petroleo", Array.Empty<KeywordAdContext>()) },
+            new Dictionary<string, IReadOnlyList<string>> { ["tv"] = new[] { "573000000000" } },
+            new Dictionary<string, IReadOnlyList<string>> { ["tv"] = new[] { "ana@entidad.gov.co" } });
+        var useCase = CreateUseCase(repository, client, notifier: notifier);
+
+        await useCase.ExecuteAsync("CaracolTV", "tv", "file.opus", "se derramo petroleo", BaseTime, BaseTime.AddSeconds(20));
+
+        var call = Assert.Single(notifier.Calls);
+        Assert.Equal(new[] { "573000000000", "ana@entidad.gov.co" }, call.Recipients);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_defaults_to_the_informative_level_and_captures_at_the_end_of_the_recording()
     {
         var repository = new InMemoryAlertRepository();

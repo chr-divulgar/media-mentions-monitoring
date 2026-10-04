@@ -82,6 +82,10 @@ public sealed class OperationsWorkerOptions
 
     public FirestoreCaptureSourceRepositoryOptions? Firestore { get; set; }
 
+    // Alert email channel. Null (the default) means email recipients are skipped; set only when
+    // SMTP_HOST and SMTP_FROM are present in the environment (credentials never live in the JSON).
+    public MediaOpsCore.Modules.Alerting.Infrastructure.SmtpAlertOptions? Smtp { get; set; }
+
     // Same connection string as apps/web-api's MONGODB_URI so both point at the one MongoDB instance.
     public string MongoConnectionString { get; set; } = "mongodb://localhost:27017";
 

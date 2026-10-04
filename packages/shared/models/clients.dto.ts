@@ -37,6 +37,8 @@ export class ClientDto {
   readonly topics?: TopicItemDto[];
   /** mediaName → array of user phone numbers */
   readonly alerts?: Record<string, string[]>;
+  /** mediaName → email addresses that also receive each alert by email */
+  readonly alertEmails?: Record<string, string[]>;
   /** mediaName → array of user phone numbers */
   readonly notes?: Record<string, string[]>;
 }
