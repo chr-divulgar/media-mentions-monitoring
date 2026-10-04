@@ -15,7 +15,8 @@ import { Note } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as moment from 'moment';
 import * as path from 'path';
-import * as spawn from 'cross-spawn';
+import { ClientsService } from '../clients/clients.service';
+import { WhatsAppService } from '../settings/whatsapp.service';
 
 @Injectable()
 export class NotesService {
@@ -23,6 +24,8 @@ export class NotesService {
 
   constructor(
     @InjectDataSource('monitoring') private readonly dataSource: DataSource,
+    private readonly clientsService: ClientsService,
+    private readonly whatsAppService: WhatsAppService,
   ) {
     this.noteRepo = this.dataSource.getMongoRepository(Note);
   }
@@ -81,61 +84,71 @@ export class NotesService {
     return `NOTA ${note.index} ${note.program} **${note.title}** ${formatPlainText(note.summary)} ${formatDuration(note.duration)} (${moment(note.startTime).format('h:mm A')})`;
   }
 
+  /**
+   * Sends the note (text, then its audio clip) to every recipient configured for the note's
+   * client and media in `clients.notes[media]` — phone numbers or WhatsApp group JIDs — through
+   * the worker's WhatsApp session. Throws if nobody could be reached.
+   */
   async sendMessage(noteDto: NoteDto): Promise<boolean> {
-    const wasMessageSend = await this.sendWhatsAppMessage(
-      noteDto.message,
-      '573154421610',
-    );
+    const recipients = await this.resolveNoteRecipients(noteDto);
 
     const audioFilePath = path.resolve(
       `./audioFiles/fragment_${noteDto.alert_id}.mp3`,
     );
-    console.log(`Sending audio file: ${audioFilePath}`);
 
-    const wasAudioSend = await this.sendWhatsAppMessage(
-      audioFilePath,
-      '573154421610',
-      true,
-    );
-
-    if (!wasMessageSend) {
-      throw new Error('Error sending message');
+    const failures: string[] = [];
+    for (const recipient of recipients) {
+      try {
+        await this.whatsAppService.send(recipient, noteDto.message);
+        await this.whatsAppService.send(recipient, undefined, audioFilePath);
+      } catch (error) {
+        failures.push(
+          `${recipient}: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+        );
+      }
     }
-    if (!wasAudioSend) {
-      throw new Error('Error sending audio');
+
+    if (failures.length === recipients.length) {
+      throw new Error(`No se pudo enviar la nota: ${failures.join('; ')}`);
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `Nota enviada a ${recipients.length - failures.length} de ${recipients.length} destinatarios; falló: ${failures.join('; ')}`,
+      );
     }
 
     return true;
   }
 
-  async sendWhatsAppMessage(
-    content: string,
-    phoneNumber: string,
-    isAudio: boolean = false,
-  ): Promise<boolean> {
-    let wasSend = false;
-    try {
-      const npxPath = 'C:\\Program Files\\nodejs\\npx.cmd'; // Adjust this path as needed
-
-      const args = isAudio
-        ? ['mudslide', 'send-file', phoneNumber, content, '--type', 'audio']
-        : ['mudslide', 'send', phoneNumber, content];
-
-      const result = spawn.sync(npxPath, args, {
-        encoding: 'utf-8',
-      });
-
-      if (result.error || result.stderr || result.status !== 0) {
-        throw new Error(
-          `Error sending WhatsApp ${isAudio ? 'audio' : 'message'}: ${result.stderr}`,
-        );
-      } else {
-        wasSend = true;
-      }
-    } catch (e) {
-      throw new Error(`Exception occurred: ${(e as Error).message}`);
+  private async resolveNoteRecipients(noteDto: NoteDto): Promise<string[]> {
+    const clientName = (noteDto.clientName ?? '').trim();
+    const media = this.normalizeMediaKey(noteDto.media);
+    if (!clientName || !media) {
+      throw new Error('La nota necesita cliente y medio para saber a quién enviarla');
     }
-    return wasSend;
+
+    const clients = await this.clientsService.getClients();
+    const client = clients.find(
+      (c) => c.name.trim().toLowerCase() === clientName.toLowerCase(),
+    );
+    const notesByMedia = client?.notes ?? {};
+    const key = Object.keys(notesByMedia).find(
+      (k) => this.normalizeMediaKey(k) === media,
+    );
+    const recipients = (key ? notesByMedia[key] : []).filter((r) => r?.trim());
+
+    if (recipients.length === 0) {
+      throw new Error(
+        `El cliente "${clientName}" no tiene destinatarios de notas configurados para ${media}`,
+      );
+    }
+    return recipients;
+  }
+
+  // Media keys in config and in notes come as "tv" / "television" / "TV"; compare them uniformly.
+  private normalizeMediaKey(media?: string): string {
+    const key = (media ?? '').trim().toLowerCase();
+    return key === 'television' || key === 'televisión' ? 'tv' : key;
   }
 
   async importNotes(notes: NoteDto[]): Promise<{ inserted: number }> {

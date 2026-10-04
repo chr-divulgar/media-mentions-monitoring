@@ -21,6 +21,7 @@ namespace MediaOpsCore.Workers.Operations;
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
 ///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
 ///   GET  /whatsapp/qr      — relays the WhatsApp sidecar's own /qr (base64 PNG or null).
+///   POST /whatsapp/send    — relays {number, message?, audioPath?} to the sidecar's /send.
 ///   GET  /whatsapp/groups  — relays the sidecar's /groups: the WhatsApp groups the linked number
 ///     belongs to, offered in the web-ui as alert recipients.
 /// </summary>
@@ -183,6 +184,16 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "GET" && path == "/whatsapp/qr")
             {
                 await RelayToSidecarAsync(context, "/qr").ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "POST" && path == "/whatsapp/send")
+            {
+                // Lets NestJS send a note (text + optional audio file) through the same Baileys
+                // session as alerts, instead of the unpinned `npx mudslide` CLI.
+                using var bodyReader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
+                var sendBody = await bodyReader.ReadToEndAsync().ConfigureAwait(false);
+                await RelayToSidecarAsync(context, "/send", TimeSpan.FromSeconds(30), sendBody).ConfigureAwait(false);
                 return;
             }
 
@@ -403,7 +414,8 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     // refuses any further write; trying anyway throws InvalidOperationException, which used to
     // cascade into HandleRequest's outer catch trying (and failing) to write yet another error
     // response. There is nothing more to send once that happens — just log and stop.
-    private async Task RelayToSidecarAsync(HttpListenerContext context, string sidecarPath, TimeSpan? timeout = null)
+    private async Task RelayToSidecarAsync(
+        HttpListenerContext context, string sidecarPath, TimeSpan? timeout = null, string? postBody = null)
     {
         byte[] body;
         HttpStatusCode statusCode;
@@ -419,9 +431,12 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             // NestJS's clock runs out and aborts the connection out from under us.
             timeoutCts.CancelAfter(timeout ?? TimeSpan.FromSeconds(4));
 
-            using var response = await httpClient
-                .GetAsync($"http://localhost:{whatsAppSidecarPort}{sidecarPath}", timeoutCts.Token)
-                .ConfigureAwait(false);
+            var sidecarUrl = $"http://localhost:{whatsAppSidecarPort}{sidecarPath}";
+            using var response = postBody is null
+                ? await httpClient.GetAsync(sidecarUrl, timeoutCts.Token).ConfigureAwait(false)
+                : await httpClient
+                    .PostAsync(sidecarUrl, new StringContent(postBody, Encoding.UTF8, "application/json"), timeoutCts.Token)
+                    .ConfigureAwait(false);
             body = await response.Content.ReadAsByteArrayAsync(timeoutCts.Token).ConfigureAwait(false);
             statusCode = response.StatusCode;
             contentType = response.Content.Headers.ContentType?.ToString();

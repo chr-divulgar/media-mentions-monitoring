@@ -7,5 +7,6 @@ import { FirebaseAdminModule } from '../firebase/firebase-admin.module';
   imports: [FirebaseAdminModule],
   controllers: [ClientsController],
   providers: [ClientsService],
+  exports: [ClientsService],
 })
 export class ClientsModule {}

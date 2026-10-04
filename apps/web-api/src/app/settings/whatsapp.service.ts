@@ -40,6 +40,29 @@ export class WhatsAppService {
     }
   }
 
+  /**
+   * Sends a text and/or an mp3 file to one recipient (phone number or group JID) through the
+   * worker's Baileys session. Throws unless the sidecar confirms the send.
+   */
+  async send(number: string, message?: string, audioPath?: string): Promise<void> {
+    const workerUrl = process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
+
+    const response = await fetch(`${workerUrl}/whatsapp/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number, message, audioPath }),
+      // Above the worker's own 30s relay timeout.
+      signal: AbortSignal.timeout(35000),
+    });
+
+    // The worker answers 200 { status: 'worker_unreachable' } when the sidecar is down, so a 2xx
+    // alone is not proof of delivery — only the sidecar's own { success: true } is.
+    const data = (await response.json().catch(() => ({}))) as { success?: boolean; message?: string };
+    if (!response.ok || data.success !== true) {
+      throw new Error(data.message ?? 'WhatsApp no disponible');
+    }
+  }
+
   async getGroups(): Promise<WhatsAppGroupsDto> {
     const workerUrl = process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
 

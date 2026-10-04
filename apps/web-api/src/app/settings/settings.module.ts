@@ -9,5 +9,6 @@ import { WhatsAppService } from './whatsapp.service';
 @Module({
   controllers: [SettingsController, YouTubeController, WhatsAppController],
   providers: [SettingsService, YouTubeService, WhatsAppService],
+  exports: [WhatsAppService],
 })
 export class SettingsModule {}
