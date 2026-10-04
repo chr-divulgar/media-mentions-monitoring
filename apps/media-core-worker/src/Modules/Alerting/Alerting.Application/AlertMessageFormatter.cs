@@ -21,9 +21,11 @@ public static class AlertMessageFormatter
             return null;
         }
 
+        var banner = LevelBanner(alert.Level);
+
         if (string.Equals(alert.Media, "internet", StringComparison.OrdinalIgnoreCase))
         {
-            return FormatWebArticle(alert);
+            return banner + FormatWebArticle(alert);
         }
 
         var body = alert.Type switch
@@ -36,8 +38,19 @@ public static class AlertMessageFormatter
         var titleCaseKeywords = new CultureInfo("en-US", useUserOverride: false).TextInfo
             .ToTitleCase(string.Join(" , ", alert.Words));
 
-        return $"*{titleCaseKeywords}*\n*{alert.Platform}*\n({alert.StartTime:HH:mm:ss}_{alert.EndTime:HH:mm:ss})\n{body}";
+        return $"{banner}*{titleCaseKeywords}*\n*{alert.Platform}*\n({alert.StartTime:HH:mm:ss}_{alert.EndTime:HH:mm:ss})\n{body}";
     }
+
+    // N1 is the baseline and stays unmarked, so every existing message is unchanged; only the
+    // levels that ask for more attention (N2+) announce themselves, first, where it is seen in the
+    // notification preview.
+    private static string LevelBanner(AlertLevel level) => level switch
+    {
+        AlertLevel.FollowUp => "*SEGUIMIENTO (N2)*\n",
+        AlertLevel.Risk => "*RIESGO (N3)*\n",
+        AlertLevel.Crisis => "*CRISIS (N4)*\n",
+        _ => string.Empty,
+    };
 
     // A web mention has no recording window, so the (HH:mm:ss_HH:mm:ss) range the audio format
     // uses would be meaningless here — the content itself (title, paragraph, link) is the evidence.

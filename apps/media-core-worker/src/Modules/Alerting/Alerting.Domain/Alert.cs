@@ -13,7 +13,9 @@ public sealed class Alert
         string clientName,
         AlertType type,
         string? title = null,
-        string? url = null)
+        string? url = null,
+        AlertLevel level = AlertLevel.Informative,
+        DateTimeOffset? capturedAt = null)
     {
         Text = text ?? throw new ArgumentNullException(nameof(text));
         StartTime = startTime;
@@ -26,6 +28,8 @@ public sealed class Alert
         Type = type;
         Title = title;
         Url = url;
+        Level = level;
+        CapturedAt = capturedAt ?? endTime;
     }
 
     public string Text { get; }
@@ -50,4 +54,11 @@ public sealed class Alert
     public string? Title { get; }
 
     public string? Url { get; }
+
+    public AlertLevel Level { get; }
+
+    // When the platform got hold of the content — the SLA clock (RQ-031) starts here. For audio
+    // it is the end of the recording; a web article was published earlier than the worker found
+    // it, so there it is the moment of detection, not the publish time held in EndTime.
+    public DateTimeOffset CapturedAt { get; }
 }

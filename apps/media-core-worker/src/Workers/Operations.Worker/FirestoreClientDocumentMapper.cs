@@ -48,7 +48,7 @@ internal static class FirestoreClientDocumentMapper
                 GetString(addFields, "after") ?? string.Empty))
             .ToArray();
 
-        return new KeywordConfig(value, adds);
+        return new KeywordConfig(value, adds, AlertLevelExtensions.Parse(GetString(wordFields, "level")));
     }
 
     private static string? GetString(JsonElement fields, string name) =>

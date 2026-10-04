@@ -40,4 +40,60 @@ public sealed class AlertMessageFormatterTests
             "*Petroleo*\n*El Tiempo*\n*Sube el petroleo*\nEl barril subio esta semana.\nhttps://eltiempo.com/nota",
             message);
     }
+
+    [Fact]
+    public void Format_leaves_an_informative_audio_alert_unchanged()
+    {
+        var alert = new Alert("se derramo petroleo en el pozo", At, At.AddSeconds(20), "tv", "CaracolTV", "file.opus", ["petroleo"], "Ecopetrol", AlertType.New);
+
+        Assert.StartsWith("*Petroleo*", AlertMessageFormatter.Format(alert));
+    }
+
+    [Theory]
+    [InlineData(AlertLevel.FollowUp, "*SEGUIMIENTO (N2)*")]
+    [InlineData(AlertLevel.Risk, "*RIESGO (N3)*")]
+    [InlineData(AlertLevel.Crisis, "*CRISIS (N4)*")]
+    public void Format_puts_the_level_banner_first_for_n2_and_above(AlertLevel level, string banner)
+    {
+        var alert = new Alert(
+            "se derramo petroleo en el pozo", At, At.AddSeconds(20), "tv", "CaracolTV", "file.opus",
+            ["petroleo"], "Ecopetrol", AlertType.New, level: level);
+
+        Assert.StartsWith(banner + "\n*Petroleo*", AlertMessageFormatter.Format(alert));
+    }
+
+    [Fact]
+    public void Format_puts_the_level_banner_first_on_web_articles_too()
+    {
+        var alert = new Alert(
+            "texto", At, At, "internet", "El Tiempo", string.Empty,
+            ["petroleo"], "Ecopetrol", AlertType.New, title: "Titulo", url: "https://x.co/a", level: AlertLevel.Risk);
+
+        Assert.StartsWith("*RIESGO (N3)*\n*Petroleo*", AlertMessageFormatter.Format(alert));
+    }
+}
+
+public sealed class AlertLevelTests
+{
+    [Theory]
+    [InlineData("N1", AlertLevel.Informative)]
+    [InlineData("n2", AlertLevel.FollowUp)]
+    [InlineData("N3", AlertLevel.Risk)]
+    [InlineData(" N4 ", AlertLevel.Crisis)]
+    [InlineData("", AlertLevel.Informative)]
+    [InlineData(null, AlertLevel.Informative)]
+    [InlineData("N9", AlertLevel.Informative)]
+    public void Parse_reads_the_label_and_falls_back_to_informative(string? label, AlertLevel expected)
+    {
+        Assert.Equal(expected, AlertLevelExtensions.Parse(label));
+    }
+
+    [Fact]
+    public void ToLabel_round_trips_every_level()
+    {
+        foreach (var level in Enum.GetValues<AlertLevel>())
+        {
+            Assert.Equal(level, AlertLevelExtensions.Parse(level.ToLabel()));
+        }
+    }
 }

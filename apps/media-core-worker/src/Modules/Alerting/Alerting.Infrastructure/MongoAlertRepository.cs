@@ -40,9 +40,17 @@ public sealed class MongoAlertRepository : IAlertRepository
             { "type", alert.Type.ToLegacyLabel() },
             { "title", alert.Title is null ? BsonNull.Value : alert.Title },
             { "url", alert.Url is null ? BsonNull.Value : alert.Url },
+            { "level", alert.Level.ToLabel() },
             { "recipients", new BsonArray(recipients) },
             { "notifiedRecipients", new BsonArray() },
-            { "fullyNotified", recipients.Count == 0 }
+            { "fullyNotified", recipients.Count == 0 },
+            // SLA bookkeeping (RQ-031): capturedAt is when the platform got the content, detectedAt
+            // when this alert was raised, firstNotifiedAt/slaSeconds are filled in by the first
+            // confirmed delivery (MarkRecipientsNotifiedAsync).
+            { "capturedAt", alert.CapturedAt.UtcDateTime },
+            { "detectedAt", DateTime.UtcNow },
+            { "firstNotifiedAt", BsonNull.Value },
+            { "slaSeconds", BsonNull.Value }
         };
 
         await alertCollection.InsertOneAsync(document, options: null, cancellationToken).ConfigureAwait(false);
@@ -60,6 +68,8 @@ public sealed class MongoAlertRepository : IAlertRepository
         var update = Builders<BsonDocument>.Update.AddToSetEach("notifiedRecipients", recipients);
         await alertCollection.UpdateOneAsync(filter, update, cancellationToken: cancellationToken).ConfigureAwait(false);
 
+        await StampSlaOnFirstDeliveryAsync(filter, cancellationToken).ConfigureAwait(false);
+
         // Recompute fullyNotified from the just-updated document — a second round trip, but alert
         // volume is low enough that this is simpler and safer than an aggregation-pipeline update.
         var refreshed = await alertCollection.Find(filter).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
@@ -74,6 +84,35 @@ public sealed class MongoAlertRepository : IAlertRepository
         await alertCollection.UpdateOneAsync(
             filter,
             Builders<BsonDocument>.Update.Set("fullyNotified", intended.IsSubsetOf(notified)),
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    // The SLA is measured to the FIRST confirmed delivery: once somebody has been told, the alert
+    // met or missed its target; a later retry for a slower recipient must not move that number.
+    // The null-matching filter (also matches alerts stored before this field existed) makes the
+    // stamp happen exactly once even if two sends race.
+    private async Task StampSlaOnFirstDeliveryAsync(FilterDefinition<BsonDocument> alertFilter, CancellationToken cancellationToken)
+    {
+        var firstDelivery = Builders<BsonDocument>.Filter.And(
+            alertFilter,
+            Builders<BsonDocument>.Filter.Eq("firstNotifiedAt", BsonNull.Value));
+
+        var stamped = await alertCollection.FindOneAndUpdateAsync(
+            firstDelivery,
+            Builders<BsonDocument>.Update.Set("firstNotifiedAt", DateTime.UtcNow),
+            new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After },
+            cancellationToken).ConfigureAwait(false);
+
+        // Alerts written before SLA tracking have no capturedAt — nothing to measure them against.
+        if (stamped is null || !stamped.TryGetValue("capturedAt", out var capturedAt) || capturedAt.IsBsonNull)
+        {
+            return;
+        }
+
+        var seconds = Math.Max(0, (stamped["firstNotifiedAt"].ToUniversalTime() - capturedAt.ToUniversalTime()).TotalSeconds);
+        await alertCollection.UpdateOneAsync(
+            alertFilter,
+            Builders<BsonDocument>.Update.Set("slaSeconds", Math.Round(seconds, 1)),
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
@@ -164,6 +203,8 @@ public sealed class MongoAlertRepository : IAlertRepository
             document["clientName"].AsString,
             AlertTypeExtensions.FromLegacyLabel(document["type"].AsString),
             document.TryGetValue("title", out var title) && !title.IsBsonNull ? title.AsString : null,
-            document.TryGetValue("url", out var url) && !url.IsBsonNull ? url.AsString : null);
+            document.TryGetValue("url", out var url) && !url.IsBsonNull ? url.AsString : null,
+            document.TryGetValue("level", out var level) && level.IsString ? AlertLevelExtensions.Parse(level.AsString) : AlertLevel.Informative,
+            document.TryGetValue("capturedAt", out var capturedAt) && capturedAt.IsValidDateTime ? capturedAt.ToUniversalTime() : null);
     }
 }

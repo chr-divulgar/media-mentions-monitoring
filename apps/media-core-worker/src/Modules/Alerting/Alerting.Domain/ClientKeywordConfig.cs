@@ -2,7 +2,7 @@ namespace MediaOpsCore.Modules.Alerting.Domain;
 
 public sealed record KeywordAdContext(string Before, string After);
 
-public sealed record KeywordConfig(string Value, IReadOnlyList<KeywordAdContext> Adds);
+public sealed record KeywordConfig(string Value, IReadOnlyList<KeywordAdContext> Adds, AlertLevel Level = AlertLevel.Informative);
 
 // AlertRecipientsByMedia mirrors Firestore's `clients.alerts` field (packages/shared/models/clients.dto.ts):
 // mediaName -> WhatsApp numbers for that media, for any media type in the `media_types` catalog

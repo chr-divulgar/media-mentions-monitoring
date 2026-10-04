@@ -18,6 +18,22 @@ export class AlertDto {
   // by AlertsService.getAlerts so the audio-cut flow knows whether endTime/startTime
   // are real UTC (worker) or the legacy mislabeled-local-time quirk.
   readonly source?: 'legacy' | 'worker';
+  /** N1..N4 (worker alerts only). */
+  readonly level?: string;
+  /** Seconds from capture to the first confirmed delivery (worker alerts, RQ-031); absent until sent. */
+  readonly slaSeconds?: number;
+}
+
+/** Target for "alert within 5 minutes of capture" (AMB-001); configurable per level later. */
+export const ALERT_SLA_TARGET_SECONDS = 300;
+
+export class AlertSlaSummaryDto {
+  /** Worker alerts in the range that were actually delivered (have a measured SLA). */
+  readonly measured!: number;
+  readonly withinTarget!: number;
+  readonly targetSeconds!: number;
+  readonly p50Seconds!: number | null;
+  readonly p95Seconds!: number | null;
 }
 
 export class GetAlertsDto {

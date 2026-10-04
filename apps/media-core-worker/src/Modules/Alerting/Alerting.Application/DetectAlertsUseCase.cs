@@ -57,7 +57,9 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
 
             var type = await ClassifyAsync(platform, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false);
 
-            var alert = new Alert(text, startTime, endTime, media, platform, filePath, matchedWords, client.Name, type);
+            var alert = new Alert(
+                text, startTime, endTime, media, platform, filePath, matchedWords, client.Name, type,
+                level: HighestLevel(client, matchedWords));
             var recipients = ResolveRecipients(client, media, alert);
             var alertId = await alertRepository.InsertAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
 
@@ -123,7 +125,9 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
 
             var alert = new Alert(
                 firstParagraph, publishedAt, publishedAt, "internet", outlet, string.Empty,
-                clientMatchedWords, client.Name, AlertType.New, title, url);
+                clientMatchedWords, client.Name, AlertType.New, title, url,
+                level: HighestLevel(client, clientMatchedWords),
+                capturedAt: DateTimeOffset.UtcNow);
             var recipients = ResolveRecipients(client, "internet", alert);
             var alertId = await alertRepository.InsertAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
 
@@ -133,6 +137,15 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
 
         return new WebArticleAlertOutcome(matchedClients, matchedKeywords.ToArray(), recipientCount, notifiedCount);
     }
+
+    // A mention is as severe as the most severe keyword it matched ("derrame" alone makes the whole
+    // alert N4 even when "petroleo", also matched, is N1).
+    private static AlertLevel HighestLevel(ClientKeywordConfig client, IReadOnlyList<string> matchedWords) =>
+        client.Keywords
+            .Where(keyword => matchedWords.Contains(keyword.Value, StringComparer.OrdinalIgnoreCase))
+            .Select(keyword => keyword.Level)
+            .DefaultIfEmpty(AlertLevel.Informative)
+            .Max();
 
     // CaptureSource.Media says "television" — the capture module's own plugin/profile vocabulary
     // (FirestoreDocumentMapper.NormalizeMedia's doc comment: "Only the worker's own in-memory

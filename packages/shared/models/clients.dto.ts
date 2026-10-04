@@ -3,9 +3,14 @@ export class WordAddDto {
   readonly after?: string;
 }
 
+/** N1 informativa · N2 seguimiento · N3 riesgo · N4 crisis (RQ-034). Missing means N1. */
+export type AlertLevelLabel = 'N1' | 'N2' | 'N3' | 'N4';
+
 export class WordDto {
   readonly value!: string;
   readonly adds!: WordAddDto[];
+  /** Severity given to any alert this keyword triggers; the highest matched keyword wins. */
+  readonly level?: AlertLevelLabel;
 }
 
 export class TopicItemDto {

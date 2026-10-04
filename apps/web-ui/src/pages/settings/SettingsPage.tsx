@@ -1083,6 +1083,22 @@ const ClientModal: React.FC<{
                   >
                     <Input placeholder="ej. ecopetrol" />
                   </Form.Item>
+                  <Form.Item
+                    name={[name, "level"]}
+                    label="Nivel de alerta"
+                    tooltip="Severidad de las alertas que dispare esta palabra; si coinciden varias, manda la más alta."
+                    initialValue="N1"
+                    style={{ marginBottom: 8 }}
+                  >
+                    <Select
+                      options={[
+                        { value: "N1", label: "N1 · Informativa" },
+                        { value: "N2", label: "N2 · Seguimiento" },
+                        { value: "N3", label: "N3 · Riesgo" },
+                        { value: "N4", label: "N4 · Crisis" },
+                      ]}
+                    />
+                  </Form.Item>
                   <Text
                     style={{ fontSize: 12, display: "block", marginBottom: 4 }}
                   >
@@ -1094,7 +1110,7 @@ const ClientModal: React.FC<{
               <Button
                 type="dashed"
                 icon={<PlusOutlined />}
-                onClick={() => add({ value: "", adds: [] })}
+                onClick={() => add({ value: "", adds: [], level: "N1" })}
                 block
               >
                 Agregar palabra clave

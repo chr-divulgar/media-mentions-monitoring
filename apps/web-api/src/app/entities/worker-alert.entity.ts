@@ -44,4 +44,11 @@ export class WorkerAlert {
 
   @Column()
   url?: string;
+
+  // N1..N4 and the SLA bookkeeping the worker stamps (RQ-031); absent on older alerts.
+  @Column()
+  level?: string;
+
+  @Column()
+  slaSeconds?: number;
 }

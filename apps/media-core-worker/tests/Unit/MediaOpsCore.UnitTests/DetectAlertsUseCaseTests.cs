@@ -272,6 +272,57 @@ public sealed class DetectAlertsUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_assigns_the_highest_level_among_the_matched_keywords()
+    {
+        var repository = new InMemoryAlertRepository();
+        var client = new ClientKeywordConfig(
+            "Ecopetrol",
+            new[]
+            {
+                new KeywordConfig("petroleo", Array.Empty<KeywordAdContext>()),
+                new KeywordConfig("derrame", Array.Empty<KeywordAdContext>(), AlertLevel.Crisis),
+                new KeywordConfig("tarifa", Array.Empty<KeywordAdContext>(), AlertLevel.FollowUp),
+            },
+            new Dictionary<string, IReadOnlyList<string>>());
+        var useCase = CreateUseCase(repository, client);
+
+        await useCase.ExecuteAsync("CaracolTV", "tv", "file.opus", "un derrame de petroleo en el pozo", BaseTime, BaseTime.AddSeconds(20));
+
+        Assert.Equal(AlertLevel.Crisis, Assert.Single(repository.Inserted).Level);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_defaults_to_the_informative_level_and_captures_at_the_end_of_the_recording()
+    {
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "petroleo"));
+
+        await useCase.ExecuteAsync("CaracolTV", "tv", "file.opus", "se derramo petroleo", BaseTime, BaseTime.AddSeconds(20));
+
+        var alert = Assert.Single(repository.Inserted);
+        Assert.Equal(AlertLevel.Informative, alert.Level);
+        Assert.Equal(BaseTime.AddSeconds(20), alert.CapturedAt);
+    }
+
+    [Fact]
+    public async Task ExecuteWebArticleAsync_takes_the_level_from_the_matched_keywords_and_captures_now_not_at_publication()
+    {
+        var repository = new InMemoryAlertRepository();
+        var client = new ClientKeywordConfig(
+            "Ecopetrol",
+            new[] { new KeywordConfig("petroleo", Array.Empty<KeywordAdContext>(), AlertLevel.Risk) },
+            new Dictionary<string, IReadOnlyList<string>>());
+        var useCase = CreateUseCase(repository, client);
+        var before = DateTimeOffset.UtcNow;
+
+        await useCase.ExecuteWebArticleAsync("El Tiempo", "https://eltiempo.com/nota", "Sube el petroleo", "texto", PublishedAt);
+
+        var alert = Assert.Single(repository.Inserted);
+        Assert.Equal(AlertLevel.Risk, alert.Level);
+        Assert.True(alert.CapturedAt >= before, "web alerts are captured when the worker found the article, not when it was published");
+    }
+
+    [Fact]
     public async Task ExecuteWebArticleAsync_matches_no_clients_when_no_keyword_appears()
     {
         var repository = new InMemoryAlertRepository();

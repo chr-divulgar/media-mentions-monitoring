@@ -5,6 +5,8 @@ import utc from "dayjs/plugin/utc";
 dayjs.extend(utc);
 import {
   AlertDto,
+  AlertSlaSummaryDto,
+  ALERT_SLA_TARGET_SECONDS,
   dateFormat,
   DateRange,
   transformText,
@@ -16,7 +18,7 @@ import type {
   TableColumnType,
   TableProps,
 } from "antd";
-import { Button, Input, Space, Table } from "antd";
+import { Alert as AntAlert, Button, Input, Space, Table, Tag } from "antd";
 import type { FilterDropdownProps } from "antd/es/table/interface";
 import Highlighter from "react-highlight-words";
 import AlertsModal from "./AlertsModal";
@@ -201,6 +203,20 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
         .then((res) => res.data),
   });
 
+  // SLA compliance (RQ-031) only exists for the worker's alerts. Declared before the early
+  // returns below so the hook order never changes between renders.
+  const { data: slaSummary } = useQuery<AlertSlaSummaryDto>({
+    queryKey: ["alertsSla", selectedDates?.[0]?.format(dateFormat), selectedDates?.[1]?.format(dateFormat)],
+    queryFn: () =>
+      api
+        .post(`/alerts/sla`, {
+          startDate: selectedDates?.[0]?.format(dateFormat),
+          endDate: selectedDates?.[1]?.format(dateFormat),
+        })
+        .then((res) => res.data),
+    enabled: source === "worker" && !!selectedDates?.[0] && !!selectedDates?.[1],
+  });
+
   if (isLoadingAlerts) return <div>Loading...</div>;
   if (errorAlerts) return <div>Error loading Alerts</div>;
   //#endregion
@@ -268,6 +284,35 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
       ellipsis: true,
       width: "150px",
     },
+    ...(source === "worker"
+      ? [
+          {
+            title: "Nivel",
+            dataIndex: "level",
+            key: "level",
+            width: "70px",
+            render: (level?: string) => {
+              const label = level ?? "N1";
+              const color = { N2: "gold", N3: "orange", N4: "red" }[label];
+              return <Tag color={color}>{label}</Tag>;
+            },
+          },
+          {
+            title: "SLA",
+            dataIndex: "slaSeconds",
+            key: "slaSeconds",
+            width: "80px",
+            render: (seconds?: number) =>
+              seconds === undefined || seconds === null ? (
+                "—"
+              ) : (
+                <span style={{ color: seconds > ALERT_SLA_TARGET_SECONDS ? "#cf1322" : undefined }}>
+                  {seconds < 60 ? `${Math.round(seconds)} s` : `${(seconds / 60).toFixed(1)} min`}
+                </span>
+              ),
+          },
+        ]
+      : []),
     {
       title: "Palabras",
       dataIndex: "words",
@@ -340,6 +385,14 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
   return (
     <>
       {title && <h3>{title}</h3>}
+      {slaSummary && slaSummary.measured > 0 && (
+        <AntAlert
+          style={{ marginBottom: 8 }}
+          showIcon
+          type={slaSummary.withinTarget === slaSummary.measured ? "success" : "warning"}
+          message={`SLA ≤ ${Math.round(slaSummary.targetSeconds / 60)} min: ${slaSummary.withinTarget} de ${slaSummary.measured} alertas entregadas a tiempo (mediana ${Math.round(slaSummary.p50Seconds ?? 0)} s, p95 ${Math.round(slaSummary.p95Seconds ?? 0)} s)`}
+        />
+      )}
       <Table {...tableProps} />
       <AlertsModal
         key={modalKey}

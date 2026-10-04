@@ -7,6 +7,8 @@ import {
   MongoRepository,
 } from 'typeorm';
 import {
+  ALERT_SLA_TARGET_SECONDS,
+  AlertSlaSummaryDto,
   GetAlertsDto,
   GetSummaryDto,
   GetTranscriptionDto,
@@ -134,6 +136,46 @@ export class AlertsService {
     // know whether startTime/endTime are real UTC (worker) or legacy's mislabeled-local-time.
     const resolvedSource = source === 'worker' ? 'worker' : 'legacy';
     return results.map((alert) => ({ ...alert, source: resolvedSource }));
+  }
+
+  /**
+   * SLA compliance of the worker's delivered alerts in a date range (RQ-031): how many met the
+   * capture-to-first-delivery target and the median / 95th percentile. Only alerts that were
+   * actually delivered carry a measurement; the day boundary is Bogotá, like getAlerts.
+   */
+  async getSlaSummary(startDate: string, endDate: string): Promise<AlertSlaSummaryDto> {
+    if (!startDate || !endDate) {
+      throw new Error('startDate and endDate are required');
+    }
+
+    const alerts = await this.workerAlertsRepo.find({
+      where: {
+        endTime: {
+          $gte: new Date(`${startDate}T00:00:00.000-05:00`),
+          $lte: new Date(`${endDate}T23:59:59.999-05:00`),
+        },
+        slaSeconds: { $ne: null },
+      } as unknown as FindOptionsWhere<WorkerAlert>,
+    });
+
+    const seconds = alerts
+      .map((alert) => alert.slaSeconds)
+      .filter((value): value is number => typeof value === 'number')
+      .sort((a, b) => a - b);
+
+    // Nearest-rank percentile: simple, and exact for the small counts this runs on.
+    const percentile = (p: number): number | null =>
+      seconds.length === 0
+        ? null
+        : seconds[Math.min(seconds.length - 1, Math.ceil((p / 100) * seconds.length) - 1)];
+
+    return {
+      measured: seconds.length,
+      withinTarget: seconds.filter((value) => value <= ALERT_SLA_TARGET_SECONDS).length,
+      targetSeconds: ALERT_SLA_TARGET_SECONDS,
+      p50Seconds: percentile(50),
+      p95Seconds: percentile(95),
+    };
   }
 
   async getText(

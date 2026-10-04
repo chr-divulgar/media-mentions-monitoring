@@ -32,6 +32,21 @@ export class AlertsController {
     }
   }
 
+  @Post('sla')
+  async getSlaSummary(@Body() body: { startDate: string; endDate: string }) {
+    try {
+      return await this.alertService.getSlaSummary(body?.startDate, body?.endDate);
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: `There was an error processing the request getSlaSummary ${error}`,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Post('getText')
   async getText(@Body() getTranscriptionDto: GetTranscriptionDto) {
     try {
