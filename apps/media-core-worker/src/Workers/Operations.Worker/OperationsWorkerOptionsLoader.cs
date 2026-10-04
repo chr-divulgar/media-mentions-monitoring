@@ -64,7 +64,9 @@ public static class OperationsWorkerOptionsLoader
         int? WebNewsKeywordsPerQuery,
         int? WebNewsMaxConcurrency,
         int? WebNewsRequestTimeoutSeconds,
-        int? WebNewsMaxFailedAttempts);
+        int? WebNewsMaxFailedAttempts,
+        bool? DailyHeadlinesEnabled,
+        string? DailyHeadlinesTime);
 
     public static OperationsWorkerOptions Load(string? configPath = null)
     {
@@ -381,6 +383,16 @@ public static class OperationsWorkerOptionsLoader
         if (!string.IsNullOrWhiteSpace(model.WhatsAppAuthStatePath))
         {
             options.WhatsAppAuthStatePath = model.WhatsAppAuthStatePath;
+        }
+
+        if (model.DailyHeadlinesEnabled.HasValue)
+        {
+            options.DailyHeadlinesEnabled = model.DailyHeadlinesEnabled.Value;
+        }
+
+        if (TimeOnly.TryParseExact(model.DailyHeadlinesTime, "HH:mm", out _))
+        {
+            options.DailyHeadlinesTime = model.DailyHeadlinesTime!;
         }
 
         if (model.WebNewsEnabled.HasValue)

@@ -127,7 +127,9 @@ else
 {
 	builder.Services.AddSingleton<IClientConfigRepository, NullClientConfigRepository>();
 }
-builder.Services.AddSingleton<IAlertRepository, MongoAlertRepository>();
+builder.Services.AddSingleton<MongoAlertRepository>();
+builder.Services.AddSingleton<IAlertRepository>(sp => sp.GetRequiredService<MongoAlertRepository>());
+builder.Services.AddSingleton<IDailyHeadlinesSource>(sp => sp.GetRequiredService<MongoAlertRepository>());
 builder.Services.AddSingleton(new WhatsAppSidecarOptions
 {
 	BaseUrl = $"http://localhost:{options.WhatsAppSidecarPort}"
@@ -144,6 +146,21 @@ builder.Services.AddSingleton<IAlertNotifier>(sp => new RoutingAlertNotifier(
 	sp.GetRequiredService<HttpWhatsAppAlertNotifier>(),
 	options.Smtp is null ? null : sp.GetRequiredService<SmtpAlertEmailNotifier>(),
 	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RoutingAlertNotifier>>()));
+// Daily headlines digest (RQ-035) — off unless DailyHeadlinesEnabled.
+if (options.DailyHeadlinesEnabled)
+{
+	builder.Services.AddSingleton<IMessageNotifier>(sp => new RoutingMessageNotifier(
+		sp.GetRequiredService<HttpWhatsAppAlertNotifier>(),
+		options.Smtp is null ? null : sp.GetRequiredService<SmtpAlertEmailNotifier>(),
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RoutingMessageNotifier>>()));
+	builder.Services.AddSingleton<IDailyDigestLog>(sp => new MongoDailyDigestLog(sp.GetRequiredService<MongoAlertingOptions>()));
+	builder.Services.AddSingleton<IDailyHeadlinesDigestUseCase, DailyHeadlinesDigestUseCase>();
+	builder.Services.AddHostedService(sp => new DailyHeadlinesWorker(
+		sp.GetRequiredService<IDailyHeadlinesDigestUseCase>(),
+		sp.GetRequiredService<IDailyDigestLog>(),
+		TimeOnly.ParseExact(options.DailyHeadlinesTime, "HH:mm"),
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DailyHeadlinesWorker>>()));
+}
 builder.Services.AddSingleton<WhatsAppSidecarProcessSupervisor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WhatsAppSidecarProcessSupervisor>());
 builder.Services.AddSingleton<IDetectAlertsUseCase, DetectAlertsUseCase>();

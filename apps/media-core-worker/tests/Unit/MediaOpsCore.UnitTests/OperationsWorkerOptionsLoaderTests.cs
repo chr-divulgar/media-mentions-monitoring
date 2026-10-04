@@ -33,6 +33,29 @@ public sealed class OperationsWorkerOptionsLoaderTests
         Assert.Equal(4, options.WebNewsMaxConcurrency);
         Assert.Equal(20, options.WebNewsRequestTimeoutSeconds);
         Assert.Equal(3, options.WebNewsMaxFailedAttempts);
+        Assert.False(options.DailyHeadlinesEnabled);
+        Assert.Equal("07:00", options.DailyHeadlinesTime);
+    }
+
+    [Fact]
+    public void Load_should_read_the_daily_headlines_schedule_and_ignore_a_malformed_time()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-digest-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            File.WriteAllText(tempPath, """{ "dailyHeadlinesEnabled": true, "dailyHeadlinesTime": "6:30pm" }""");
+            var malformed = OperationsWorkerOptionsLoader.Load(tempPath);
+            Assert.True(malformed.DailyHeadlinesEnabled);
+            Assert.Equal("07:00", malformed.DailyHeadlinesTime);
+
+            File.WriteAllText(tempPath, """{ "dailyHeadlinesTime": "06:30" }""");
+            Assert.Equal("06:30", OperationsWorkerOptionsLoader.Load(tempPath).DailyHeadlinesTime);
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
     }
 
     [Fact]

@@ -8,7 +8,7 @@ namespace MediaOpsCore.Modules.Alerting.Infrastructure;
 // Writes the same document shape as Helper.InsertAlert (media-monitor/apps/w-service/Helper.cs:469-472)
 // so a future cutover (pointing AlertCollectionName at "alert" instead of "workerAlert") needs no data
 // transform. Dedup lookups are scoped to this same collection only — see MongoAlertingOptions.
-public sealed class MongoAlertRepository : IAlertRepository
+public sealed class MongoAlertRepository : IAlertRepository, IDailyHeadlinesSource
 {
     private static readonly string[] RepeatCheckTypes = { "Nueva", "RepetidaOtraPlataforma" };
 
@@ -173,6 +173,19 @@ public sealed class MongoAlertRepository : IAlertRepository
             // runs at today — never worth failing alert detection over.
             Interlocked.Exchange(ref urlIndexEnsured, 0);
         }
+    }
+
+    // "The day's headlines" are by publication time (endTime holds the publish time for web
+    // mentions), so a story found late still lands in the digest of the day it ran.
+    public async Task<IReadOnlyList<Alert>> GetAlertsAsync(DateTimeOffset fromUtc, DateTimeOffset toUtc, string media, CancellationToken cancellationToken = default)
+    {
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("media", media),
+            Builders<BsonDocument>.Filter.Gte("endTime", fromUtc.UtcDateTime),
+            Builders<BsonDocument>.Filter.Lt("endTime", toUtc.UtcDateTime));
+
+        var documents = await alertCollection.Find(filter).ToListAsync(cancellationToken).ConfigureAwait(false);
+        return documents.Select(ToAlert).ToArray();
     }
 
     public async Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, CancellationToken cancellationToken = default)

@@ -110,6 +110,12 @@ public sealed class OperationsWorkerOptions
     // verified (see PLAN_MAESTRO.md's web-news plan for the manual verification steps).
     public bool WebNewsEnabled { get; set; } = false;
 
+    // Daily headlines digest (RQ-035): off by default because it messages every client's internet
+    // recipients; DailyHeadlinesTime is a Bogota wall-clock "HH:mm".
+    public bool DailyHeadlinesEnabled { get; set; } = false;
+
+    public string DailyHeadlinesTime { get; set; } = "07:00";
+
     public int WebNewsKeywordsPerQuery { get; set; } = 8;
 
     public int WebNewsMaxConcurrency { get; set; } = 4;

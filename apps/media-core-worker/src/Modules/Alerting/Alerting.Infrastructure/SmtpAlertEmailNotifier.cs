@@ -9,7 +9,7 @@ namespace MediaOpsCore.Modules.Alerting.Infrastructure;
 // Sends the alert as a plain-text email over SMTP. Best-effort per the IAlertNotifier contract: a
 // bad address or a down mail server is logged and reported as "not delivered" (so it is retried),
 // never thrown into alert detection.
-public sealed class SmtpAlertEmailNotifier : IAlertNotifier
+public sealed class SmtpAlertEmailNotifier : IAlertNotifier, IMessageNotifier
 {
     private readonly SmtpAlertOptions options;
     private readonly ILogger<SmtpAlertEmailNotifier> logger;
@@ -30,6 +30,22 @@ public sealed class SmtpAlertEmailNotifier : IAlertNotifier
             return Array.Empty<string>();
         }
 
+        var succeeded = new List<string>(recipients.Count);
+        foreach (var recipient in recipients)
+        {
+            if (await SendOneAsync(recipient, email, cancellationToken).ConfigureAwait(false))
+            {
+                succeeded.Add(recipient);
+            }
+        }
+
+        return succeeded;
+    }
+
+    // Free-form text (the daily digest); WhatsApp *bold* markers are dropped as in alert emails.
+    public async Task<IReadOnlyList<string>> SendAsync(string text, IReadOnlyList<string> recipients, string? subject = null, CancellationToken cancellationToken = default)
+    {
+        var email = new AlertEmail(subject ?? "Alertas de monitoreo de medios", text.Replace("*", string.Empty));
         var succeeded = new List<string>(recipients.Count);
         foreach (var recipient in recipients)
         {

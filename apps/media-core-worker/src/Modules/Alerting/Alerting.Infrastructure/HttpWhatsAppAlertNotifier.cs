@@ -10,7 +10,7 @@ namespace MediaOpsCore.Modules.Alerting.Infrastructure;
 // contract: every failure is logged and swallowed here, never rethrown — a client's WhatsApp
 // number being unreachable, or the sidecar itself being mid-restart, must not affect alert
 // detection/persistence for anyone else.
-public sealed class HttpWhatsAppAlertNotifier : IAlertNotifier
+public sealed class HttpWhatsAppAlertNotifier : IAlertNotifier, IMessageNotifier
 {
     private readonly HttpClient httpClient;
     private readonly WhatsAppSidecarOptions options;
@@ -37,6 +37,21 @@ public sealed class HttpWhatsAppAlertNotifier : IAlertNotifier
         foreach (var number in recipients)
         {
             if (await SendOneAsync(number, message, cancellationToken).ConfigureAwait(false))
+            {
+                succeeded.Add(number);
+            }
+        }
+
+        return succeeded;
+    }
+
+    // Free-form text (the daily digest); the subject only exists for email and is ignored here.
+    public async Task<IReadOnlyList<string>> SendAsync(string text, IReadOnlyList<string> recipients, string? subject = null, CancellationToken cancellationToken = default)
+    {
+        var succeeded = new List<string>(recipients.Count);
+        foreach (var number in recipients)
+        {
+            if (await SendOneAsync(number, text, cancellationToken).ConfigureAwait(false))
             {
                 succeeded.Add(number);
             }

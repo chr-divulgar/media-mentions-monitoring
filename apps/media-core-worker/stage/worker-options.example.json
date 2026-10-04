@@ -36,6 +36,8 @@
   "webNewsMaxConcurrency": 4,
   "webNewsRequestTimeoutSeconds": 20,
   "webNewsMaxFailedAttempts": 3,
+  "dailyHeadlinesEnabled": false,
+  "dailyHeadlinesTime": "07:00",
 
   "firebaseDatabase": {
     "baseUrl": "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
