@@ -89,8 +89,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
           }
         } catch (error) {
           console.error("Error fetching user role:", error);
-          // ponytail: defaulting to "admin" here is a temporary call while the backend can fail
-          // this fetch outright (e.g. Firestore quota) — revisit once that's resolved.
+          // The backend could not answer: show the least-privileged role, never admin. (The API
+          // enforces roles itself; this only decides which screens the UI offers.)
           setUser(
             firebaseUser
               ? {
@@ -98,7 +98,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
                   email: firebaseUser.email,
                   displayName: firebaseUser.displayName,
                   photoURL: firebaseUser.photoURL,
-                  role: "admin",
+                  role: "initial",
                 }
               : null,
           );

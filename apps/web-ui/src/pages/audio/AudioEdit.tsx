@@ -11,6 +11,7 @@ import {
 import BarComponent from "../../components/Bar";
 import moment from "moment";
 import { useAlert } from "../alerts/AlertsContext";
+import { withAuthToken } from "../../services/authToken";
 
 interface AudioEditProps {
   audioFile: string;
@@ -27,7 +28,9 @@ const AudioEdit: React.FC<AudioEditProps> = ({
 }) => {
   const { selectedAlert } = useAlert();
 
-  const url = `${import.meta.env.VITE_API_LOCAL}/audio/fetchByName/${audioFile}`;
+  const url = withAuthToken(
+    `${import.meta.env.VITE_API_LOCAL}/audio/fetchByName/${audioFile}`,
+  );
 
   const [createFileDto, setCreateFileDto] = useState<CreateFileDto>(
     new CreateFileDto()

@@ -91,11 +91,11 @@ Estado: **N** no iniciado · **P** en progreso · **C** cumplido (solo con evide
 | ID | Requisito | Fuentes | Estado | % | Evidencia hoy | Fase |
 |---|---|---|---|---|---|---|
 | RQ-030 | Alertas automáticas inmediatas por palabra clave, vocero, tema, riesgo reputacional y evento; frecuencia ajustable | ANX-38, ANX-79, ANX-83, FIC-23, FIC-30 | P | 48 | `DetectAlertsUseCase.cs` (palabras, anuncios, duplicados). Corregido bug que dejaba sin destinatarios toda alerta de TV (`"television"` vs `"tv"` como clave de `alerts`, nunca coincidían) | F5 |
-| RQ-031 | SLA **≤ 5 min** desde la captura, medido y auditado por alerta | ANX-80, ANX-88 | N | 0 | Sin medición | F5 |
-| RQ-032 | Canales: correo + WhatsApp oficial; destinatarios ilimitados; canal de crisis | FIC-24, ANX-71 | P | 40 | WhatsApp no oficial, sin correo | F5 |
+| RQ-031 | SLA **≤ 5 min** desde la captura, medido y auditado por alerta | ANX-80, ANX-88 | P | 60 | Cada alerta del worker guarda `capturedAt`, `detectedAt`, `firstNotifiedAt` y `slaSeconds` (primera entrega confirmada); la tabla de alertas muestra la columna SLA y un resumen de cumplimiento (`POST /alerts/sla`). Falta: objetivo por nivel y reporte mensual | F5 |
+| RQ-032 | Canales: correo + WhatsApp oficial; destinatarios ilimitados; canal de crisis | FIC-24, ANX-71 | P | 60 | Correo por SMTP (`SMTP_HOST`/`SMTP_FROM`…, `RoutingAlertNotifier`) y WhatsApp a números **o grupos**; las notas ya salen a los destinatarios del cliente (`clients.notes`) por la misma sesión de WhatsApp. Sigue sin ser WhatsApp oficial; el correo no está probado contra un servidor real | F5 |
 | RQ-033 | Contenido: titular, audio/video, fecha, medio, bloque, duración, valor estimado, enlace; en riesgo, además alcance, tono, evolución y actores | FIC-25, FIC-26, ANX-82 | P | 35 | Audio: texto con contexto de la palabra clave. Web: titular + primer párrafo + enlace (`AlertMessageFormatter` rama `internet`, `Alert.Title`/`Alert.Url`) | F5 |
-| RQ-034 | Niveles N1 informativa, N2 seguimiento, N3 riesgo, N4 crisis, enlazados al semáforo | ANX-81, ANX-71 | N | 0 | — | F5, F8 |
-| RQ-035 | Alerta diaria de titulares de prensa y "top mediático del día" | FIC-28, FIC-29 | N | 0 | — | F5 |
+| RQ-034 | Niveles N1 informativa, N2 seguimiento, N3 riesgo, N4 crisis, enlazados al semáforo | ANX-81, ANX-71 | P | 45 | Nivel por palabra clave (UI de clientes); la alerta toma el más alto de las palabras que coinciden y los N2+ abren con un encabezado. Falta el enlace con el semáforo (F8) | F5, F8 |
+| RQ-035 | Alerta diaria de titulares de prensa y "top mediático del día" | FIC-28, FIC-29 | P | 30 | `DailyHeadlinesWorker`: resumen diario de titulares web por cliente (hora configurable, 07:00 por defecto, apagado por defecto) con un top por nivel y recencia. Supuesto: sin puntaje de impacto (RQ-027) el top se ordena por nivel; prensa y revistas llegan con F3 | F5 |
 | RQ-036 | Histórico de alertas: fecha y hora, tema, medio, nivel, alcance y clasificación reputacional | ANX-72, ANX-107 | P | 50 | Mongo `workerAlert` con seguimiento por destinatario | F5 |
 
 ### 4.5 Portal, seguridad y exportes
@@ -103,7 +103,7 @@ Estado: **N** no iniciado · **P** en progreso · **C** cumplido (solo con evide
 | ID | Requisito | Fuentes | Estado | % | Evidencia hoy | Fase |
 |---|---|---|---|---|---|---|
 | RQ-040 | Portal web 24/7, responsive, usuarios simultáneos ilimitados | ANX-23, ANX-24, ANX-25, FIC-08, FIC-11 | P | 50 | `apps/web-ui` | F6 |
-| RQ-041 | Login, roles por perfil, **auditoría de actividad**, consola de administración de usuarios; credenciales en ≤2 días hábiles | ANX-93, ANX-94, FIC-09, FIC-10 | P | 25 | Firebase Auth; roles solo en la UI; API sin guards | F6 |
+| RQ-041 | Login, roles por perfil, **auditoría de actividad**, consola de administración de usuarios; credenciales en ≤2 días hábiles | ANX-93, ANX-94, FIC-09, FIC-10 | P | 40 | Firebase Auth; guard global en el API que verifica el token y el rol (administración de usuarios solo admin); la UI envía el token en cada llamada. **En modo auditoría** (`AUTH_ENFORCE` sin definir solo registra lo que rechazaría); falta activarlo, la auditoría de actividad y el aislamiento por cliente | F6 |
 | RQ-042 | Filtros en servidor: palabra, medio, tipo, fecha, región, programa, vocero, tema, favorabilidad; paginado | ANX-27, ANX-47, FIC-17 | P | 25 | Fecha, cliente y tipo | F6 |
 | RQ-043 | Vista de registro con reproductor (audio, video, PDF); titulares del día por medio | FIC-18, FIC-20 | P | 30 | Modal de alertas con forma de onda | F6 |
 | RQ-044 | Dashboards automáticos: volumen por periodo, tipo, favorabilidad, tendencias, vocero, región (mapa de calor); contador de menciones | ANX-28, ANX-36, ANX-37, FIC-19 | P | 35 | Dashboard sobre notas manuales; exporte PPTX | F6, F8 |

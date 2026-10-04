@@ -27,54 +27,84 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
+  // uid -> last role read from Firestore. It spares Firestore a read on every request (its quota
+  // was a real problem) and gives a known-good answer during an outage instead of a guess.
+  private readonly roleCache = new Map<string, { role: string; at: number }>();
+  private static readonly ROLE_TTL_MS = 60_000;
+
   constructor(private readonly firebase: FirebaseAdminService) {}
 
-  async getProfile(token: string) {
-    let decoded: admin.auth.DecodedIdToken;
+  /** Verifies an ID token and resolves the caller's role; throws 401 on a bad token. */
+  async authenticate(token: string): Promise<{ uid: string; role: string }> {
+    const decoded = await this.verify(token);
+    return { uid: decoded.uid, role: await this.resolveRole(decoded.uid) };
+  }
+
+  private async verify(token: string): Promise<admin.auth.DecodedIdToken> {
     try {
       // Token verification is Firebase Auth, not Firestore — unaffected by a Firestore outage.
-      decoded = await this.firebase.auth.verifyIdToken(token);
+      return await this.firebase.auth.verifyIdToken(token);
     } catch {
       throw new UnauthorizedException('Token inválido o expirado');
     }
+  }
 
+  /**
+   * Role from Firestore (cached briefly). If Firestore is down the last known role is used; with
+   * none known, 'initial' — least privilege, never 'admin'.
+   */
+  private async resolveRole(uid: string): Promise<string> {
+    const cached = this.roleCache.get(uid);
+    if (cached && Date.now() - cached.at < AuthService.ROLE_TTL_MS) return cached.role;
+
+    try {
+      const snap = await withTimeout(
+        this.firebase.firestore.collection('users').doc(uid).get(),
+        FIRESTORE_TIMEOUT_MS,
+      );
+      const role: string = snap.exists ? (snap.data()?.role ?? 'initial') : 'initial';
+      this.roleCache.set(uid, { role, at: Date.now() });
+      return role;
+    } catch (error) {
+      const fallback = cached?.role ?? 'initial';
+      this.logger.warn(
+        `Firestore role lookup failed for uid ${uid}, using '${fallback}': ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+      );
+      return fallback;
+    }
+  }
+
+  async getProfile(token: string) {
+    const decoded = await this.verify(token);
     const uid = decoded.uid;
 
-    // The role lookup is the only Firestore-dependent part of login. Its failure (e.g. quota
-    // exhaustion) must never block sign-in — degrade to a default role instead of throwing, so
-    // the rest of the app (Mongo-backed alerts included) keeps working.
-    // ponytail: defaulting to 'admin' during an outage is a temporary call while Firestore quota
-    // is the active problem, not a permanent policy — revisit once quota is sorted (e.g. default
-    // to 'initial' again, or cache each uid's last-known role to fall back to instead of a fixed one).
+    // First login: create the user document with the default (unapproved) role. A Firestore
+    // outage here must never block sign-in, and never grants more than the last known role.
     try {
       const docRef = this.firebase.firestore.collection('users').doc(uid);
       const snap = await withTimeout(docRef.get(), FIRESTORE_TIMEOUT_MS);
 
-      if (snap.exists) {
-        const data = snap.data();
-        return { uid, role: data.role ?? 'initial' };
+      if (!snap.exists) {
+        await withTimeout(
+          docRef.set({
+            email: decoded.email ?? null,
+            name: decoded.name ?? decoded.email ?? null,
+            photoURL: decoded.picture ?? null,
+            role: 'initial',
+            createdAt: admin.firestore.Timestamp.now(),
+            updatedAt: admin.firestore.Timestamp.now(),
+          }),
+          FIRESTORE_TIMEOUT_MS,
+        );
       }
-
-      // Primer login: crear documento con rol por defecto
-      await withTimeout(
-        docRef.set({
-          email: decoded.email ?? null,
-          name: decoded.name ?? decoded.email ?? null,
-          photoURL: decoded.picture ?? null,
-          role: 'initial',
-          createdAt: admin.firestore.Timestamp.now(),
-          updatedAt: admin.firestore.Timestamp.now(),
-        }),
-        FIRESTORE_TIMEOUT_MS,
-      );
-
-      return { uid, role: 'initial' };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
-        `Firestore role lookup failed for uid ${uid}, falling back to 'admin': ${message}`,
+        `Firestore profile check failed for uid ${uid}: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
       );
-      return { uid, role: 'admin' };
     }
+
+    // A profile fetch is how a changed role becomes visible, so skip the cached value here.
+    this.roleCache.delete(uid);
+    return { uid, role: await this.resolveRole(uid) };
   }
 }

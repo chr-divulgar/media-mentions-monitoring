@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { PlatformDto, PlatformResponseDto } from '@repo/shared';
+import { Roles } from '../auth/auth.decorators';
 
 @Controller('settings')
 export class SettingsController {
@@ -81,6 +82,8 @@ export class SettingsController {
 
   // ─── Users ────────────────────────────────────────────────────────────────
 
+  // User administration (RQ-041): admins only.
+  @Roles('admin')
   @Get('users')
   async getUsers() {
     try {
@@ -96,6 +99,8 @@ export class SettingsController {
     }
   }
 
+  // User administration (RQ-041): admins only.
+  @Roles('admin')
   @Post('users/update')
   async updateUser(
     @Body()
@@ -121,6 +126,8 @@ export class SettingsController {
     }
   }
 
+  // User administration (RQ-041): admins only.
+  @Roles('admin')
   @Delete('users/:uid')
   async deleteUser(@Param('uid') uid: string) {
     try {

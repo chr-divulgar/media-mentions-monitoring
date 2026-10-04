@@ -33,6 +33,7 @@ import Title from "antd/es/typography/Title";
 import { useNote } from "./NoteContext";
 //import moment from "moment";
 import WaveSurfer from "wavesurfer.js";
+import { withAuthToken } from "../../services/authToken";
 import {
   DownloadOutlined,
   PauseCircleOutlined,
@@ -77,7 +78,9 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
 
   const waveformUrl = useMemo(
     () =>
-      `${import.meta.env.VITE_API_LOCAL}/audio/fetchByName/fragment_${selectedAlert?.id}?v=${Date.now()}`,
+      withAuthToken(
+        `${import.meta.env.VITE_API_LOCAL}/audio/fetchByName/fragment_${selectedAlert?.id}?v=${Date.now()}`,
+      ),
     [selectedAlert],
   );
 
