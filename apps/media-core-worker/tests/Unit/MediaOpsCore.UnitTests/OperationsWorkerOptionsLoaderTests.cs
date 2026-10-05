@@ -6,6 +6,15 @@ namespace MediaOpsCore.UnitTests;
 public sealed class OperationsWorkerOptionsLoaderTests
 {
     [Fact]
+    public void Load_should_default_retention_and_disk_threshold_when_file_does_not_exist()
+    {
+        var options = OperationsWorkerOptionsLoader.Load(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json"));
+
+        Assert.Equal(3, options.AudioRetentionDays);
+        Assert.Equal(10, options.MinFreeDiskGb);
+    }
+
+    [Fact]
     public void Load_should_return_defaults_when_file_does_not_exist()
     {
         var options = OperationsWorkerOptionsLoader.Load(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json"));
@@ -128,7 +137,9 @@ public sealed class OperationsWorkerOptionsLoaderTests
                             "enableStartupValidation": true,
                             "enableStartupDiscoveryOnFailedOnly": true,
                             "startupValidationTimeoutSeconds": 18,
-                            "startupDiscoveryRequestTimeoutSeconds": 14
+                            "startupDiscoveryRequestTimeoutSeconds": 14,
+                            "audioRetentionDays": 7,
+                            "minFreeDiskGb": 25
             }
             """);
 
@@ -162,6 +173,8 @@ public sealed class OperationsWorkerOptionsLoaderTests
             Assert.True(options.EnableStartupDiscoveryOnFailedOnly);
             Assert.Equal(18, options.StartupValidationTimeoutSeconds);
             Assert.Equal(14, options.StartupDiscoveryRequestTimeoutSeconds);
+            Assert.Equal(7, options.AudioRetentionDays);
+            Assert.Equal(25, options.MinFreeDiskGb);
         }
         finally
         {

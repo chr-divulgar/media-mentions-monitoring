@@ -29,6 +29,7 @@ builder.Services.AddSingleton(options);
 // Add hosted service for YouTube cookies HTTP endpoint
 builder.Services.AddSingleton<YouTubeCookiesHttpService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<YouTubeCookiesHttpService>());
+builder.Services.AddHostedService<RetentionPurgeWorker>();
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
 builder.Services.AddSingleton<StageMirrorMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IMonitoringArtifactRepository>(

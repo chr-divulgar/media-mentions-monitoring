@@ -18,6 +18,17 @@ public sealed class OperationsWorkerOptions
 
     public string AudioOutputRootPath { get; set; } = ".";
 
+    // Measured against this machine's actual D:\ usage (~30 GB/day for ~67 radio sources, see
+    // PLAN_MAESTRO.md F1): the local disk is a rolling buffer, not the archive — someone copies
+    // what they need off it (FileZilla) before it ages out. Keep this short; raise it only once
+    // AudioOutputRootPath points at a drive/volume sized for more.
+    public int AudioRetentionDays { get; set; } = 3;
+
+    // Below this, RetentionPurgeWorker logs a "disk-low" incident (visible on every source's
+    // /status row) in addition to its normal age-based purge — a loud signal that retention alone
+    // isn't keeping up, before the drive actually fills and capture starts failing.
+    public int MinFreeDiskGb { get; set; } = 10;
+
     public int DefaultFlacWindowDurationSeconds { get; set; } = 30;
 
     public int DefaultOpusFlushIntervalSeconds { get; set; } = 30;

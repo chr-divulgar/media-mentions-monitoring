@@ -12,6 +12,8 @@
   "canaryPlatformAllowList": null,
   "stageFilesystemRootPath": "stage-evidence",
   "audioOutputRootPath": "D:\\",
+  "audioRetentionDays": 3,
+  "minFreeDiskGb": 10,
   "defaultFlacWindowDurationSeconds": 12,
   "defaultOpusFlushIntervalSeconds": 30,
   "defaultOpusRotationIntervalHours": 1,

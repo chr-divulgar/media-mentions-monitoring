@@ -28,6 +28,8 @@ public static class OperationsWorkerOptionsLoader
         string? StageFilesystemRootPath,
         int? SegmentDurationSeconds,
         string? AudioOutputRootPath,
+        int? AudioRetentionDays,
+        int? MinFreeDiskGb,
         int? DefaultFlacWindowDurationSeconds,
         int? DefaultOpusFlushIntervalSeconds,
         int? DefaultOpusRotationIntervalHours,
@@ -161,6 +163,16 @@ public static class OperationsWorkerOptionsLoader
         if (!string.IsNullOrWhiteSpace(model.AudioOutputRootPath))
         {
             options.AudioOutputRootPath = model.AudioOutputRootPath;
+        }
+
+        if (model.AudioRetentionDays.HasValue)
+        {
+            options.AudioRetentionDays = model.AudioRetentionDays.Value;
+        }
+
+        if (model.MinFreeDiskGb.HasValue)
+        {
+            options.MinFreeDiskGb = model.MinFreeDiskGb.Value;
         }
 
         if (model.DefaultFlacWindowDurationSeconds.HasValue)

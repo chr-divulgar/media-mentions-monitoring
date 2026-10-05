@@ -20,6 +20,12 @@ public static class IncidentKinds
     public const string WorkerStarted = "worker-started";
     public const string WorkerStopped = "worker-stopped";
 
+    // RetentionPurgeWorker, recorded under WorkerSourceId — low disk space is a worker-wide
+    // condition, not any one source's problem.
+    public const string DiskLow = "disk-low";
+    public const string DiskRecovered = "disk-recovered";
+    public const string PurgeFailed = "purge-failed";
+
     // WebNewsCaptureUseCase, recorded under SourceId "google-news" (see that class).
     public const string CycleOk = "cycle-ok";
     public const string CycleFailed = "cycle-failed";
