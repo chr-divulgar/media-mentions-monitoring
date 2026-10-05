@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using MediaOpsCore.BuildingBlocks.Application;
 using Microsoft.Extensions.Logging;
@@ -10,11 +11,21 @@ public interface IYtdlpBinaryProvider
     Task<(string Cmd, string[] Args)> GetCommandAsync(CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// The worker carries its own yt-dlp: the official standalone binary for the OS it runs on, kept
+/// in YtdlpBinDirectory and self-updated (`-U`) at startup — YouTube breaks old versions often.
+/// Nothing has to be installed on the host (no Python, no PATH entry), so the same build runs on
+/// this Windows box or a Linux container. A machine-wide yt-dlp is only a fallback for when the
+/// download itself is impossible (offline first start).
+/// </summary>
 public sealed class YtdlpBinaryProvider : IYtdlpBinaryProvider
 {
+    private const string ReleaseBaseUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
+
     private readonly OperationsWorkerOptions options;
     private readonly IProcessRunner processRunner;
     private readonly ILogger<YtdlpBinaryProvider> logger;
+    private readonly Func<string, string, CancellationToken, Task> download;
 
     private readonly SemaphoreSlim initLock = new(1, 1);
     private (string Cmd, string[] Args)? cachedCommand;
@@ -22,11 +33,29 @@ public sealed class YtdlpBinaryProvider : IYtdlpBinaryProvider
     public YtdlpBinaryProvider(
         OperationsWorkerOptions options,
         IProcessRunner processRunner,
-        ILogger<YtdlpBinaryProvider> logger)
+        ILogger<YtdlpBinaryProvider> logger,
+        Func<string, string, CancellationToken, Task>? download = null)
     {
         this.options = options;
         this.processRunner = processRunner;
         this.logger = logger;
+        this.download = download ?? DownloadAsync;
+    }
+
+    // The official release asset for the current OS/architecture.
+    public static string StandaloneAssetName()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return "yt-dlp.exe";
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            return "yt-dlp_macos";
+        }
+
+        return RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "yt-dlp_linux_aarch64" : "yt-dlp_linux";
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -56,132 +85,81 @@ public sealed class YtdlpBinaryProvider : IYtdlpBinaryProvider
 
     private async Task<(string Cmd, string[] Args)> ResolveAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("[YtdlpBinaryProvider] Resolving yt-dlp binary...");
-
-        // 1. Global PATH
-        var globalCheck = await processRunner.RunAsync(
-            new ProcessCommand("yt-dlp", ["--version"]), cancellationToken).ConfigureAwait(false);
-
-        if (globalCheck.Succeeded)
-        {
-            logger.LogInformation("[YtdlpBinaryProvider] Found global yt-dlp {Version}. Running update check...",
-                globalCheck.StandardOutput.Trim());
-
-            await processRunner.RunAsync(
-                new ProcessCommand("yt-dlp", ["-U"]), cancellationToken).ConfigureAwait(false);
-
-            logger.LogInformation("[YtdlpBinaryProvider] yt-dlp resolved from PATH.");
-            return ("yt-dlp", []);
-        }
-
         var binDir = Path.IsPathRooted(options.YtdlpBinDirectory)
             ? options.YtdlpBinDirectory
             : Path.GetFullPath(options.YtdlpBinDirectory);
-
         Directory.CreateDirectory(binDir);
 
-        // 2. Pre-existing binary in bin/
-        var winBin = Path.Combine(binDir, "yt-dlp.exe");
-        var unixBin = Path.Combine(binDir, "yt-dlp");
+        var asset = StandaloneAssetName();
+        var local = Path.Combine(binDir, asset);
 
-        foreach (var localPath in new[] { winBin, unixBin })
+        // 1. Own copy: update it, then use it.
+        if (File.Exists(local))
         {
-            if (!File.Exists(localPath))
-                continue;
-
-            TrySetExecutable(localPath);
-
-            var directCheck = await processRunner.RunAsync(
-                new ProcessCommand(localPath, ["--version"]), cancellationToken).ConfigureAwait(false);
-
-            if (directCheck.Succeeded)
+            var update = await processRunner.RunAsync(new ProcessCommand(local, ["-U"]), cancellationToken).ConfigureAwait(false);
+            if (!update.Succeeded)
             {
-                logger.LogInformation("[YtdlpBinaryProvider] Using pre-existing binary at '{Path}'.", localPath);
-                return (localPath, []);
+                logger.LogWarning("[YtdlpBinaryProvider] Self-update failed (keeping current version): {Error}", update.StandardError.Trim());
             }
 
-            // Try via python3
-            var pythonCheck = await TryPythonCommandAsync(cancellationToken).ConfigureAwait(false);
-            if (pythonCheck is not null)
+            if (await WorksAsync(local, cancellationToken).ConfigureAwait(false))
             {
-                var viaCheck = await processRunner.RunAsync(
-                    new ProcessCommand(pythonCheck, [localPath, "--version"]), cancellationToken).ConfigureAwait(false);
-
-                if (viaCheck.Succeeded)
-                {
-                    logger.LogInformation("[YtdlpBinaryProvider] Using '{Binary}' via {Python}.", localPath, pythonCheck);
-                    return (pythonCheck, [localPath]);
-                }
+                logger.LogInformation("[YtdlpBinaryProvider] Using own yt-dlp at '{Path}'.", local);
+                return (local, []);
             }
         }
 
-        // 3. Download python zipapp if python available
-        var python = await TryPythonCommandAsync(cancellationToken).ConfigureAwait(false);
-        if (python is not null)
-        {
-            var zipappPath = Path.Combine(binDir, "yt-dlp");
-            logger.LogInformation("[YtdlpBinaryProvider] Downloading yt-dlp python zipapp to '{Path}'...", zipappPath);
-
-            try
-            {
-                using var http = new HttpClient();
-                http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0");
-                var bytes = await http.GetByteArrayAsync(
-                    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp",
-                    cancellationToken).ConfigureAwait(false);
-
-                await File.WriteAllBytesAsync(zipappPath, bytes, cancellationToken).ConfigureAwait(false);
-
-                TrySetExecutable(zipappPath);
-
-                var verifyCheck = await processRunner.RunAsync(
-                    new ProcessCommand(python, [zipappPath, "--version"]), cancellationToken).ConfigureAwait(false);
-
-                if (verifyCheck.Succeeded)
-                {
-                    logger.LogInformation("[YtdlpBinaryProvider] yt-dlp zipapp downloaded and verified via {Python}.", python);
-                    return (python, [zipappPath]);
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "[YtdlpBinaryProvider] Failed to download python zipapp. Trying standalone binary...");
-            }
-        }
-
-        // 4. Download standalone Linux binary
-        var linuxBin = Path.Combine(binDir, "yt-dlp_linux");
-        logger.LogInformation("[YtdlpBinaryProvider] Downloading yt-dlp standalone Linux binary to '{Path}'...", linuxBin);
-
+        // 2. No working own copy: fetch the official binary for this OS (always the latest).
         try
         {
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0");
-            var bytes = await http.GetByteArrayAsync(
-                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
-                cancellationToken).ConfigureAwait(false);
+            var temp = local + ".download";
+            await download(ReleaseBaseUrl + asset, temp, cancellationToken).ConfigureAwait(false);
+            File.Move(temp, local, overwrite: true);
+            TrySetExecutable(local);
 
-            await File.WriteAllBytesAsync(linuxBin, bytes, cancellationToken).ConfigureAwait(false);
-
-            TrySetExecutable(linuxBin);
-
-            var verifyCheck = await processRunner.RunAsync(
-                new ProcessCommand(linuxBin, ["--version"]), cancellationToken).ConfigureAwait(false);
-
-            if (verifyCheck.Succeeded)
+            if (await WorksAsync(local, cancellationToken).ConfigureAwait(false))
             {
-                logger.LogInformation("[YtdlpBinaryProvider] Standalone Linux binary downloaded and verified.");
-                return (linuxBin, []);
+                logger.LogInformation("[YtdlpBinaryProvider] Downloaded yt-dlp ({Asset}) to '{Path}'.", asset, local);
+                return (local, []);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogError(ex, "[YtdlpBinaryProvider] Failed to download standalone Linux binary.");
+            logger.LogWarning(ex, "[YtdlpBinaryProvider] Could not download yt-dlp ({Asset}).", asset);
+        }
+
+        // 3. Last resort: a machine-wide install, if there happens to be one.
+        if (await WorksAsync("yt-dlp", cancellationToken).ConfigureAwait(false))
+        {
+            logger.LogWarning("[YtdlpBinaryProvider] Falling back to the machine-wide yt-dlp on PATH.");
+            return ("yt-dlp", []);
         }
 
         throw new InvalidOperationException(
-            "yt-dlp could not be found or downloaded. " +
-            "Install it manually (https://github.com/yt-dlp/yt-dlp) or ensure python3 is available for automatic setup.");
+            $"yt-dlp is not available: '{local}' could not be downloaded from {ReleaseBaseUrl}{asset} and none is on PATH.");
+    }
+
+    private async Task<bool> WorksAsync(string command, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var check = await processRunner.RunAsync(new ProcessCommand(command, ["--version"]), cancellationToken).ConfigureAwait(false);
+            return check.Succeeded;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // Not installed: Process.Start throws instead of returning an exit code.
+            return false;
+        }
+    }
+
+    private static async Task DownloadAsync(string url, string destination, CancellationToken cancellationToken)
+    {
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.Add("User-Agent", "media-mentions-monitoring");
+        await using var source = await http.GetStreamAsync(url, cancellationToken).ConfigureAwait(false);
+        await using var target = File.Create(destination);
+        await source.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
     }
 
     private static void TrySetExecutable(string path)
@@ -203,22 +181,9 @@ public sealed class YtdlpBinaryProvider : IYtdlpBinaryProvider
                 UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
                 UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         }
-        catch
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            // Non-fatal if chmod fails
+            // Non-fatal: the --version check right after reports whether it can run.
         }
-    }
-
-    private async Task<string?> TryPythonCommandAsync(CancellationToken cancellationToken)
-    {
-        foreach (var cmd in new[] { "python3", "python" })
-        {
-            var check = await processRunner.RunAsync(
-                new ProcessCommand(cmd, ["--version"]), cancellationToken).ConfigureAwait(false);
-            if (check.Succeeded)
-                return cmd;
-        }
-
-        return null;
     }
 }

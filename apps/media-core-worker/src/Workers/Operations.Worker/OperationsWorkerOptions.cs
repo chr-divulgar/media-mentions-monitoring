@@ -29,13 +29,12 @@ public sealed class OperationsWorkerOptions
     // isn't keeping up, before the drive actually fills and capture starts failing.
     public int MinFreeDiskGb { get; set; } = 10;
 
-    // TV as hourly MP4 (TvVideoRecorderWorker), alongside the audio. Off by default: it needs an
-    // ffmpeg.exe and roughly 0.5 GB per channel-hour at 480p, on top of the audio's disk use.
+    // TV as hourly MP4 (TvVideoRecorderWorker), alongside the audio. Off by default: roughly
+    // 0.25–0.45 GB per channel-hour at 480p, on top of the audio's disk use.
     public bool TvVideoEnabled { get; set; } = false;
 
     public int TvVideoMaxHeight { get; set; } = 480;
 
-    public string FfmpegExecutablePath { get; set; } = "ffmpeg";
 
     // Archive of closed capture files (ArchiveUploadWorker). Only active when ArchiveEnabled AND the
     // ARCHIVE_FTP_* credentials are in the environment; then the purge deletes archived files only.

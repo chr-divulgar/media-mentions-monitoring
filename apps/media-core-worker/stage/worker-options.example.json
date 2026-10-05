@@ -16,7 +16,6 @@
   "minFreeDiskGb": 10,
   "tvVideoEnabled": false,
   "tvVideoMaxHeight": 480,
-  "ffmpegExecutablePath": "ffmpeg",
   "archiveEnabled": false,
   "archiveFtpRequireTls": true,
   "archiveFtpAllowInvalidCertificate": false,

@@ -39,30 +39,6 @@ public sealed class TvVideoRecordingTests
     }
 
     [Fact]
-    public void FfmpegArguments_copy_a_single_stream_without_reencoding_into_a_crash_safe_mp4()
-    {
-        var args = TvVideoRecording.FfmpegArguments(["https://example/live.m3u8"], TimeSpan.FromSeconds(90), @"D:\out.mp4").ToList();
-
-        Assert.Equal("https://example/live.m3u8", args[args.IndexOf("-i") + 1]);
-        Assert.Equal("90", args[args.IndexOf("-t") + 1]);
-        Assert.Equal("copy", args[args.IndexOf("-c") + 1]);
-        Assert.Equal("aac_adtstoasc", args[args.IndexOf("-bsf:a") + 1]);
-        Assert.DoesNotContain("-map", args);
-        Assert.Contains(args, a => a.Contains("frag_keyframe"));
-        Assert.Equal(@"D:\out.mp4", args[^1]);
-    }
-
-    [Fact]
-    public void FfmpegArguments_mux_separate_video_and_audio_streams()
-    {
-        var args = TvVideoRecording.FfmpegArguments(["https://v", "https://a"], TimeSpan.FromSeconds(60), @"D:\out.mp4").ToList();
-
-        Assert.Equal(2, args.Count(a => a == "-i"));
-        Assert.Contains("0:v:0", args);
-        Assert.Contains("1:a:0", args);
-    }
-
-    [Fact]
     public void YtdlpVideoFormat_caps_the_resolution_to_bound_disk_use()
     {
         Assert.Equal("bestvideo[height<=480]+bestaudio/best[height<=480]/best", TvVideoRecording.YtdlpVideoFormat(480));

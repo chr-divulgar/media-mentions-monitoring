@@ -32,7 +32,6 @@ public static class OperationsWorkerOptionsLoader
         int? MinFreeDiskGb,
         bool? TvVideoEnabled,
         int? TvVideoMaxHeight,
-        string? FfmpegExecutablePath,
         bool? ArchiveEnabled,
         bool? ArchiveFtpRequireTls,
         bool? ArchiveFtpAllowInvalidCertificate,
@@ -191,11 +190,6 @@ public static class OperationsWorkerOptionsLoader
         if (model.TvVideoMaxHeight is > 0)
         {
             options.TvVideoMaxHeight = model.TvVideoMaxHeight.Value;
-        }
-
-        if (!string.IsNullOrWhiteSpace(model.FfmpegExecutablePath))
-        {
-            options.FfmpegExecutablePath = model.FfmpegExecutablePath;
         }
 
         if (model.ArchiveEnabled.HasValue)
