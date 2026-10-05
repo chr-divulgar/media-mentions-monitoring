@@ -48,6 +48,12 @@ public sealed class OperationsWorkerOptions
 
     public int ArchiveMinIdleMinutes { get; set; } = 20;
 
+    // Headless Chromium (HeadlessBrowser) for outlets behind an anti-bot challenge, and later the
+    // PDF copy of each note. Downloaded on first use into this folder (relative to the app root).
+    public bool HeadlessBrowserEnabled { get; set; } = true;
+
+    public string HeadlessBrowserPath { get; set; } = "bin/ms-playwright";
+
     // From ARCHIVE_FTP_URL / _USER / _PASSWORD only — never from worker-options.json.
     public FtpArchiveCredentials? ArchiveFtp { get; set; }
 

@@ -29,12 +29,15 @@ public sealed partial class HtmlArticleReader : IArticleReader
     private readonly HttpClient httpClient;
     private readonly int requestTimeoutSeconds;
     private readonly ILogger<HtmlArticleReader> logger;
+    // Only used for pages behind an anti-bot challenge; null disables the fallback.
+    private readonly IBrowserPageReader? browser;
 
-    public HtmlArticleReader(HttpClient httpClient, int requestTimeoutSeconds, ILogger<HtmlArticleReader> logger)
+    public HtmlArticleReader(HttpClient httpClient, int requestTimeoutSeconds, ILogger<HtmlArticleReader> logger, IBrowserPageReader? browser = null)
     {
         this.httpClient = httpClient;
         this.requestTimeoutSeconds = requestTimeoutSeconds;
         this.logger = logger;
+        this.browser = browser;
     }
 
     public async Task<ArticleContent> ReadAsync(string url, CancellationToken cancellationToken = default)
@@ -50,12 +53,18 @@ public sealed partial class HtmlArticleReader : IArticleReader
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
             using var response = await httpClient.SendAsync(request, linkedCts.Token).ConfigureAwait(false);
 
+            var html = await response.Content.ReadAsStringAsync(linkedCts.Token).ConfigureAwait(false);
+
+            if (IsCloudflareChallenge(response, html))
+            {
+                return await ReadWithBrowserAsync(url, cancellationToken).ConfigureAwait(false);
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 return new ArticleContent(null, null, null, $"El sitio respondió HTTP {(int)response.StatusCode}");
             }
 
-            var html = await response.Content.ReadAsStringAsync(linkedCts.Token).ConfigureAwait(false);
             return await ParseAsync(html).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -67,6 +76,42 @@ public sealed partial class HtmlArticleReader : IArticleReader
             logger.LogWarning(exception, "[HtmlArticleReader] Failed to read {Url}.", url);
             return new ArticleContent(null, null, null, exception.Message);
         }
+    }
+
+    // The page a real browser passes on its own (a script checks the browser and sets a cookie) but
+    // a plain HTTP client never can — no point retrying it the plain way.
+    private static bool IsCloudflareChallenge(HttpResponseMessage response, string html)
+    {
+        if (response.StatusCode is not (System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.ServiceUnavailable))
+        {
+            return false;
+        }
+
+        if (response.Headers.TryGetValues("cf-mitigated", out var mitigated)
+            && mitigated.Any(value => value.Equals("challenge", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        var fromCloudflare = response.Headers.Server.ToString().Contains("cloudflare", StringComparison.OrdinalIgnoreCase);
+        return fromCloudflare
+            && (html.Contains("Just a moment", StringComparison.OrdinalIgnoreCase)
+                || html.Contains("challenge-platform", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<ArticleContent> ReadWithBrowserAsync(string url, CancellationToken cancellationToken)
+    {
+        const string Blocked = "Bloqueado por Cloudflare (anti-bot)";
+        if (browser is null)
+        {
+            return new ArticleContent(null, null, null, Blocked, Blocked: true);
+        }
+
+        logger.LogInformation("[HtmlArticleReader] Cloudflare challenge on {Url}; retrying with the headless browser.", url);
+        var html = await browser.GetHtmlAsync(url, cancellationToken).ConfigureAwait(false);
+        return html is null
+            ? new ArticleContent(null, null, null, $"{Blocked}, también con navegador", Blocked: true)
+            : await ParseAsync(html).ConfigureAwait(false);
     }
 
     // Internal so the extraction heuristics can be covered with saved HTML fixtures.

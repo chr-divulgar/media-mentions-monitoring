@@ -7,6 +7,9 @@ public static class WebArticleStatus
     public const string NoDate = "no-date";
     public const string NoKeyword = "no-keyword";
     public const string Failed = "failed";
+    // Final, unlike Failed: the outlet blocks automated access (e.g. a Cloudflare challenge), so
+    // the retry of failed articles must not pick it up again.
+    public const string Blocked = "blocked";
 }
 
 public sealed record WebArticleRecord(

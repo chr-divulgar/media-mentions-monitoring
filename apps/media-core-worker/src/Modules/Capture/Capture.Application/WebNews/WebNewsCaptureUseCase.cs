@@ -206,6 +206,15 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             var url = linkResolution.Url!;
             linkForIncidents = url;
             var content = await articleReader.ReadAsync(url, cancellationToken).ConfigureAwait(false);
+            if (content.Blocked)
+            {
+                await SaveAsync(item, url, WebArticleStatus.Blocked, content.Title ?? item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
+                incidentRecorder.Record(
+                    SourceId, IncidentKinds.ArticleFailed,
+                    $"{item.Outlet} — {item.Title} — {content.ErrorMessage}; no se reintentará — {linkForIncidents}");
+                return ArticleOutcome.Failed;
+            }
+
             if (!content.Succeeded)
             {
                 await SaveAsync(item, url, WebArticleStatus.Failed, content.Title ?? item.Title, null, [], [], cancellationToken).ConfigureAwait(false);

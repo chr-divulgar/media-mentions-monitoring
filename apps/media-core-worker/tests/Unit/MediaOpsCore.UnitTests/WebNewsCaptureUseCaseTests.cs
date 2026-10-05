@@ -203,6 +203,29 @@ public sealed class WebNewsCaptureUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteCycleAsync_saves_a_blocked_article_as_final_so_it_is_not_retried()
+    {
+        // Cloudflare blocked even the browser fallback: retrying would hit the same wall, so the
+        // note is stored as blocked (not failed, which is what the retry picks up) and says so.
+        var recorder = new FakeIncidentRecorder();
+        var repository = new FakeWebArticleRepository();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "petroleo")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://cambiocolombia.com/nota" },
+            reader: new FakeArticleReader { Content = new ArticleContent(null, null, null, "Bloqueado por Cloudflare (anti-bot)", Blocked: true) },
+            repository: repository,
+            recorder: recorder);
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Equal(WebArticleStatus.Blocked, Assert.Single(repository.Saved).Status);
+        var incident = recorder.Records.Single(r => r.Kind == IncidentKinds.ArticleFailed);
+        Assert.Contains("no se reintentará", incident.Reason);
+        Assert.Contains("https://cambiocolombia.com/nota", incident.Reason);
+    }
+
+    [Fact]
     public async Task ExecuteCycleAsync_includes_the_article_url_in_a_rejected_notes_reason()
     {
         var recorder = new FakeIncidentRecorder();

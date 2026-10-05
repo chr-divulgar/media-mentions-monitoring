@@ -17,7 +17,10 @@ public sealed record ArticleContent(
     // Every qualifying paragraph, not just the lead one — kept only for keyword matching, so a
     // client's keyword that shows up later in the body (not the lead paragraph an alert displays)
     // still counts as a mention. Null when no body text could be identified at all.
-    string? FullText = null)
+    string? FullText = null,
+    // The site refused automated access outright (an anti-bot challenge that not even the
+    // browser fallback got past) — a retry would hit the same wall, so it is final.
+    bool Blocked = false)
 {
     public bool Succeeded => ErrorMessage is null;
 }

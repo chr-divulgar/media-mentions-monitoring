@@ -21,6 +21,8 @@
   "archiveFtpAllowInvalidCertificate": false,
   "archiveMaxParallelUploads": 2,
   "archiveMinIdleMinutes": 20,
+  "headlessBrowserEnabled": true,
+  "headlessBrowserPath": "bin/ms-playwright",
   "defaultFlacWindowDurationSeconds": 12,
   "defaultOpusFlushIntervalSeconds": 30,
   "defaultOpusRotationIntervalHours": 1,

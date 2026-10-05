@@ -213,10 +213,17 @@ if (options.WebNewsEnabled)
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GoogleNewsLinkResolver>>()));
+	if (options.HeadlessBrowserEnabled)
+	{
+		builder.Services.AddSingleton(sp => new HeadlessBrowser(
+			options.HeadlessBrowserPath,
+			sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HeadlessBrowser>>()));
+	}
 	builder.Services.AddSingleton<IArticleReader>(sp => new HtmlArticleReader(
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
-		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HtmlArticleReader>>()));
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HtmlArticleReader>>(),
+		sp.GetService<HeadlessBrowser>()));
 	builder.Services.AddSingleton<IWebArticleRepository>(sp => new MongoWebArticleRepository(
 		sp.GetRequiredService<MongoAlertingOptions>(),
 		options.WebNewsMaxFailedAttempts));

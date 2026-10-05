@@ -37,6 +37,8 @@ public static class OperationsWorkerOptionsLoader
         bool? ArchiveFtpAllowInvalidCertificate,
         int? ArchiveMaxParallelUploads,
         int? ArchiveMinIdleMinutes,
+        bool? HeadlessBrowserEnabled,
+        string? HeadlessBrowserPath,
         int? DefaultFlacWindowDurationSeconds,
         int? DefaultOpusFlushIntervalSeconds,
         int? DefaultOpusRotationIntervalHours,
@@ -215,6 +217,16 @@ public static class OperationsWorkerOptionsLoader
         if (model.ArchiveMinIdleMinutes is > 0)
         {
             options.ArchiveMinIdleMinutes = model.ArchiveMinIdleMinutes.Value;
+        }
+
+        if (model.HeadlessBrowserEnabled.HasValue)
+        {
+            options.HeadlessBrowserEnabled = model.HeadlessBrowserEnabled.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.HeadlessBrowserPath))
+        {
+            options.HeadlessBrowserPath = model.HeadlessBrowserPath;
         }
 
         if (model.DefaultFlacWindowDurationSeconds.HasValue)
@@ -496,6 +508,7 @@ public static class OperationsWorkerOptionsLoader
         options.PluginProfilesFilePath = ResolveConfiguredPath(options.PluginProfilesFilePath, applicationRoot, configDirectory);
         options.StageFilesystemRootPath = ResolveConfiguredPath(options.StageFilesystemRootPath, applicationRoot, configDirectory);
         options.YtdlpBinDirectory = ResolveConfiguredPath(options.YtdlpBinDirectory, applicationRoot, configDirectory);
+        options.HeadlessBrowserPath = ResolveConfiguredPath(options.HeadlessBrowserPath, applicationRoot, configDirectory);
         options.YoutubeCookiesAlertFilePath = ResolveConfiguredPath(options.YoutubeCookiesAlertFilePath, applicationRoot, configDirectory);
         options.WhatsAppAuthStatePath = ResolveConfiguredPath(options.WhatsAppAuthStatePath, applicationRoot, configDirectory);
 
