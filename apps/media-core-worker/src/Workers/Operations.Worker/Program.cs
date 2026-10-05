@@ -85,7 +85,12 @@ builder.Services.AddSingleton<ICaptureStatusSnapshotProvider>(sp => new CaptureS
 	sp.GetRequiredService<ILiveCaptureProgressReader>(),
 	sp.GetService<ISourceIncidentReader>(),
 	options.WebNewsEnabled));
-builder.Services.AddSingleton<ILiveStreamUrlResolver, YtdlpLiveStreamUrlResolver>();
+builder.Services.AddSingleton<YtdlpLiveStreamUrlResolver>();
+builder.Services.AddSingleton<ILiveStreamUrlResolver>(sp => sp.GetRequiredService<YtdlpLiveStreamUrlResolver>());
+if (options.TvVideoEnabled)
+{
+	builder.Services.AddHostedService<TvVideoRecorderWorker>();
+}
 builder.Services.AddSingleton<IStartupSourceInitializationService, StartupSourceInitializationService>();
 builder.Services.AddSingleton<SourceAvailabilityReconciliationService>();
 builder.Services.AddSingleton<ICaptureAttemptObserver>(sp => sp.GetRequiredService<SourceAvailabilityReconciliationService>());

@@ -29,6 +29,14 @@ public sealed class OperationsWorkerOptions
     // isn't keeping up, before the drive actually fills and capture starts failing.
     public int MinFreeDiskGb { get; set; } = 10;
 
+    // TV as hourly MP4 (TvVideoRecorderWorker), alongside the audio. Off by default: it needs an
+    // ffmpeg.exe and roughly 0.5 GB per channel-hour at 480p, on top of the audio's disk use.
+    public bool TvVideoEnabled { get; set; } = false;
+
+    public int TvVideoMaxHeight { get; set; } = 480;
+
+    public string FfmpegExecutablePath { get; set; } = "ffmpeg";
+
     public int DefaultFlacWindowDurationSeconds { get; set; } = 30;
 
     public int DefaultOpusFlushIntervalSeconds { get; set; } = 30;

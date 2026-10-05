@@ -58,9 +58,35 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
             || host.EndsWith(".youtube.com", StringComparison.OrdinalIgnoreCase);
     }
 
+    // Prefer audio-only direct streams over HLS manifests.
+    // HLS manifests (m3u8) require FFmpeg to download and analyze segments, which can
+    // block avformat_find_stream_info for 10-30s. A direct audio URL (m4a/webm) opens
+    // instantly. Format priority: non-HLS audio → known audio-only itags → HLS audio → any.
+    private const string AudioFormat =
+        "bestaudio[protocol!=m3u8][protocol!=m3u8_native]" +
+        "/249/250/140/251" +
+        "/bestaudio" +
+        "/best";
+
     public async Task<LiveStreamResolutionResult> TryResolveStreamUrlAsync(
         CaptureSource source,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await ResolveAsync(source, AudioFormat, cancellationToken).ConfigureAwait(false);
+
+    // Same resolution (cookies, error classification) but asking for a stream that carries video,
+    // for TvVideoRecorderWorker's MP4 files.
+    // Returns every URL yt-dlp printed (video then audio when they are separate streams); empty
+    // when resolution failed.
+    public async Task<IReadOnlyList<string>> TryResolveVideoUrlsAsync(
+        CaptureSource source,
+        int maxHeight,
+        CancellationToken cancellationToken = default) =>
+        (await ResolveAsync(source, TvVideoRecording.YtdlpVideoFormat(maxHeight), cancellationToken).ConfigureAwait(false)).AllUrls ?? [];
+
+    private async Task<LiveStreamResolutionResult> ResolveAsync(
+        CaptureSource source,
+        string preferredFormat,
+        CancellationToken cancellationToken)
     {
         (string Cmd, string[] Args) runner;
         try
@@ -117,15 +143,6 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
                 }
             }
 
-            // Prefer audio-only direct streams over HLS manifests.
-            // HLS manifests (m3u8) require FFmpeg to download and analyze segments, which can
-            // block avformat_find_stream_info for 10-30s. A direct audio URL (m4a/webm) opens
-            // instantly. Format priority: non-HLS audio → known audio-only itags → HLS audio → any.
-            const string preferredFormat =
-                "bestaudio[protocol!=m3u8][protocol!=m3u8_native]" +
-                "/249/250/140/251" +
-                "/bestaudio" +
-                "/best";
             // Resolve from the durable channel/live page (PrimaryUrl), not StreamUrl — for YouTube
             // sources StreamUrl is overwritten with the last resolved ephemeral CDN URL, which
             // expires and isn't recognized by yt-dlp's YouTube extractor (falls back to
@@ -163,7 +180,9 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
                 return new LiveStreamResolutionResult(null, failure, FirstErrorLine(result.StandardError));
             }
 
-            var url = result.StandardOutput?.Trim().Split('\n')[0].Trim();
+            var allUrls = (result.StandardOutput ?? string.Empty)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var url = allUrls.FirstOrDefault();
 
             if (string.IsNullOrWhiteSpace(url) || !Uri.IsWellFormedUriString(url, UriKind.Absolute))
             {
@@ -174,7 +193,7 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
             }
 
             logger.LogInformation("[YtdlpResolver] Resolved stream URL for {SourceId}: {Url}", source.SourceId, url);
-            return new LiveStreamResolutionResult(url);
+            return new LiveStreamResolutionResult(url, AllUrls: allUrls);
         }
         finally
         {

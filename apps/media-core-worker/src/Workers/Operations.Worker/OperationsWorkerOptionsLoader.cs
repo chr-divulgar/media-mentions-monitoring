@@ -30,6 +30,9 @@ public static class OperationsWorkerOptionsLoader
         string? AudioOutputRootPath,
         int? AudioRetentionDays,
         int? MinFreeDiskGb,
+        bool? TvVideoEnabled,
+        int? TvVideoMaxHeight,
+        string? FfmpegExecutablePath,
         int? DefaultFlacWindowDurationSeconds,
         int? DefaultOpusFlushIntervalSeconds,
         int? DefaultOpusRotationIntervalHours,
@@ -173,6 +176,21 @@ public static class OperationsWorkerOptionsLoader
         if (model.MinFreeDiskGb.HasValue)
         {
             options.MinFreeDiskGb = model.MinFreeDiskGb.Value;
+        }
+
+        if (model.TvVideoEnabled.HasValue)
+        {
+            options.TvVideoEnabled = model.TvVideoEnabled.Value;
+        }
+
+        if (model.TvVideoMaxHeight is > 0)
+        {
+            options.TvVideoMaxHeight = model.TvVideoMaxHeight.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.FfmpegExecutablePath))
+        {
+            options.FfmpegExecutablePath = model.FfmpegExecutablePath;
         }
 
         if (model.DefaultFlacWindowDurationSeconds.HasValue)

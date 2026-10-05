@@ -38,26 +38,41 @@ public sealed class LocalSystemProcessRunner : IProcessRunner
         var timedOut = false;
 
         var timeout = command.Timeout;
-        if (timeout is null)
+        try
         {
-            await waitForExitTask.ConfigureAwait(false);
-        }
-        else
-        {
-            var timeoutTask = Task.Delay(timeout.Value, cancellationToken);
-            var completedTask = await Task.WhenAny(waitForExitTask, timeoutTask).ConfigureAwait(false);
-
-            if (completedTask != waitForExitTask)
+            if (timeout is null)
             {
-                timedOut = true;
-
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-
-                await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                await waitForExitTask.ConfigureAwait(false);
             }
+            else
+            {
+                var timeoutTask = Task.Delay(timeout.Value, cancellationToken);
+                var completedTask = await Task.WhenAny(waitForExitTask, timeoutTask).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (completedTask != waitForExitTask)
+                {
+                    timedOut = true;
+
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+
+                    await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Without this a cancelled caller (e.g. the service stopping) left the child running
+            // as an orphan — a long ffmpeg recording would keep writing after the worker exited.
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            throw;
         }
 
         return new ProcessExecutionResult(
