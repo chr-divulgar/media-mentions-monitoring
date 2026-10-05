@@ -37,6 +37,23 @@ public sealed class OperationsWorkerOptions
 
     public string FfmpegExecutablePath { get; set; } = "ffmpeg";
 
+    // Archive of closed capture files (ArchiveUploadWorker). Only active when ArchiveEnabled AND the
+    // ARCHIVE_FTP_* credentials are in the environment; then the purge deletes archived files only.
+    public bool ArchiveEnabled { get; set; } = false;
+
+    public bool ArchiveFtpRequireTls { get; set; } = true;
+
+    public bool ArchiveFtpAllowInvalidCertificate { get; set; } = false;
+
+    public int ArchiveMaxParallelUploads { get; set; } = 2;
+
+    public int ArchiveMinIdleMinutes { get; set; } = 20;
+
+    // From ARCHIVE_FTP_URL / _USER / _PASSWORD only — never from worker-options.json.
+    public FtpArchiveCredentials? ArchiveFtp { get; set; }
+
+    public bool IsArchiveActive => ArchiveEnabled && ArchiveFtp is not null;
+
     public int DefaultFlacWindowDurationSeconds { get; set; } = 30;
 
     public int DefaultOpusFlushIntervalSeconds { get; set; } = 30;

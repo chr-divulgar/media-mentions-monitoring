@@ -264,6 +264,38 @@ public sealed class OperationsWorkerOptionsLoaderTests
         Assert.Null(OperationsWorkerOptionsLoader.Load().Smtp);
     }
 
+    [Fact]
+    public void Load_should_activate_the_archive_only_with_the_flag_and_the_environment_credentials()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-archive-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(tempPath, """{ "archiveEnabled": true, "archiveMaxParallelUploads": 4, "archiveFtpAllowInvalidCertificate": true }""");
+
+            using (new EnvironmentVariableScope(("ARCHIVE_FTP_URL", null), ("ARCHIVE_FTP_USER", null), ("ARCHIVE_FTP_PASSWORD", null)))
+            {
+                var withoutCredentials = OperationsWorkerOptionsLoader.Load(tempPath);
+                Assert.False(withoutCredentials.IsArchiveActive);
+                Assert.Equal(4, withoutCredentials.ArchiveMaxParallelUploads);
+                Assert.True(withoutCredentials.ArchiveFtpAllowInvalidCertificate);
+            }
+
+            using (new EnvironmentVariableScope(
+                ("ARCHIVE_FTP_URL", "ftp://archivo.example.com:2121/monitoreo"),
+                ("ARCHIVE_FTP_USER", "juan"),
+                ("ARCHIVE_FTP_PASSWORD", "secreto")))
+            {
+                var options = OperationsWorkerOptionsLoader.Load(tempPath);
+                Assert.True(options.IsArchiveActive);
+                Assert.Equal("juan", options.ArchiveFtp!.User);
+            }
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
+    }
+
     // Sets environment variables for the duration of a test and restores their previous values
     // (including "was absent") on dispose — keeps FIREBASE_* tests isolated from whatever the
     // real process environment (or another test) happens to have set.

@@ -33,6 +33,11 @@ public static class OperationsWorkerOptionsLoader
         bool? TvVideoEnabled,
         int? TvVideoMaxHeight,
         string? FfmpegExecutablePath,
+        bool? ArchiveEnabled,
+        bool? ArchiveFtpRequireTls,
+        bool? ArchiveFtpAllowInvalidCertificate,
+        int? ArchiveMaxParallelUploads,
+        int? ArchiveMinIdleMinutes,
         int? DefaultFlacWindowDurationSeconds,
         int? DefaultOpusFlushIntervalSeconds,
         int? DefaultOpusRotationIntervalHours,
@@ -193,6 +198,31 @@ public static class OperationsWorkerOptionsLoader
             options.FfmpegExecutablePath = model.FfmpegExecutablePath;
         }
 
+        if (model.ArchiveEnabled.HasValue)
+        {
+            options.ArchiveEnabled = model.ArchiveEnabled.Value;
+        }
+
+        if (model.ArchiveFtpRequireTls.HasValue)
+        {
+            options.ArchiveFtpRequireTls = model.ArchiveFtpRequireTls.Value;
+        }
+
+        if (model.ArchiveFtpAllowInvalidCertificate.HasValue)
+        {
+            options.ArchiveFtpAllowInvalidCertificate = model.ArchiveFtpAllowInvalidCertificate.Value;
+        }
+
+        if (model.ArchiveMaxParallelUploads is > 0)
+        {
+            options.ArchiveMaxParallelUploads = model.ArchiveMaxParallelUploads.Value;
+        }
+
+        if (model.ArchiveMinIdleMinutes is > 0)
+        {
+            options.ArchiveMinIdleMinutes = model.ArchiveMinIdleMinutes.Value;
+        }
+
         if (model.DefaultFlacWindowDurationSeconds.HasValue)
         {
             options.DefaultFlacWindowDurationSeconds = model.DefaultFlacWindowDurationSeconds.Value;
@@ -346,6 +376,16 @@ public static class OperationsWorkerOptionsLoader
                 CollectionPath = string.IsNullOrWhiteSpace(firebaseCollectionPath) ? "platforms" : firebaseCollectionPath.Trim('/'),
                 RequestTimeoutSeconds = timeoutSeconds
             };
+        }
+
+        // Archive server credentials, like the Firebase/SMTP ones, only ever come from the environment.
+        var archiveUrl = Environment.GetEnvironmentVariable("ARCHIVE_FTP_URL");
+        var archiveUser = Environment.GetEnvironmentVariable("ARCHIVE_FTP_USER");
+        var archivePassword = Environment.GetEnvironmentVariable("ARCHIVE_FTP_PASSWORD");
+        if (!string.IsNullOrWhiteSpace(archiveUrl) && Uri.TryCreate(archiveUrl.Trim(), UriKind.Absolute, out _)
+            && !string.IsNullOrWhiteSpace(archiveUser) && archivePassword is not null)
+        {
+            options.ArchiveFtp = new FtpArchiveCredentials(archiveUrl.Trim(), archiveUser.Trim(), archivePassword);
         }
 
         // Email channel for alerts; like the Firebase credentials, only ever read from the environment.

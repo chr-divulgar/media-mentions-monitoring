@@ -29,7 +29,19 @@ builder.Services.AddSingleton(options);
 // Add hosted service for YouTube cookies HTTP endpoint
 builder.Services.AddSingleton<YouTubeCookiesHttpService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<YouTubeCookiesHttpService>());
-builder.Services.AddHostedService<RetentionPurgeWorker>();
+// Archive of closed capture files: upload to the server, and only then let the purge delete them.
+if (options.IsArchiveActive)
+{
+	builder.Services.AddSingleton(new ArchiveLedger(
+		Path.Combine(options.StageFilesystemRootPath, "monitoringArtifacts", "archive-ledger.jsonl")));
+	builder.Services.AddSingleton<IArchiveStorage, FtpArchiveStorage>();
+	builder.Services.AddHostedService<ArchiveUploadWorker>();
+}
+builder.Services.AddHostedService(sp => new RetentionPurgeWorker(
+	options,
+	sp.GetRequiredService<ISourceIncidentRecorder>(),
+	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RetentionPurgeWorker>>(),
+	archiveLedger: sp.GetService<ArchiveLedger>()));
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
 builder.Services.AddSingleton<StageMirrorMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IMonitoringArtifactRepository>(

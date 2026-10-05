@@ -26,6 +26,11 @@ public static class IncidentKinds
     public const string DiskRecovered = "disk-recovered";
     public const string PurgeFailed = "purge-failed";
 
+    // ArchiveUploadWorker / RetentionPurgeWorker, worker-wide: the archive server is unreachable,
+    // or local files are piling up older than retention because they could not be archived yet.
+    public const string ArchiveFailed = "archive-failed";
+    public const string ArchiveBacklog = "archive-backlog";
+
     // WebNewsCaptureUseCase, recorded under SourceId "google-news" (see that class).
     public const string CycleOk = "cycle-ok";
     public const string CycleFailed = "cycle-failed";

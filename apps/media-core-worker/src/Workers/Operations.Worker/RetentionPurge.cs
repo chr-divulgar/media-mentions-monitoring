@@ -13,12 +13,19 @@ namespace MediaOpsCore.Workers.Operations;
 /// </summary>
 internal static partial class RetentionPurge
 {
-    public static IReadOnlyList<string> FindDayFoldersOlderThan(string audioOutputRootPath, DateOnly cutoffExclusive)
+    public static IReadOnlyList<string> FindDayFoldersOlderThan(string audioOutputRootPath, DateOnly cutoffExclusive) =>
+        EnumerateDayFolders(audioOutputRootPath)
+            .Where(day => day.Date < cutoffExclusive)
+            .Select(day => day.Path)
+            .ToArray();
+
+    // Every capture day folder under the root, whatever its date — shared by the purge and the
+    // archive uploader so both recognise exactly the same folder shape.
+    public static IEnumerable<(string Path, DateOnly Date)> EnumerateDayFolders(string audioOutputRootPath)
     {
-        var result = new List<string>();
         if (!Directory.Exists(audioOutputRootPath))
         {
-            return result;
+            yield break;
         }
 
         foreach (var mediaDir in SafeSubdirectories(audioOutputRootPath))
@@ -29,16 +36,14 @@ internal static partial class RetentionPurge
                 {
                     foreach (var dayDir in SafeSubdirectories(monthDir).Where(d => TwoDigits().IsMatch(Name(d))))
                     {
-                        if (TryParseDate(yearDir, monthDir, dayDir, out var date) && date < cutoffExclusive)
+                        if (TryParseDate(yearDir, monthDir, dayDir, out var date))
                         {
-                            result.Add(dayDir);
+                            yield return (dayDir, date);
                         }
                     }
                 }
             }
         }
-
-        return result;
     }
 
     private static bool TryParseDate(string yearDir, string monthDir, string dayDir, out DateOnly date)
