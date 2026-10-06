@@ -117,6 +117,12 @@ public sealed class ArchiveUploadWorkerTests
             Uploaded.Add(relativePath);
             return Task.FromResult(Succeeds);
         }
+
+        public Task<IReadOnlyList<string>> ListAsync(string relativeDirectory, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
+
+        public Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default) =>
+            Task.FromResult(false);
     }
 
     [Fact]

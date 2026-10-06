@@ -15,6 +15,8 @@ public sealed record VideoSegmentNotAvailable(string Reason) : VideoSegmentResul
 /// holds the window — see TvRecordingLocator — and cuts it with Mp4SegmentCutter. The window is
 /// clamped to that one recording (it never joins two files), and the clip's real start is returned
 /// because stream copy begins on a keyframe, a little before the start that was asked for.
+/// A recording that is no longer on this disk (the purge keeps only today's) is fetched back from the
+/// archive into a size- and age-capped cache folder, then cut like any other.
 /// </summary>
 public sealed class VideoSegmentService
 {
@@ -29,13 +31,22 @@ public sealed class VideoSegmentService
     private readonly OperationsWorkerOptions options;
     private readonly ICaptureSourceProvider sourceProvider;
     private readonly ILogger<VideoSegmentService> logger;
+    private readonly IArchiveStorage? archive;
 
-    public VideoSegmentService(OperationsWorkerOptions options, ICaptureSourceProvider sourceProvider, ILogger<VideoSegmentService> logger)
+    // One download at a time: they are ~0.3 GB each, and two editors opening the same alert must not
+    // fetch the same file twice.
+    private static readonly SemaphoreSlim DownloadGate = new(1, 1);
+
+    public VideoSegmentService(
+        OperationsWorkerOptions options, ICaptureSourceProvider sourceProvider, ILogger<VideoSegmentService> logger, IArchiveStorage? archive = null)
     {
         this.options = options;
         this.sourceProvider = sourceProvider;
         this.logger = logger;
+        this.archive = archive;
     }
+
+    private string CacheRoot => Path.Combine(options.StageFilesystemRootPath, "video-cache");
 
     public async Task<VideoSegmentResult> GetSegmentAsync(
         string sourceId, DateTimeOffset startUtc, DateTimeOffset endUtc, CancellationToken cancellationToken)
@@ -46,17 +57,41 @@ public sealed class VideoSegmentService
 
         // The recording that holds the middle of the window; if that falls in a gap, either end.
         var middle = windowStart + (windowEnd - windowStart) / 2;
-        var candidates = ListLocalRecordings(sourceId, offset, windowStart, windowEnd);
-        var recording = TvRecordingLocator.Find(candidates, middle)
-            ?? TvRecordingLocator.Find(candidates, windowEnd)
-            ?? TvRecordingLocator.Find(candidates, windowStart);
+        var directories = DayDirectories(sourceId, windowStart, windowEnd);
+        var inputRoot = options.AudioOutputRootPath;
+        var recording = Locate(ListLocalRecordings(directories, sourceId, offset), middle, windowStart, windowEnd);
+        if (recording is null && archive is not null)
+        {
+            List<TvRecordingCandidate> archived;
+            try
+            {
+                archived = await ListArchivedRecordingsAsync(directories, sourceId, offset, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(exception, "[VideoSegmentService] Could not list the archive for {Source}.", sourceId);
+                return new VideoSegmentNotAvailable("No se pudo consultar el archivo de videos. Intente de nuevo en unos minutos.");
+            }
+
+            recording = Locate(archived, middle, windowStart, windowEnd);
+            if (recording is not null)
+            {
+                if (!await EnsureCachedAsync(recording.RelativePath, cancellationToken).ConfigureAwait(false))
+                {
+                    return new VideoSegmentNotAvailable("No se pudo descargar el video del archivo. Intente de nuevo en unos minutos.");
+                }
+
+                inputRoot = CacheRoot;
+            }
+        }
+
         if (recording is null)
         {
             return new VideoSegmentNotAvailable($"No hay video grabado de '{sourceId}' para ese momento.");
         }
 
         var (startSeconds, endSeconds) = TvRecordingLocator.ClipOffsets(recording, windowStart, windowEnd);
-        var inputPath = Path.Combine(options.AudioOutputRootPath, recording.RelativePath);
+        var inputPath = Path.Combine(inputRoot, recording.RelativePath);
         var outputPath = Path.Combine(Path.GetTempPath(), $"video-segment-{Guid.NewGuid():N}.mp4");
 
         await CutGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -91,31 +126,132 @@ public sealed class VideoSegmentService
         return source is null ? FallbackOffset : TimeSpan.FromMinutes(source.UtcOffsetMinutes);
     }
 
-    // The recordings of the days the window touches plus the day before the first: a recording that
+    // The recording that holds the middle of the window; if that falls in a gap, either end.
+    private static TvRecordingCandidate? Locate(
+        List<TvRecordingCandidate> candidates, DateTimeOffset middle, DateTimeOffset windowStart, DateTimeOffset windowEnd) =>
+        TvRecordingLocator.Find(candidates, middle)
+            ?? TvRecordingLocator.Find(candidates, windowEnd)
+            ?? TvRecordingLocator.Find(candidates, windowStart);
+
+    // The folders of the days the window touches plus the day before the first: a recording that
     // started in the last minute of a day runs into the next one, and sits in the earlier day's folder.
-    private List<TvRecordingCandidate> ListLocalRecordings(string sourceId, TimeSpan offset, DateTimeOffset windowStart, DateTimeOffset windowEnd)
+    private static List<string> DayDirectories(string sourceId, DateTimeOffset windowStart, DateTimeOffset windowEnd)
     {
-        var candidates = new List<TvRecordingCandidate>();
+        var directories = new List<string>();
         for (var day = DateOnly.FromDateTime(windowStart.DateTime).AddDays(-1); day <= DateOnly.FromDateTime(windowEnd.DateTime); day = day.AddDays(1))
         {
-            var relativeDirectory = string.Join('/', TelevisionDirectory, day.Year.ToString("D4"), day.Month.ToString("D2"), day.Day.ToString("D2"), sourceId);
-            var directory = Path.Combine(options.AudioOutputRootPath, relativeDirectory);
-            if (!Directory.Exists(directory))
-            {
-                continue;
-            }
+            directories.Add(string.Join('/', TelevisionDirectory, day.Year.ToString("D4"), day.Month.ToString("D2"), day.Day.ToString("D2"), sourceId));
+        }
 
-            foreach (var file in Directory.EnumerateFiles(directory, "*.mp4"))
+        return directories;
+    }
+
+    private static void AddCandidates(
+        List<TvRecordingCandidate> candidates, string relativeDirectory, IEnumerable<string> fileNames, string sourceId, TimeSpan offset)
+    {
+        foreach (var name in fileNames)
+        {
+            if (TvRecordingLocator.TryParseStart(name, sourceId, offset, out var start))
             {
-                var name = Path.GetFileName(file);
-                if (TvRecordingLocator.TryParseStart(name, sourceId, offset, out var start))
-                {
-                    candidates.Add(new TvRecordingCandidate($"{relativeDirectory}/{name}", start));
-                }
+                candidates.Add(new TvRecordingCandidate($"{relativeDirectory}/{name}", start));
+            }
+        }
+    }
+
+    private List<TvRecordingCandidate> ListLocalRecordings(List<string> directories, string sourceId, TimeSpan offset)
+    {
+        var candidates = new List<TvRecordingCandidate>();
+        foreach (var relativeDirectory in directories)
+        {
+            var directory = Path.Combine(options.AudioOutputRootPath, relativeDirectory);
+            if (Directory.Exists(directory))
+            {
+                AddCandidates(candidates, relativeDirectory, Directory.EnumerateFiles(directory, "*.mp4").Select(file => Path.GetFileName(file)), sourceId, offset);
             }
         }
 
         return candidates;
+    }
+
+    private async Task<List<TvRecordingCandidate>> ListArchivedRecordingsAsync(
+        List<string> directories, string sourceId, TimeSpan offset, CancellationToken cancellationToken)
+    {
+        var candidates = new List<TvRecordingCandidate>();
+        foreach (var relativeDirectory in directories)
+        {
+            var names = await archive!.ListAsync(relativeDirectory, cancellationToken).ConfigureAwait(false);
+            AddCandidates(candidates, relativeDirectory, names, sourceId, offset);
+        }
+
+        return candidates;
+    }
+
+    // Makes sure the archived recording is in the cache folder, downloading it when it is not there
+    // or has outlived VideoCacheHours. Returns false when the download failed.
+    private async Task<bool> EnsureCachedAsync(string relativePath, CancellationToken cancellationToken)
+    {
+        var cached = Path.Combine(CacheRoot, relativePath);
+        var maxAge = TimeSpan.FromHours(options.VideoCacheHours);
+
+        await DownloadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(cached) && DateTime.UtcNow - File.GetLastWriteTimeUtc(cached) < maxAge)
+            {
+                return true;
+            }
+
+            // Into a .part file: a download cut short must never be mistaken for the recording.
+            var partial = cached + ".part";
+            bool downloaded;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(cached))!);
+                downloaded = await archive!.DownloadAsync(relativePath, partial, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(exception, "[VideoSegmentService] Could not download {Path} from the archive.", relativePath);
+                downloaded = false;
+            }
+
+            if (!downloaded)
+            {
+                TryDelete(partial);
+                return false;
+            }
+
+            File.Move(partial, cached, overwrite: true);
+            TrimCache(keep: cached);
+            return true;
+        }
+        finally
+        {
+            DownloadGate.Release();
+        }
+    }
+
+    // Drops cached recordings past their age, then the oldest ones while the folder is over its cap.
+    private void TrimCache(string keep)
+    {
+        var maxAge = TimeSpan.FromHours(options.VideoCacheHours);
+        var files = new DirectoryInfo(CacheRoot).EnumerateFiles("*.mp4", SearchOption.AllDirectories)
+            .Where(file => !string.Equals(file.FullName, Path.GetFullPath(keep), StringComparison.OrdinalIgnoreCase))
+            .OrderBy(file => file.LastWriteTimeUtc)
+            .ToList();
+        var capBytes = options.VideoCacheMaxGb * 1024L * 1024 * 1024;
+        var total = files.Sum(file => file.Length) + new FileInfo(keep).Length;
+
+        foreach (var file in files)
+        {
+            if (DateTime.UtcNow - file.LastWriteTimeUtc < maxAge && total <= capBytes)
+            {
+                break;
+            }
+
+            total -= file.Length;
+            TryDelete(file.FullName);
+        }
     }
 
     private static void TryDelete(string path)

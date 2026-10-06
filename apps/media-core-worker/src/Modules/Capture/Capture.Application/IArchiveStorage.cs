@@ -11,4 +11,12 @@ public interface IArchiveStorage
     // true only once the remote copy is verified to be complete. Must not throw for operational
     // failures (server down, credentials, network): return false and let the caller retry.
     Task<bool> UploadAsync(string localPath, string relativePath, CancellationToken cancellationToken = default);
+
+    // File names (not paths) directly inside relativeDirectory; empty when the directory does not
+    // exist. Unlike UploadAsync this throws on operational failures: "nothing there" and "could not
+    // look" must not be confused by a reader that is about to tell a user the file does not exist.
+    Task<IReadOnlyList<string>> ListAsync(string relativeDirectory, CancellationToken cancellationToken = default);
+
+    // Copies relativePath to localPath and returns true only once the local copy has the remote size.
+    Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default);
 }

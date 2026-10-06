@@ -44,24 +44,64 @@ public sealed class FtpArchiveStorage : IArchiveStorage
     private static X509Certificate2? ToCertificate2(X509Certificate? certificate) =>
         certificate is null ? null : new X509Certificate2(certificate);
 
-    public async Task<bool> UploadAsync(string localPath, string relativePath, CancellationToken cancellationToken = default)
+    private (AsyncFtpClient Client, string BasePath) CreateClient()
     {
         var (host, port, basePath, isImplicit) = credentials.Parse();
-        var remotePath = $"{basePath}/{relativePath.TrimStart('/')}";
+        var client = new AsyncFtpClient(host, credentials.User, credentials.Password, port);
+        client.Config.EncryptionMode = isImplicit
+            ? FtpEncryptionMode.Implicit
+            : requireTls ? FtpEncryptionMode.Explicit : FtpEncryptionMode.None;
+        client.Config.ValidateAnyCertificate = allowInvalidCertificate;
+        client.ValidateCertificate += (_, e) =>
+        {
+            e.Accept = allowInvalidCertificate
+                || FtpCertificateValidation.ShouldAccept(e.PolicyErrors, e.Certificate as X509Certificate2 ?? ToCertificate2(e.Certificate), certificateHost);
+        };
+        client.Config.RetryAttempts = 2;
+        return (client, basePath);
+    }
 
+    public async Task<IReadOnlyList<string>> ListAsync(string relativeDirectory, CancellationToken cancellationToken = default)
+    {
+        var (client, basePath) = CreateClient();
+        await using var _ = client;
+        await client.Connect(cancellationToken).ConfigureAwait(false);
+
+        var remoteDirectory = $"{basePath}/{relativeDirectory.Trim('/')}";
+        if (!await client.DirectoryExists(remoteDirectory, cancellationToken).ConfigureAwait(false))
+        {
+            return [];
+        }
+
+        var items = await client.GetListing(remoteDirectory, cancellationToken).ConfigureAwait(false);
+        return items.Where(item => item.Type == FtpObjectType.File).Select(item => item.Name).ToList();
+    }
+
+    public async Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default)
+    {
+        var (client, basePath) = CreateClient();
+        await using var _ = client;
+        await client.Connect(cancellationToken).ConfigureAwait(false);
+
+        var remotePath = $"{basePath}/{relativePath.TrimStart('/')}";
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(localPath))!);
+        var status = await client.DownloadFile(localPath, remotePath, FtpLocalExists.Overwrite, token: cancellationToken).ConfigureAwait(false);
+        if (status == FtpStatus.Failed)
+        {
+            return false;
+        }
+
+        var remoteSize = await client.GetFileSize(remotePath, -1, cancellationToken).ConfigureAwait(false);
+        return new FileInfo(localPath).Length == remoteSize;
+    }
+
+    public async Task<bool> UploadAsync(string localPath, string relativePath, CancellationToken cancellationToken = default)
+    {
         try
         {
-            await using var client = new AsyncFtpClient(host, credentials.User, credentials.Password, port);
-            client.Config.EncryptionMode = isImplicit
-                ? FtpEncryptionMode.Implicit
-                : requireTls ? FtpEncryptionMode.Explicit : FtpEncryptionMode.None;
-            client.Config.ValidateAnyCertificate = allowInvalidCertificate;
-            client.ValidateCertificate += (_, e) =>
-            {
-                e.Accept = allowInvalidCertificate
-                    || FtpCertificateValidation.ShouldAccept(e.PolicyErrors, e.Certificate as X509Certificate2 ?? ToCertificate2(e.Certificate), certificateHost);
-            };
-            client.Config.RetryAttempts = 2;
+            var (client, basePath) = CreateClient();
+            await using var _ = client;
+            var remotePath = $"{basePath}/{relativePath.TrimStart('/')}";
 
             await client.Connect(cancellationToken).ConfigureAwait(false);
 

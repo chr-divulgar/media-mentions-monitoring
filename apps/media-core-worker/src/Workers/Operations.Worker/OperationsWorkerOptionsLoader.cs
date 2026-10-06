@@ -38,6 +38,8 @@ public static class OperationsWorkerOptionsLoader
         string? ArchiveFtpCertificateHost,
         int? ArchiveMaxParallelUploads,
         int? ArchiveMinIdleMinutes,
+        int? VideoCacheHours,
+        int? VideoCacheMaxGb,
         bool? HeadlessBrowserEnabled,
         string? HeadlessBrowserPath,
         int? DefaultFlacWindowDurationSeconds,
@@ -220,6 +222,16 @@ public static class OperationsWorkerOptionsLoader
         if (model.ArchiveMaxParallelUploads is > 0)
         {
             options.ArchiveMaxParallelUploads = model.ArchiveMaxParallelUploads.Value;
+        }
+
+        if (model.VideoCacheHours is > 0)
+        {
+            options.VideoCacheHours = model.VideoCacheHours.Value;
+        }
+
+        if (model.VideoCacheMaxGb is > 0)
+        {
+            options.VideoCacheMaxGb = model.VideoCacheMaxGb.Value;
         }
 
         if (model.ArchiveMinIdleMinutes is > 0)

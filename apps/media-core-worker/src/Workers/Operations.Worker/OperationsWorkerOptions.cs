@@ -53,6 +53,12 @@ public sealed class OperationsWorkerOptions
 
     public int ArchiveMinIdleMinutes { get; set; } = 20;
 
+    // Recordings of earlier days are fetched back from the archive for the alert editor into
+    // <StageFilesystemRootPath>/video-cache; one is kept this long and the folder is capped in size.
+    public int VideoCacheHours { get; set; } = 24;
+
+    public int VideoCacheMaxGb { get; set; } = 10;
+
     // Headless Chromium (HeadlessBrowser) for outlets behind an anti-bot challenge, and later the
     // PDF copy of each note. Downloaded on first use into this folder (relative to the app root).
     public bool HeadlessBrowserEnabled { get; set; } = true;

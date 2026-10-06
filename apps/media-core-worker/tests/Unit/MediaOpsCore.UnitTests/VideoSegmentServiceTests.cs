@@ -146,4 +146,141 @@ public sealed class VideoSegmentServiceTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    // An archive holding the sample under the same relative layout as the local disk.
+    private sealed class FakeArchive(params string[] relativePaths) : IArchiveStorage
+    {
+        public int Downloads { get; private set; }
+        public bool DownloadSucceeds { get; set; } = true;
+        public bool ListThrows { get; set; }
+
+        public Task<bool> UploadAsync(string localPath, string relativePath, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+        public Task<IReadOnlyList<string>> ListAsync(string relativeDirectory, CancellationToken cancellationToken = default)
+        {
+            if (ListThrows) throw new IOException("server down");
+            return Task.FromResult<IReadOnlyList<string>>(
+                relativePaths.Where(path => path.StartsWith(relativeDirectory + "/")).Select(path => path[(relativeDirectory.Length + 1)..]).ToList());
+        }
+
+        public Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default)
+        {
+            Downloads++;
+            if (DownloadSucceeds) File.Copy(Sample, localPath, overwrite: true);
+            return Task.FromResult(DownloadSucceeds);
+        }
+    }
+
+    private static VideoSegmentService ServiceWithArchive(string root, IArchiveStorage archive) =>
+        new(
+            new OperationsWorkerOptions { AudioOutputRootPath = Path.Combine(root, "audio"), StageFilesystemRootPath = Path.Combine(root, "stage") },
+            new FakeSources(new CaptureSource("rcn_tv", "youtube", "RCN", "television", "https://x/live")),
+            NullLogger<VideoSegmentService>.Instance,
+            archive);
+
+    private const string YesterdayFile = "television/2026/10/04/rcn_tv/rcn_tv_2026-10-04_12-05-59.mp4";
+
+    [Fact]
+    public async Task GetSegmentAsync_fetches_a_previous_day_recording_from_the_archive_once_and_reuses_the_cache()
+    {
+        var root = NewRoot();
+        var archive = new FakeArchive(YesterdayFile);
+        var start = new DateTimeOffset(2026, 10, 4, 12, 5, 59, Bogota);
+        var clips = new List<string>();
+        try
+        {
+            var service = ServiceWithArchive(root, archive);
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var result = await service.GetSegmentAsync(
+                    "rcn_tv", start.AddSeconds(4.5).ToUniversalTime(), start.AddSeconds(7).ToUniversalTime(), CancellationToken.None);
+                clips.Add(Assert.IsType<VideoSegmentSuccess>(result).TempPath);
+            }
+
+            Assert.Equal(1, archive.Downloads);
+            Assert.True(File.Exists(Path.Combine(root, "stage", "video-cache", YesterdayFile)));
+        }
+        finally
+        {
+            clips.ForEach(File.Delete);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetSegmentAsync_prefers_the_local_recording_over_the_archive()
+    {
+        var root = NewRoot();
+        var archive = new FakeArchive(YesterdayFile);
+        var start = new DateTimeOffset(2026, 10, 4, 12, 5, 59, Bogota);
+        VideoSegmentSuccess? clip = null;
+        try
+        {
+            Record(Path.Combine(root, "audio"), "rcn_tv", start);
+
+            var result = await ServiceWithArchive(root, archive).GetSegmentAsync(
+                "rcn_tv", start.AddSeconds(4.5).ToUniversalTime(), start.AddSeconds(7).ToUniversalTime(), CancellationToken.None);
+
+            clip = Assert.IsType<VideoSegmentSuccess>(result);
+            Assert.Equal(0, archive.Downloads);
+        }
+        finally
+        {
+            if (clip is not null) File.Delete(clip.TempPath);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetSegmentAsync_says_so_when_the_archive_does_not_have_it_or_cannot_be_reached()
+    {
+        var root = NewRoot();
+        var start = new DateTimeOffset(2026, 10, 4, 12, 5, 59, Bogota);
+        try
+        {
+            var missing = await ServiceWithArchive(root, new FakeArchive()).GetSegmentAsync(
+                "rcn_tv", start.AddSeconds(4).ToUniversalTime(), start.AddSeconds(7).ToUniversalTime(), CancellationToken.None);
+            Assert.Contains("No hay video grabado", Assert.IsType<VideoSegmentNotAvailable>(missing).Reason);
+
+            var down = await ServiceWithArchive(root, new FakeArchive(YesterdayFile) { ListThrows = true }).GetSegmentAsync(
+                "rcn_tv", start.AddSeconds(4).ToUniversalTime(), start.AddSeconds(7).ToUniversalTime(), CancellationToken.None);
+            Assert.Contains("consultar", Assert.IsType<VideoSegmentNotAvailable>(down).Reason);
+
+            var failed = await ServiceWithArchive(root, new FakeArchive(YesterdayFile) { DownloadSucceeds = false }).GetSegmentAsync(
+                "rcn_tv", start.AddSeconds(4).ToUniversalTime(), start.AddSeconds(7).ToUniversalTime(), CancellationToken.None);
+            Assert.Contains("descargar", Assert.IsType<VideoSegmentNotAvailable>(failed).Reason);
+            Assert.False(File.Exists(Path.Combine(root, "stage", "video-cache", YesterdayFile + ".part")));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetSegmentAsync_trims_cached_recordings_past_their_age()
+    {
+        var root = NewRoot();
+        var archive = new FakeArchive(YesterdayFile);
+        var start = new DateTimeOffset(2026, 10, 4, 12, 5, 59, Bogota);
+        VideoSegmentSuccess? clip = null;
+        try
+        {
+            var old = Path.Combine(root, "stage", "video-cache", "television", "2026", "10", "01", "rcn_tv", "rcn_tv_2026-10-01_08-00-00.mp4");
+            Directory.CreateDirectory(Path.GetDirectoryName(old)!);
+            File.Copy(Sample, old);
+            File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-3));
+
+            var result = await ServiceWithArchive(root, archive).GetSegmentAsync(
+                "rcn_tv", start.AddSeconds(4.5).ToUniversalTime(), start.AddSeconds(7).ToUniversalTime(), CancellationToken.None);
+
+            clip = Assert.IsType<VideoSegmentSuccess>(result);
+            Assert.False(File.Exists(old));
+        }
+        finally
+        {
+            if (clip is not null) File.Delete(clip.TempPath);
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
