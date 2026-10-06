@@ -265,6 +265,23 @@ public sealed class OperationsWorkerOptionsLoaderTests
     }
 
     [Fact]
+    public void Load_should_never_let_a_negative_retention_move_the_purge_cutoff_into_the_future()
+    {
+        // A cutoff after today would put today's own folder under the purge.
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-retention-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(tempPath, """{ "audioRetentionDays": -3 }""");
+
+            Assert.Equal(0, OperationsWorkerOptionsLoader.Load(tempPath).AudioRetentionDays);
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
     public void Load_should_activate_the_archive_only_with_the_flag_and_the_environment_credentials()
     {
         var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-archive-{Guid.NewGuid():N}.json");

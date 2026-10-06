@@ -29,11 +29,16 @@ builder.Services.AddSingleton(options);
 // Add hosted service for YouTube cookies HTTP endpoint
 builder.Services.AddSingleton<YouTubeCookiesHttpService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<YouTubeCookiesHttpService>());
-// Archive of closed capture files: upload to the server, and only then let the purge delete them.
-if (options.IsArchiveActive)
+// Archive of closed TV video: upload to the server, and only then let the purge delete it. The
+// ledger exists whenever archiving is switched on — even while the credentials are still missing —
+// so the purge is already in archive mode and, with nothing verified, never deletes an .mp4.
+if (options.ArchiveEnabled)
 {
 	builder.Services.AddSingleton(new ArchiveLedger(
 		Path.Combine(options.StageFilesystemRootPath, "monitoringArtifacts", "archive-ledger.jsonl")));
+}
+if (options.IsArchiveActive)
+{
 	builder.Services.AddSingleton<IArchiveStorage, FtpArchiveStorage>();
 	builder.Services.AddHostedService<ArchiveUploadWorker>();
 }
@@ -250,6 +255,14 @@ var host = builder.Build();
 // Lets the status page tell "the worker restarted" apart from "the stream failed" on a gray stretch.
 var incidentRecorder = host.Services.GetRequiredService<ISourceIncidentRecorder>();
 incidentRecorder.Record(IncidentKinds.WorkerSourceId, IncidentKinds.WorkerStarted);
+if (options.ArchiveEnabled && !options.IsArchiveActive)
+{
+    // Archiving is on but cannot upload: TV video piles up locally (the purge keeps every .mp4
+    // until its copy is verified). Say so on /status instead of failing silently.
+    incidentRecorder.Record(
+        IncidentKinds.WorkerSourceId, IncidentKinds.ArchiveFailed,
+        "Faltan ARCHIVE_FTP_URL / ARCHIVE_FTP_USER / ARCHIVE_FTP_PASSWORD: el video MP4 no se archiva ni se borra.");
+}
 host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(
     () => incidentRecorder.Record(IncidentKinds.WorkerSourceId, IncidentKinds.WorkerStopped));
 

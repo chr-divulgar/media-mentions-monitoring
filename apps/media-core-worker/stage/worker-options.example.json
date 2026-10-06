@@ -19,6 +19,7 @@
   "archiveEnabled": false,
   "archiveFtpRequireTls": true,
   "archiveFtpAllowInvalidCertificate": false,
+  "archiveFtpCertificateHost": "",
   "archiveMaxParallelUploads": 2,
   "archiveMinIdleMinutes": 20,
   "headlessBrowserEnabled": true,

@@ -35,6 +35,7 @@ public static class OperationsWorkerOptionsLoader
         bool? ArchiveEnabled,
         bool? ArchiveFtpRequireTls,
         bool? ArchiveFtpAllowInvalidCertificate,
+        string? ArchiveFtpCertificateHost,
         int? ArchiveMaxParallelUploads,
         int? ArchiveMinIdleMinutes,
         bool? HeadlessBrowserEnabled,
@@ -176,7 +177,9 @@ public static class OperationsWorkerOptionsLoader
 
         if (model.AudioRetentionDays.HasValue)
         {
-            options.AudioRetentionDays = model.AudioRetentionDays.Value;
+            // Floored at 0 (keep only today): a negative value would put the purge cutoff after
+            // today and delete today's own folder.
+            options.AudioRetentionDays = Math.Max(0, model.AudioRetentionDays.Value);
         }
 
         if (model.MinFreeDiskGb.HasValue)
@@ -207,6 +210,11 @@ public static class OperationsWorkerOptionsLoader
         if (model.ArchiveFtpAllowInvalidCertificate.HasValue)
         {
             options.ArchiveFtpAllowInvalidCertificate = model.ArchiveFtpAllowInvalidCertificate.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(model.ArchiveFtpCertificateHost))
+        {
+            options.ArchiveFtpCertificateHost = model.ArchiveFtpCertificateHost.Trim();
         }
 
         if (model.ArchiveMaxParallelUploads is > 0)

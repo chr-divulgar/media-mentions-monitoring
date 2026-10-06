@@ -28,17 +28,20 @@ internal static class ArchiveFixture
 
 public sealed class ArchiveUploadTests
 {
-    private static readonly DateTime Now = new(2026, 10, 4, 20, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime Now = new(2026, 10, 5, 20, 0, 0, DateTimeKind.Utc);
 
     [Fact]
-    public void FindPendingFiles_returns_closed_capture_files_oldest_first_with_slash_relative_paths()
+    public void FindPendingFiles_returns_only_closed_mp4_files_from_today_and_earlier_days_oldest_first()
     {
         var root = ArchiveFixture.NewRoot();
         try
         {
-            var day = new DateOnly(2026, 10, 4);
-            var newer = ArchiveFixture.MakeFile(root, "radio", day, "wradio", "wradio_2026-10-04_18-00-00.opus", Now.AddHours(-1));
-            var older = ArchiveFixture.MakeFile(root, "television", day, "rcn_tv", "rcn_tv_2026-10-04_17-00-00.mp4", Now.AddHours(-2));
+            var older = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 4), "rcn_tv", "rcn_tv_2026-10-04_17-00-00.mp4", Now.AddHours(-20));
+            var newer = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "rcn_tv", "rcn_tv_2026-10-05_17-00-00.mp4", Now.AddHours(-2));
+            // Audio is not archived at all: not the opus, not its transcription, not a resume file.
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_17-00-00.opus", Now.AddHours(-2));
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_17-00-00.json", Now.AddHours(-2));
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_16-00-00.opus.resume", Now.AddHours(-2));
 
             var pending = ArchiveUpload.FindPendingFiles(root, (_, _) => false, Now, TimeSpan.FromMinutes(20));
 
@@ -52,19 +55,18 @@ public sealed class ArchiveUploadTests
     }
 
     [Fact]
-    public void FindPendingFiles_skips_files_still_being_written_resume_files_and_already_archived_ones()
+    public void FindPendingFiles_skips_mp4_files_still_being_written_and_already_archived_ones()
     {
         var root = ArchiveFixture.NewRoot();
         try
         {
-            var day = new DateOnly(2026, 10, 4);
-            ArchiveFixture.MakeFile(root, "radio", day, "wradio", "active.opus", Now.AddMinutes(-2));
-            ArchiveFixture.MakeFile(root, "radio", day, "wradio", "old.opus.resume", Now.AddHours(-3));
-            ArchiveFixture.MakeFile(root, "radio", day, "wradio", "done.opus", Now.AddHours(-3));
-            var keep = ArchiveFixture.MakeFile(root, "radio", day, "wradio", "todo.json", Now.AddHours(-3));
+            var day = new DateOnly(2026, 10, 5);
+            ArchiveFixture.MakeFile(root, "television", day, "rcn_tv", "active.mp4", Now.AddMinutes(-2));
+            ArchiveFixture.MakeFile(root, "television", day, "rcn_tv", "done.mp4", Now.AddHours(-3));
+            var keep = ArchiveFixture.MakeFile(root, "television", day, "rcn_tv", "todo.mp4", Now.AddHours(-3));
 
             var pending = ArchiveUpload.FindPendingFiles(
-                root, (relative, _) => relative.EndsWith("done.opus", StringComparison.Ordinal), Now, TimeSpan.FromMinutes(20));
+                root, (relative, _) => relative.EndsWith("done.mp4", StringComparison.Ordinal), Now, TimeSpan.FromMinutes(20));
 
             Assert.Equal([keep], pending.Select(p => p.LocalPath));
         }
@@ -123,7 +125,7 @@ public sealed class ArchiveUploadWorkerTests
         var root = ArchiveFixture.NewRoot();
         try
         {
-            var file = ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 4), "wradio", "a.opus", DateTime.UtcNow.AddHours(-2));
+            var file = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 4), "rcn_tv", "a.mp4", DateTime.UtcNow.AddHours(-2));
             var size = new FileInfo(file).Length;
             var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
             var storage = new FakeStorage { Succeeds = false };
@@ -134,12 +136,12 @@ public sealed class ArchiveUploadWorkerTests
             await worker.RunOnceAsync(CancellationToken.None);
             await worker.RunOnceAsync(CancellationToken.None);
 
-            Assert.False(ledger.Contains("radio/2026/10/04/wradio/a.opus", size));
+            Assert.False(ledger.Contains("television/2026/10/04/rcn_tv/a.mp4", size));
             Assert.Single(incidents.Records, r => r.Kind == IncidentKinds.ArchiveFailed);
 
             storage.Succeeds = true;
             await worker.RunOnceAsync(CancellationToken.None);
-            Assert.True(ledger.Contains("radio/2026/10/04/wradio/a.opus", size));
+            Assert.True(ledger.Contains("television/2026/10/04/rcn_tv/a.mp4", size));
 
             await worker.RunOnceAsync(CancellationToken.None);
             Assert.Equal(3, storage.Uploaded.Count); // once archived, never uploaded again
@@ -153,31 +155,164 @@ public sealed class ArchiveUploadWorkerTests
 
 public sealed class RetentionPurgeWithArchiveTests
 {
+    // 12:00 in Bogota on the 5th: "today" is 2026-10-05, "yesterday" 2026-10-04.
+    private static readonly DateTimeOffset ClockNow = new(2026, 10, 5, 12, 0, 0, TimeSpan.FromHours(-5));
+    private static readonly DateOnly Today = new(2026, 10, 5);
+    private static readonly DateOnly Yesterday = new(2026, 10, 4);
+
     private static RetentionPurgeWorker Worker(string root, ArchiveLedger ledger, ArchiveFixture.Incidents incidents) =>
         new(
-            new OperationsWorkerOptions { AudioOutputRootPath = root, AudioRetentionDays = 2, MinFreeDiskGb = 0 },
-            incidents, NullLogger<RetentionPurgeWorker>.Instance,
-            () => new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.FromHours(-5)), () => 100, ledger);
+            // Retention 0: keep only today. ArchiveMinIdleMinutes (20) also shields files still being written.
+            new OperationsWorkerOptions { AudioOutputRootPath = root, AudioRetentionDays = 0, MinFreeDiskGb = 0 },
+            incidents, NullLogger<RetentionPurgeWorker>.Instance, () => ClockNow, () => 100, ledger);
+
+    private static string Mp4(string root, DateOnly day, string name, TimeSpan age) =>
+        ArchiveFixture.MakeFile(root, "television", day, "rcn_tv", name, ClockNow.UtcDateTime - age);
+
+    private static string Audio(string root, DateOnly day, string name, TimeSpan age) =>
+        ArchiveFixture.MakeFile(root, "radio", day, "wradio", name, ClockNow.UtcDateTime - age);
+
+    private static string Relative(string root, string file) => ArchiveUpload.ToRelativePath(root, file);
 
     [Fact]
-    public void Tick_deletes_only_archived_old_files_and_flags_the_unarchived_backlog()
+    public void Tick_deletes_non_mp4_files_of_previous_days_without_needing_an_archive_copy()
     {
         var root = ArchiveFixture.NewRoot();
         try
         {
-            var oldDay = new DateOnly(2026, 9, 25);
-            var archived = ArchiveFixture.MakeFile(root, "radio", oldDay, "wradio", "a.opus", DateTime.UtcNow.AddDays(-9));
-            var notArchived = ArchiveFixture.MakeFile(root, "radio", oldDay, "wradio", "b.opus", DateTime.UtcNow.AddDays(-9));
-            var archivedSize = new FileInfo(archived).Length;
+            var opus = Audio(root, Yesterday, "a.opus", TimeSpan.FromHours(5));
+            var json = Audio(root, Yesterday, "a.json", TimeSpan.FromHours(5));
+            var resume = Audio(root, Yesterday, "b.opus.resume", TimeSpan.FromHours(5));
+
+            Worker(root, new ArchiveLedger(Path.Combine(root, "ledger.jsonl")), new ArchiveFixture.Incidents()).Tick();
+
+            Assert.False(File.Exists(opus));
+            Assert.False(File.Exists(json));
+            Assert.False(File.Exists(resume));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Tick_keeps_a_previous_day_mp4_that_is_not_in_the_archive()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var mp4 = Mp4(root, Yesterday, "a.mp4", TimeSpan.FromHours(1));
+
+            Worker(root, new ArchiveLedger(Path.Combine(root, "ledger.jsonl")), new ArchiveFixture.Incidents()).Tick();
+
+            Assert.True(File.Exists(mp4));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Tick_deletes_an_archived_previous_day_mp4_and_forgets_it_in_the_ledger()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var mp4 = Mp4(root, Yesterday, "a.mp4", TimeSpan.FromHours(1));
+            var size = new FileInfo(mp4).Length;
             var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
-            ledger.Add("radio/2026/09/25/wradio/a.opus", archivedSize);
+            ledger.Add(Relative(root, mp4), size);
+
+            Worker(root, ledger, new ArchiveFixture.Incidents()).Tick();
+
+            Assert.False(File.Exists(mp4));
+            Assert.False(ledger.Contains(Relative(root, mp4), size));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Tick_never_deletes_anything_from_today_not_even_an_mp4_that_is_already_archived()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var opus = Audio(root, Today, "a.opus", TimeSpan.FromHours(3));
+            var json = Audio(root, Today, "a.json", TimeSpan.FromHours(3));
+            var mp4 = Mp4(root, Today, "a.mp4", TimeSpan.FromHours(3));
+            var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
+            ledger.Add(Relative(root, mp4), new FileInfo(mp4).Length);
+
+            Worker(root, ledger, new ArchiveFixture.Incidents()).Tick();
+
+            Assert.True(File.Exists(opus));
+            Assert.True(File.Exists(json));
+            Assert.True(File.Exists(mp4));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Tick_leaves_a_previous_day_file_that_was_written_to_recently()
+    {
+        // Just after midnight the last hour of the day can still be flushing: yesterday's folder does
+        // not mean yesterday's file is finished.
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var stillWriting = Audio(root, Yesterday, "a.opus", TimeSpan.FromMinutes(5));
+            var finished = Audio(root, Yesterday, "b.opus", TimeSpan.FromHours(2));
+
+            Worker(root, new ArchiveLedger(Path.Combine(root, "ledger.jsonl")), new ArchiveFixture.Incidents()).Tick();
+
+            Assert.True(File.Exists(stillWriting));
+            Assert.False(File.Exists(finished));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Tick_does_not_flag_a_backlog_for_an_mp4_that_only_just_closed()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            Mp4(root, Yesterday, "a.mp4", TimeSpan.FromMinutes(40)); // closed, waiting its turn to upload
             var incidents = new ArchiveFixture.Incidents();
 
-            Worker(root, ledger, incidents).Tick();
+            Worker(root, new ArchiveLedger(Path.Combine(root, "ledger.jsonl")), incidents).Tick();
 
-            Assert.False(File.Exists(archived));
-            Assert.True(File.Exists(notArchived));
-            Assert.False(ledger.Contains("radio/2026/09/25/wradio/a.opus", archivedSize));
+            Assert.DoesNotContain(incidents.Records, r => r.Kind == IncidentKinds.ArchiveBacklog);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Tick_flags_a_backlog_for_an_mp4_that_has_stayed_unarchived_for_over_two_hours()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var mp4 = Mp4(root, Yesterday, "a.mp4", TimeSpan.FromHours(3));
+            var incidents = new ArchiveFixture.Incidents();
+
+            Worker(root, new ArchiveLedger(Path.Combine(root, "ledger.jsonl")), incidents).Tick();
+
+            Assert.True(File.Exists(mp4));
             Assert.Single(incidents.Records, r => r.Kind == IncidentKinds.ArchiveBacklog);
         }
         finally
@@ -187,18 +322,20 @@ public sealed class RetentionPurgeWithArchiveTests
     }
 
     [Fact]
-    public void Tick_removes_a_day_folder_once_everything_in_it_was_archived_and_purged()
+    public void Tick_removes_a_previous_day_folder_once_nothing_is_left_in_it()
     {
         var root = ArchiveFixture.NewRoot();
         try
         {
-            var archived = ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 9, 25), "wradio", "a.opus", DateTime.UtcNow.AddDays(-9));
+            var mp4 = Mp4(root, Yesterday, "a.mp4", TimeSpan.FromHours(3));
+            Audio(root, Yesterday, "a.opus", TimeSpan.FromHours(3));
             var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
-            ledger.Add("radio/2026/09/25/wradio/a.opus", new FileInfo(archived).Length);
+            ledger.Add(Relative(root, mp4), new FileInfo(mp4).Length);
 
             Worker(root, ledger, new ArchiveFixture.Incidents()).Tick();
 
-            Assert.False(Directory.Exists(Path.Combine(root, "radio", "2026", "09", "25")));
+            Assert.False(Directory.Exists(Path.Combine(root, "radio", "2026", "10", "04")));
+            Assert.False(Directory.Exists(Path.Combine(root, "television", "2026", "10", "04")));
         }
         finally
         {

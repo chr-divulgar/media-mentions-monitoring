@@ -3,7 +3,7 @@ namespace MediaOpsCore.Workers.Operations;
 internal sealed record PendingArchiveFile(string LocalPath, string RelativePath, long Size, DateTime LastWriteUtc);
 
 /// <summary>
-/// Pure selection of what still needs archiving: closed files in capture day folders that the
+/// Pure selection of what still needs archiving: closed MP4 files in capture day folders that the
 /// ledger does not already have. "Closed" is judged by inactivity — an active hour is written every
 /// few seconds (audio flush, continuous video), so a file untouched for a while is finished.
 /// </summary>
@@ -21,9 +21,9 @@ internal static class ArchiveUpload
         {
             foreach (var file in SafeFiles(dayDir))
             {
-                // A .resume is the in-progress half of a resumed hour; it is merged into the real
-                // file later and must never be archived on its own.
-                if (file.Name.EndsWith(".resume", StringComparison.OrdinalIgnoreCase)
+                // Only TV video is archived for now; audio and its transcription are not (they are
+                // kept for the current day and deleted afterwards, see RetentionPurgeWorker).
+                if (!file.Name.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
                     || nowUtc - file.LastWriteTimeUtc < minIdle)
                 {
                     continue;

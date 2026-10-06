@@ -44,6 +44,11 @@ public sealed class OperationsWorkerOptions
 
     public bool ArchiveFtpAllowInvalidCertificate { get; set; } = false;
 
+    // Name the server's certificate is issued for, when it differs from the host in ARCHIVE_FTP_URL
+    // (e.g. connecting by IP): a name mismatch is then accepted if the certificate is valid for this
+    // name. Safer than ArchiveFtpAllowInvalidCertificate, which accepts any certificate at all.
+    public string? ArchiveFtpCertificateHost { get; set; }
+
     public int ArchiveMaxParallelUploads { get; set; } = 2;
 
     public int ArchiveMinIdleMinutes { get; set; } = 20;

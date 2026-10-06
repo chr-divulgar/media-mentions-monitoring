@@ -18,13 +18,16 @@ public sealed class RetentionPurgeWorker : BackgroundService
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan BogotaOffset = TimeSpan.FromHours(-5);
     private const double BytesPerGb = 1024.0 * 1024 * 1024;
+    // An .mp4 not archived this long after its last write means the upload is falling behind.
+    private static readonly TimeSpan BacklogGrace = TimeSpan.FromHours(2);
 
     private readonly OperationsWorkerOptions options;
     private readonly ISourceIncidentRecorder incidentRecorder;
     private readonly ILogger<RetentionPurgeWorker> logger;
     private readonly Func<DateTimeOffset> clock;
     private readonly Func<double?> freeDiskGbReader;
-    // Set when archiving is on: then only files the archive has verified may be deleted.
+    // Set when archiving is on (see PurgeArchivedFiles): then an .mp4 is deleted only once the
+    // archive has verified it.
     private readonly ArchiveLedger? archiveLedger;
     private bool diskWasLow;
     private bool backlogReported;
@@ -98,19 +101,35 @@ public sealed class RetentionPurgeWorker : BackgroundService
         }
     }
 
-    // Archive mode: never delete what is not verified in the archive. Old files that are not there
-    // yet stay put, and a single worker-wide incident says the archive is falling behind.
+    // Archive mode. Only TV video (.mp4) is archived, so it is the only thing whose deletion waits
+    // for the archive: an .mp4 from a previous day goes once the ledger has verified its remote copy,
+    // and stays (with a backlog incident if it lingers) when it is not there. Everything else —
+    // audio, transcription, resume files — is simply deleted once its day is over. Today's folder is
+    // never part of this (the cutoff is at most today), and a file written to recently is left for a
+    // later pass: right after midnight the last hour of the day can still be flushing.
     private void PurgeArchivedFiles(DateOnly cutoff, ArchiveLedger ledger)
     {
+        var nowUtc = clock().UtcDateTime;
+        var minIdle = TimeSpan.FromMinutes(options.ArchiveMinIdleMinutes);
         var backlog = 0;
+
         foreach (var dayDir in RetentionPurge.FindDayFoldersOlderThan(options.AudioOutputRootPath, cutoff))
         {
-            foreach (var file in Directory.EnumerateFiles(dayDir, "*", SearchOption.AllDirectories).ToArray())
+            foreach (var file in new DirectoryInfo(dayDir).EnumerateFiles("*", SearchOption.AllDirectories).ToArray())
             {
-                var relative = ArchiveUpload.ToRelativePath(options.AudioOutputRootPath, file);
-                if (!ledger.Contains(relative, new FileInfo(file).Length))
+                var age = nowUtc - file.LastWriteTimeUtc;
+                if (age < minIdle)
                 {
-                    if (!file.EndsWith(".resume", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                }
+
+                var isVideo = file.Name.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase);
+                var relative = ArchiveUpload.ToRelativePath(options.AudioOutputRootPath, file.FullName);
+                if (isVideo && !ledger.Contains(relative, file.Length))
+                {
+                    // Closed but not archived yet: normal while it waits its turn to upload; only a
+                    // file that stays that way for hours means the upload is not keeping up.
+                    if (age >= BacklogGrace)
                     {
                         backlog++;
                     }
@@ -120,12 +139,15 @@ public sealed class RetentionPurgeWorker : BackgroundService
 
                 try
                 {
-                    File.Delete(file);
-                    ledger.Remove(relative);
+                    file.Delete();
+                    if (isVideo)
+                    {
+                        ledger.Remove(relative);
+                    }
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
-                    logger.LogWarning(exception, "[RetentionPurgeWorker] Could not delete archived file {File}.", file);
+                    logger.LogWarning(exception, "[RetentionPurgeWorker] Could not delete {File}.", file.FullName);
                 }
             }
 
@@ -137,7 +159,7 @@ public sealed class RetentionPurgeWorker : BackgroundService
             backlogReported = true;
             incidentRecorder.Record(
                 IncidentKinds.WorkerSourceId, IncidentKinds.ArchiveBacklog,
-                $"{backlog} archivo(s) con más de {options.AudioRetentionDays} días siguen sin archivar en el servidor; no se borran localmente.");
+                $"{backlog} video(s) MP4 de días anteriores llevan más de {BacklogGrace.TotalHours:0} h sin archivar en el servidor; no se borran localmente.");
         }
         else if (backlog == 0)
         {

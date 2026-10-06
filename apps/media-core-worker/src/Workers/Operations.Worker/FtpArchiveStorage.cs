@@ -1,3 +1,4 @@
+using System.Security.Cryptography.X509Certificates;
 using FluentFTP;
 using MediaOpsCore.Modules.Capture.Application;
 using Microsoft.Extensions.Logging;
@@ -28,6 +29,7 @@ public sealed class FtpArchiveStorage : IArchiveStorage
     private readonly FtpArchiveCredentials credentials;
     private readonly bool requireTls;
     private readonly bool allowInvalidCertificate;
+    private readonly string? certificateHost;
     private readonly ILogger<FtpArchiveStorage> logger;
 
     public FtpArchiveStorage(OperationsWorkerOptions options, ILogger<FtpArchiveStorage> logger)
@@ -35,8 +37,12 @@ public sealed class FtpArchiveStorage : IArchiveStorage
         credentials = options.ArchiveFtp ?? throw new InvalidOperationException("ARCHIVE_FTP_* is not configured.");
         requireTls = options.ArchiveFtpRequireTls;
         allowInvalidCertificate = options.ArchiveFtpAllowInvalidCertificate;
+        certificateHost = options.ArchiveFtpCertificateHost;
         this.logger = logger;
     }
+
+    private static X509Certificate2? ToCertificate2(X509Certificate? certificate) =>
+        certificate is null ? null : new X509Certificate2(certificate);
 
     public async Task<bool> UploadAsync(string localPath, string relativePath, CancellationToken cancellationToken = default)
     {
@@ -50,6 +56,11 @@ public sealed class FtpArchiveStorage : IArchiveStorage
                 ? FtpEncryptionMode.Implicit
                 : requireTls ? FtpEncryptionMode.Explicit : FtpEncryptionMode.None;
             client.Config.ValidateAnyCertificate = allowInvalidCertificate;
+            client.ValidateCertificate += (_, e) =>
+            {
+                e.Accept = allowInvalidCertificate
+                    || FtpCertificateValidation.ShouldAccept(e.PolicyErrors, e.Certificate as X509Certificate2 ?? ToCertificate2(e.Certificate), certificateHost);
+            };
             client.Config.RetryAttempts = 2;
 
             await client.Connect(cancellationToken).ConfigureAwait(false);
