@@ -15,4 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Workers\Operations.Worker\Operations.Worker.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="TestData\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

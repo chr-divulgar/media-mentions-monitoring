@@ -14,14 +14,18 @@ internal static class TvVideoRecording
     // instead of producing a near-empty file.
     private static readonly TimeSpan MinimumRecording = TimeSpan.FromMinutes(1);
 
+    // When a recording that starts at `start` is planned to end: the next clock hour, or the one after
+    // when less than a minute of this one is left. TvRecordingLocator uses it to know which file
+    // covers an instant.
+    public static DateTimeOffset PlannedEnd(DateTimeOffset start)
+    {
+        var nextHour = InProcessFfmpegAudioCapturePlugin.AlignWindow(start, Hour) + Hour;
+        return nextHour - start < MinimumRecording ? nextHour + Hour : nextHour;
+    }
+
     public static TvVideoRecordingPlan Plan(string outputRootPath, string media, string sourceId, DateTimeOffset now)
     {
-        var nextHour = InProcessFfmpegAudioCapturePlugin.AlignWindow(now, Hour) + Hour;
-        var duration = nextHour - now;
-        if (duration < MinimumRecording)
-        {
-            duration += Hour;
-        }
+        var duration = PlannedEnd(now) - now;
 
         var directory = Path.Combine(
             outputRootPath,
