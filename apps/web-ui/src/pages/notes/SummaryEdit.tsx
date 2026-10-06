@@ -66,8 +66,10 @@ type FieldType = {
 interface SummaryEditProps {
   form: FormInstance<FieldType>;
   onFinish: () => void;
+  // TV alerts work on the recorded video: the fragment is an MP4 and is played in a <video>.
+  mediaKind?: "audio" | "video";
 }
-const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
+const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "audio" }) => {
   const { selectedAlert } = useAlert();
   const { note, setNote } = useNote();
   const getSummaryDtoRef = useRef(new GetSummaryDto()); // Replace initialGetSummaryDtoValue with the initial value
@@ -79,9 +81,9 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
   const waveformUrl = useMemo(
     () =>
       withAuthToken(
-        `${import.meta.env.VITE_API_LOCAL}/audio/fetchByName/fragment_${selectedAlert?.id}?v=${Date.now()}`,
+        `${import.meta.env.VITE_API_LOCAL}/${mediaKind === "video" ? "video" : "audio"}/fetchByName/fragment_${selectedAlert?.id}?v=${Date.now()}`,
       ),
-    [selectedAlert],
+    [selectedAlert, mediaKind],
   );
 
   const getTranscriptionDto: GetTranscriptionDto = useMemo(
@@ -99,7 +101,8 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
   const [isPlaying, setIsPlaying] = useState(false);
 
   useEffect(() => {
-    if (!waveformUrl) return;
+    // The video flow plays the clip in a <video> element; there is no waveform to build.
+    if (!waveformUrl || mediaKind === "video") return;
 
     // Destroy previous instance
     waveRef.current?.destroy();
@@ -128,7 +131,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
       ws.destroy();
       waveRef.current = null;
     };
-  }, [waveformUrl]);
+  }, [waveformUrl, mediaKind]);
 
   const togglePlayPause = () => waveRef.current?.playPause();
 
@@ -142,7 +145,7 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `fragment_${selectedAlert?.id}.mp3`;
+      a.download = `fragment_${selectedAlert?.id}.${mediaKind === "video" ? "mp4" : "mp3"}`;
       document.body.appendChild(a);
       a.click();
 
@@ -150,9 +153,9 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      message.success("Audio descargado exitosamente");
+      message.success(mediaKind === "video" ? "Video descargado exitosamente" : "Audio descargado exitosamente");
     } catch (error) {
-      message.error("Error al descargar el audio");
+      message.error(mediaKind === "video" ? "Error al descargar el video" : "Error al descargar el audio");
       console.error("Download error:", error);
     }
   };
@@ -314,22 +317,33 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish }) => {
           justify="space-between"
           style={{ marginRight: "24px" }}
         >
-          <Button
-            icon={isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-            onClick={togglePlayPause}
-            size="small"
-          >
-            {isPlaying ? "Pausar" : "Reproducir"}
-          </Button>
+          {mediaKind === "video" ? (
+            <video
+              src={waveformUrl}
+              controls
+              preload="metadata"
+              style={{ width: "70%", maxHeight: "40vh", background: "#000" }}
+            />
+          ) : (
+            <>
+              <Button
+                icon={isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+                onClick={togglePlayPause}
+                size="small"
+              >
+                {isPlaying ? "Pausar" : "Reproducir"}
+              </Button>
 
-          {/* WaveSurfer container replaces the native <audio> for better scrubbing */}
-          <div id="waveform-container" style={{ width: "70%" }} />
+              {/* WaveSurfer container replaces the native <audio> for better scrubbing */}
+              <div id="waveform-container" style={{ width: "70%" }} />
+            </>
+          )}
 
           <Button
             icon={<DownloadOutlined />}
             onClick={handleDownloadMP3}
             size="small"
-            title="Descargar MP3"
+            title={mediaKind === "video" ? "Descargar MP4" : "Descargar MP3"}
           />
 
           <Button

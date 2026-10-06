@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Button,
   Col,
   Form,
@@ -16,6 +17,8 @@ import { useMutation, UseMutationResult } from "react-query";
 import { CreateFileDto, FileDto, Fragment, NoteDto } from "@repo/shared/index";
 import api from "../../services/Agent";
 import AudioEdit from "../audio/AudioEdit";
+import VideoEdit from "../audio/VideoEdit";
+import { isFromToday, isTvAlert } from "./alertMedia";
 import moment from "moment";
 import SummaryEdit from "../notes/SummaryEdit";
 import { useNote } from "../notes/NoteContext";
@@ -31,9 +34,13 @@ interface AlertsModalProps {
   onClose: () => void;
 }
 
-const useCreateFileMutation = (createFileDto: CreateFileDto) => {
+// TV alerts work on the recorded video (the /video routes); everything else on the audio.
+const useCreateFileMutation = (createFileDto: CreateFileDto, video: boolean) => {
   return useMutation<FileDto, unknown, CreateFileDto, unknown>(async () => {
-    const response = await api.post(`/audio/createFile`, createFileDto);
+    const response = await api.post(
+      video ? `/video/createFile` : `/audio/createFile`,
+      createFileDto,
+    );
     return response.data;
   });
 };
@@ -52,9 +59,15 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
     new CreateFileDto()
   );
   const [formSummary] = Form.useForm();
-  // Default stays 30 min (1800s), matching today's behavior; the user can widen it
-  // to bring in audio from the adjacent hour's recording (see audio.service.ts).
-  const [segmentDuration, setSegmentDuration] = useState(1800);
+  // A TV alert whose video is missing can fall back to the audio flow (today's alerts only: they
+  // still have their audio on this machine; earlier days' audio is purged).
+  const [audioFallback, setAudioFallback] = useState(false);
+  const isVideo = isTvAlert(selectedAlert) && !audioFallback;
+  // Audio defaults to 30 min (1800s); the user can widen it to bring in audio from the adjacent
+  // hour's recording (see audio.service.ts). Video is far heavier, so its window starts at 10 min.
+  const [segmentDuration, setSegmentDuration] = useState(() =>
+    isTvAlert(selectedAlert) ? 600 : 1800,
+  );
 
   const createSegmentDto = useMemo(
     () => ({
@@ -70,14 +83,14 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
     data: segmentData,
     isLoading: isLoadingSegment,
     error: errorSegment,
-  }: CreateFileMutationResult = useCreateFileMutation(createSegmentDto);
+  }: CreateFileMutationResult = useCreateFileMutation(createSegmentDto, isVideo);
 
   const {
     mutateAsync: createFragmentFile,
     data: fragmentData,
     isLoading: isLoadingFragment,
     error: errorFragment,
-  }: CreateFileMutationResult = useCreateFileMutation(createFragmentDto);
+  }: CreateFileMutationResult = useCreateFileMutation(createFragmentDto, isVideo);
 
   const {
     mutateAsync: setNoteMutation,
@@ -165,9 +178,26 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
     setCurrent(current - 1);
   };
 
+  // 404 from /video/createFile means there is no recording for that moment (or it was never
+  // uploaded to the archive server), not a failure: say so, and offer the audio when it still exists.
+  const videoNotAvailable =
+    isVideo && (errorSegment as AxiosError | null)?.response?.status === 404;
+
+  const windowOptions = isVideo
+    ? [
+        { value: 300, label: "5 min" },
+        { value: 600, label: "10 min" },
+        { value: 1200, label: "20 min" },
+      ]
+    : [
+        { value: 1800, label: "30 min" },
+        { value: 3600, label: "1 hora" },
+        { value: 7200, label: "2 horas" },
+      ];
+
   const steps = [
     {
-      title: "Editar Audio",
+      title: isVideo ? "Editar Video" : "Editar Audio",
       content: (
         <>
           <Radio.Group
@@ -176,20 +206,53 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
             disabled={isLoadingSegment}
             style={{ marginBottom: 12 }}
           >
-            <Radio.Button value={1800}>30 min</Radio.Button>
-            <Radio.Button value={3600}>1 hora</Radio.Button>
-            <Radio.Button value={7200}>2 horas</Radio.Button>
+            {windowOptions.map((option) => (
+              <Radio.Button key={option.value} value={option.value}>
+                {option.label}
+              </Radio.Button>
+            ))}
           </Radio.Group>
-          {errorSegment ? (
+          {videoNotAvailable ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={describeCreateFileError(errorSegment, "No hay video para esta alerta.")}
+              description={
+                isFromToday(selectedAlert)
+                  ? "Puedes editar esta alerta con su audio."
+                  : "El video de días anteriores se toma del servidor de archivo; todavía no está disponible."
+              }
+              action={
+                isFromToday(selectedAlert) && (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setAudioFallback(true);
+                      setSegmentDuration(1800);
+                    }}
+                  >
+                    Usar audio
+                  </Button>
+                )
+              }
+            />
+          ) : errorSegment ? (
             <div>{describeCreateFileError(errorSegment, "Error loading Segment")}</div>
           ) : (
-            segmentData && (
+            segmentData &&
+            (isVideo ? (
+              <VideoEdit
+                segmentData={segmentData}
+                videoFile={createSegmentDto.output}
+                onCreateFragmentDto={handleCreateFragment}
+              ></VideoEdit>
+            ) : (
               <AudioEdit
                 segmentData={segmentData}
                 audioFile={createSegmentDto.output}
                 onCreateFragmentDto={handleCreateFragment}
               ></AudioEdit>
-            )
+            ))
           )}
         </>
       ),
@@ -202,7 +265,11 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
         segmentData && (
           <Spin spinning={isLoadingFragment}>
             {fragmentData && (
-              <SummaryEdit form={formSummary} onFinish={onFinish}></SummaryEdit>
+              <SummaryEdit
+                form={formSummary}
+                onFinish={onFinish}
+                mediaKind={isVideo ? "video" : "audio"}
+              ></SummaryEdit>
             )}
           </Spin>
         )
