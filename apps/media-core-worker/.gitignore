@@ -6,6 +6,6 @@ stage-evidence/
 stage/cookies/
 src/Workers/Operations.Worker/native/win-x64/*.dll
 src/Workers/Operations.Worker/native/win-x64/**/*.exe
-src/Workers/Operations.Worker/sidecar-whatsapp
+src/Workers/Operations.Worker/sidecar-whatsapp/node_modules/
 publish/
 

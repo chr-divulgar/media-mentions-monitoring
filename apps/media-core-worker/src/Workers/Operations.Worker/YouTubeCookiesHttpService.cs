@@ -23,7 +23,7 @@ namespace MediaOpsCore.Workers.Operations;
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
 ///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
 ///   GET  /whatsapp/qr      — relays the WhatsApp sidecar's own /qr (base64 PNG or null).
-///   POST /whatsapp/send    — relays {number, message?, audioPath?} to the sidecar's /send.
+///   POST /whatsapp/send    — relays {number, message?, audioPath?, videoPath?} to the sidecar's /send.
 ///   GET  /whatsapp/groups  — relays the sidecar's /groups: the WhatsApp groups the linked number
 ///     belongs to, offered in the web-ui as alert recipients.
 /// </summary>
@@ -200,11 +200,12 @@ public sealed class YouTubeCookiesHttpService : IHostedService
 
             if (method == "POST" && path == "/whatsapp/send")
             {
-                // Lets NestJS send a note (text + optional audio file) through the same Baileys
-                // session as alerts, instead of the unpinned `npx mudslide` CLI.
+                // Lets NestJS send a note (text + optional mp3 or mp4 clip) through the same Baileys
+                // session as alerts, instead of the unpinned `npx mudslide` CLI. 90 s: uploading a
+                // video clip takes far longer than a text or an mp3.
                 using var bodyReader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
                 var sendBody = await bodyReader.ReadToEndAsync().ConfigureAwait(false);
-                await RelayToSidecarAsync(context, "/send", TimeSpan.FromSeconds(30), sendBody).ConfigureAwait(false);
+                await RelayToSidecarAsync(context, "/send", TimeSpan.FromSeconds(90), sendBody).ConfigureAwait(false);
                 return;
             }
 

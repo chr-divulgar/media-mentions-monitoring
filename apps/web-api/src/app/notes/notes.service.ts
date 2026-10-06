@@ -17,6 +17,8 @@ import * as moment from 'moment';
 import * as path from 'path';
 import { ClientsService } from '../clients/clients.service';
 import { WhatsAppService } from '../settings/whatsapp.service';
+import { noteMediaKind } from '../video/video.helpers';
+import * as fs from 'fs';
 
 @Injectable()
 export class NotesService {
@@ -85,9 +87,10 @@ export class NotesService {
   }
 
   /**
-   * Sends the note (text, then its audio clip) to every recipient configured for the note's
-   * client and media in `clients.notes[media]` — phone numbers or WhatsApp group JIDs — through
-   * the worker's WhatsApp session. Throws if nobody could be reached.
+   * Sends the note (text, then its clip) to every recipient configured for the note's client and
+   * media in `clients.notes[media]` — phone numbers or WhatsApp group JIDs — through the worker's
+   * WhatsApp session. The clip is the MP4 for a TV note edited on its video, the mp3 otherwise.
+   * Throws if nobody could be reached.
    */
   async sendMessage(noteDto: NoteDto): Promise<boolean> {
     const recipients = await this.resolveNoteRecipients(noteDto);
@@ -95,12 +98,20 @@ export class NotesService {
     const audioFilePath = path.resolve(
       `./audioFiles/fragment_${noteDto.alert_id}.mp3`,
     );
+    const videoFilePath = path.resolve(
+      `./audioFiles/fragment_${noteDto.alert_id}.mp4`,
+    );
+    const kind = noteMediaKind(noteDto.media, fs.existsSync(videoFilePath));
 
     const failures: string[] = [];
     for (const recipient of recipients) {
       try {
         await this.whatsAppService.send(recipient, noteDto.message);
-        await this.whatsAppService.send(recipient, undefined, audioFilePath);
+        if (kind === 'video') {
+          await this.whatsAppService.send(recipient, undefined, undefined, videoFilePath);
+        } else {
+          await this.whatsAppService.send(recipient, undefined, audioFilePath);
+        }
       } catch (error) {
         failures.push(
           `${recipient}: ${error instanceof Error ? error.message : JSON.stringify(error)}`,

@@ -54,6 +54,18 @@ export function parseByteRange(
   return { start, end };
 }
 
+/**
+ * What a note carries to WhatsApp besides its text: the video clip for a TV note that has one,
+ * the mp3 for everything else (including a TV note edited through the audio fallback).
+ */
+export function noteMediaKind(
+  media: string | undefined,
+  hasVideoClip: boolean,
+): 'video' | 'audio' {
+  const key = (media ?? '').trim().toLowerCase();
+  return (key === 'tv' || key === 'television') && hasVideoClip ? 'video' : 'audio';
+}
+
 /** Clip names come from the URL; only the characters the editor itself produces are allowed. */
 export function isSafeClipName(name: string): boolean {
   return /^[A-Za-z0-9_-]+$/.test(name);

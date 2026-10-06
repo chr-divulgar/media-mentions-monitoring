@@ -1,6 +1,7 @@
 import {
   audioOffsetInClip,
   isSafeClipName,
+  noteMediaKind,
   parseByteRange,
   segmentStartSeconds,
 } from './video.helpers';
@@ -60,6 +61,23 @@ describe('parseByteRange', () => {
     expect(parseByteRange('bytes=500-100', size)).toBe('invalid');
     expect(parseByteRange('items=0-10', size)).toBe('invalid');
     expect(parseByteRange('bytes=abc-def', size)).toBe('invalid');
+  });
+});
+
+describe('noteMediaKind', () => {
+  it('sends the video clip for a TV note that has one', () => {
+    expect(noteMediaKind('tv', true)).toBe('video');
+    expect(noteMediaKind('television', true)).toBe('video');
+    expect(noteMediaKind('TV', true)).toBe('video');
+  });
+
+  it('keeps the audio for a TV note made through the audio fallback (no video clip)', () => {
+    expect(noteMediaKind('tv', false)).toBe('audio');
+  });
+
+  it('keeps the audio for every other media, whatever files exist', () => {
+    expect(noteMediaKind('radio', true)).toBe('audio');
+    expect(noteMediaKind(undefined, true)).toBe('audio');
   });
 });
 
