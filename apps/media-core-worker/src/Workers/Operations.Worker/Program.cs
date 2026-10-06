@@ -27,6 +27,7 @@ var options = OperationsWorkerOptionsLoader.Load();
 builder.Services.AddSingleton(options);
 
 // Add hosted service for YouTube cookies HTTP endpoint
+builder.Services.AddSingleton<VideoSegmentService>();
 builder.Services.AddSingleton<YouTubeCookiesHttpService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<YouTubeCookiesHttpService>());
 // Archive of closed TV video: upload to the server, and only then let the purge delete it. The

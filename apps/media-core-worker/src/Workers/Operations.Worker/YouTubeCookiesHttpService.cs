@@ -18,6 +18,8 @@ namespace MediaOpsCore.Workers.Operations;
 ///   GET  /audio/segment    — serves a closed-hour audio segment (mp3/wav) for Alerts' audio-edit
 ///     flow, consumed by NestJS's AudioService instead of it reading the worker's local D:\...
 ///     opus paths directly (see IClosedHourAudioReader).
+///   GET  /video/segment    — cuts a window out of a TV channel's recorded MP4 (video/mp4), for the
+///     alert editor's video flow; the clip's real start and length come back in headers.
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
 ///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
 ///   GET  /whatsapp/qr      — relays the WhatsApp sidecar's own /qr (base64 PNG or null).
@@ -48,6 +50,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     private readonly IYouTubeReconciliationTrigger reconciliationTrigger;
     private readonly ICaptureStatusSnapshotProvider captureStatusSnapshotProvider;
     private readonly IClosedHourAudioReader closedHourAudioReader;
+    private readonly VideoSegmentService videoSegmentService;
     private readonly HttpClient httpClient;
     private readonly int whatsAppSidecarPort;
     private HttpListener? httpListener;
@@ -62,6 +65,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         IYouTubeReconciliationTrigger reconciliationTrigger,
         ICaptureStatusSnapshotProvider captureStatusSnapshotProvider,
         IClosedHourAudioReader closedHourAudioReader,
+        VideoSegmentService videoSegmentService,
         HttpClient httpClient)
     {
         this.logger = logger;
@@ -72,6 +76,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         this.reconciliationTrigger = reconciliationTrigger;
         this.captureStatusSnapshotProvider = captureStatusSnapshotProvider;
         this.closedHourAudioReader = closedHourAudioReader;
+        this.videoSegmentService = videoSegmentService;
         this.httpClient = httpClient;
         whatsAppSidecarPort = options.WhatsAppSidecarPort;
     }
@@ -172,6 +177,12 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "GET" && path == "/audio/segment")
             {
                 await HandleAudioSegmentRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "GET" && path == "/video/segment")
+            {
+                await HandleVideoSegmentRequestAsync(context).ConfigureAwait(false);
                 return;
             }
 
@@ -399,6 +410,69 @@ public sealed class YouTubeCookiesHttpService : IHostedService
                     Message = notAvailable.Reason,
                 }).ConfigureAwait(false);
                 break;
+        }
+    }
+
+    // Windows longer than this are not an editor window (the longest is the 20-minute segment).
+    private static readonly TimeSpan MaxVideoWindow = TimeSpan.FromHours(2);
+
+    private async Task HandleVideoSegmentRequestAsync(HttpListenerContext context)
+    {
+        var query = context.Request.QueryString;
+        var sourceId = query["sourceId"];
+
+        if (string.IsNullOrWhiteSpace(sourceId)
+            || !DateTimeOffset.TryParse(query["startUtc"], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var startUtc)
+            || !DateTimeOffset.TryParse(query["endUtc"], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var endUtc)
+            || endUtc <= startUtc
+            || endUtc - startUtc > MaxVideoWindow)
+        {
+            await SendJsonResponse(context, 400, new AudioSegmentErrorResponse
+            {
+                Message = "Missing or invalid query parameters (sourceId, startUtc, endUtc; endUtc after startUtc, at most 2 hours).",
+            }).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await videoSegmentService
+            .GetSegmentAsync(sourceId, startUtc, endUtc, CancellationToken.None)
+            .ConfigureAwait(false);
+
+        if (result is VideoSegmentNotAvailable notAvailable)
+        {
+            await SendJsonResponse(context, 404, new AudioSegmentErrorResponse { Message = notAvailable.Reason }).ConfigureAwait(false);
+            return;
+        }
+
+        var clip = (VideoSegmentSuccess)result;
+        try
+        {
+            // Streamed from the temp file, never buffered: a clip is tens of MB.
+            await using var file = new FileStream(clip.TempPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+            context.Response.StatusCode = 200;
+            context.Response.ContentType = "video/mp4";
+            context.Response.ContentLength64 = file.Length;
+            context.Response.Headers["X-Clip-Start-Utc"] = clip.ClipStartUtc.ToString("o", CultureInfo.InvariantCulture);
+            context.Response.Headers["X-Clip-Duration-Seconds"] = clip.DurationSeconds.ToString("F2", CultureInfo.InvariantCulture);
+            await file.CopyToAsync(context.Response.OutputStream).ConfigureAwait(false);
+            context.Response.Close();
+        }
+        catch (Exception exception) when (exception is IOException or HttpListenerException or ObjectDisposedException or InvalidOperationException)
+        {
+            // The caller gave up mid-transfer (its own timeout): headers and part of the body are
+            // already out, so there is nothing more to send — only the temp file to remove.
+            logger.LogDebug(exception, "[YouTubeCookiesHttpService] Caller disconnected while receiving a video clip.");
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(clip.TempPath);
+            }
+            catch (IOException)
+            {
+                // Left behind in the temp folder.
+            }
         }
     }
 

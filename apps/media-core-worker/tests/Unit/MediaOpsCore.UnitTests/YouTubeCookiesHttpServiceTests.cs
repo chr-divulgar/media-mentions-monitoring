@@ -45,6 +45,7 @@ public sealed class YouTubeCookiesHttpServiceTests : IDisposable
             trigger ?? new FakeReconciliationTrigger(),
             new FakeCaptureStatusSnapshotProvider(),
             new FakeClosedHourAudioReader(),
+            new VideoSegmentService(options, new NoSources(), NullLogger<VideoSegmentService>.Instance),
             new HttpClient());
     }
 
@@ -147,6 +148,12 @@ public sealed class YouTubeCookiesHttpServiceTests : IDisposable
     {
         public Task<CaptureStatusResponse> GetSnapshotAsync(DateOnly date, CancellationToken cancellationToken = default) =>
             Task.FromResult(new CaptureStatusResponse { Date = date.ToString("yyyy-MM-dd"), Sources = [] });
+    }
+
+    private sealed class NoSources : MediaOpsCore.Modules.Capture.Application.ICaptureSourceProvider
+    {
+        public Task<IReadOnlyList<MediaOpsCore.Modules.Capture.Domain.CaptureSource>> ListActiveSourcesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<MediaOpsCore.Modules.Capture.Domain.CaptureSource>>([]);
     }
 
     private sealed class FakeClosedHourAudioReader : IClosedHourAudioReader
