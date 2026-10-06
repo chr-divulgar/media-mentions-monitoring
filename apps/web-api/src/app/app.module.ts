@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AudioModule } from './audio/audio.module';
+import { VideoModule } from './video/video.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AlertsModule } from './alerts/alerts.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -35,6 +36,7 @@ import { StatusModule } from './status/status.module';
     FirebaseAdminModule,
     AuthModule,
     AudioModule,
+    VideoModule,
     AlertsModule,
     NotesModule,
     SettingsModule,
