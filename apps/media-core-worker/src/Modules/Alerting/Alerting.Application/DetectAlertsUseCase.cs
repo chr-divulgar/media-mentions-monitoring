@@ -11,6 +11,13 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
     // story from before this window is stale enough that resending it unprompted isn't useful.
     private static readonly TimeSpan PendingNotificationLookback = TimeSpan.FromHours(24);
 
+    // Every capture reaches detection on its own thread. Deciding "is this a repeat?" means looking for
+    // the other stations' alerts, so two stations airing the same story at the same moment each looked
+    // before the other had stored anything, and both came out "Nueva". Classifying and storing as one
+    // step, one alert at a time, makes the second one see the first. Notification stays outside it.
+    // ponytail: one gate for every client/station (both steps are a few ms); per-client gates if detection volume grows.
+    private readonly SemaphoreSlim classifyAndStoreGate = new(1, 1);
+
     private readonly IClientConfigRepository clientConfigRepository;
     private readonly IAlertRepository alertRepository;
     private readonly IAlertNotifier alertNotifier;
@@ -55,16 +62,27 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
                 continue;
             }
 
-            var (type, repeatOfAlertId) = await ClassifyAsync(platform, media, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false);
-
-            var alert = new Alert(
-                text, startTime, endTime, media, platform, filePath, matchedWords, client.Name, type,
-                level: HighestLevel(client, matchedWords))
+            Alert alert;
+            IReadOnlyList<string> recipients;
+            string alertId;
+            await classifyAndStoreGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                RepeatOfAlertId = repeatOfAlertId,
-            };
-            var recipients = ResolveRecipients(client, media, alert);
-            var alertId = await alertRepository.InsertAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
+                var (type, repeatOfAlertId) = await ClassifyAsync(platform, media, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false);
+
+                alert = new Alert(
+                    text, startTime, endTime, media, platform, filePath, matchedWords, client.Name, type,
+                    level: HighestLevel(client, matchedWords))
+                {
+                    RepeatOfAlertId = repeatOfAlertId,
+                };
+                recipients = ResolveRecipients(client, media, alert);
+                alertId = await alertRepository.InsertAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                classifyAndStoreGate.Release();
+            }
 
             await NotifyAsync(alertId, alert, recipients, cancellationToken).ConfigureAwait(false);
         }

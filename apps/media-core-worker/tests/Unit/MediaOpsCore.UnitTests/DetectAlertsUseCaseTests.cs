@@ -96,6 +96,22 @@ public sealed class DetectAlertsUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_marks_the_second_of_two_simultaneous_platform_detections_as_repeated()
+    {
+        // Two stations carrying the same broadcast reach detection at the same moment: each used to
+        // look for the other's alert before either had been stored, so both came out as "Nueva".
+        var repository = new InMemoryAlertRepository { InsertDelay = TimeSpan.FromMilliseconds(50) };
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "petroleo"), "BluRadio", "BluRadioBucaramanga");
+
+        await Task.WhenAll(
+            useCase.ExecuteAsync("BluRadio", "radio", "a.opus", "hola buenas tardes hablamos de petroleo en la region hoy", BaseTime, BaseTime.AddSeconds(15)),
+            useCase.ExecuteAsync("BluRadioBucaramanga", "radio", "b.opus", "hola buenas tardes hablamos de petroleo en la region hoy", BaseTime.AddSeconds(1), BaseTime.AddSeconds(16)));
+
+        Assert.Equal(1, repository.Inserted.Count(alert => alert.Type == AlertType.New));
+        Assert.Equal(1, repository.Inserted.Count(alert => alert.Type == AlertType.RepeatedOtherPlatform));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_points_every_repeat_at_the_new_alert_that_started_the_story()
     {
         var repository = new InMemoryAlertRepository();
@@ -496,15 +512,23 @@ public sealed class DetectAlertsUseCaseTests
 
         public void Seed(Alert alert) => Inserted.Add(alert);
 
-        public Task<string> InsertAsync(Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken = default)
+        // Real inserts take a round trip; a delay makes two concurrent detections interleave like they do there.
+        public TimeSpan InsertDelay { get; set; }
+
+        public async Task<string> InsertAsync(Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken = default)
         {
+            if (InsertDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(InsertDelay, cancellationToken);
+            }
+
             var id = (nextId++).ToString();
             alert.Id = id;
             Inserted.Add(alert);
             Recipients[id] = recipients;
             Notified[id] = new HashSet<string>();
             AlertsById[id] = alert;
-            return Task.FromResult(id);
+            return id;
         }
 
         public Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, string media, CancellationToken cancellationToken = default)
