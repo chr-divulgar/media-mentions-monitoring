@@ -17,10 +17,14 @@ namespace MediaOpsCore.Workers.Operations;
 public sealed class TvVideoRecorderWorker : BackgroundService
 {
     private const string TelevisionDirectory = "television";
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(30);
+    // The audio capture of a channel starts the moment it is live; the video must not trail it. These two
+    // waits are the whole lag between them (they were 30 s and 60 s: video came in up to ~90 s late), so
+    // they are short. A pass that finds the channel off air costs one plain GET of its /live page.
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(10);
     // How often the set of active TV sources is re-read: a channel excluded at startup and later
-    // recovered by the reconciliation (or newly added) starts recording within a minute.
-    private static readonly TimeSpan ReconcileInterval = TimeSpan.FromMinutes(1);
+    // recovered by the reconciliation (or newly added) starts recording within seconds. The set is the
+    // capture's in-memory one, so a short interval costs no database reads.
+    private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(5);
 
     private readonly OperationsWorkerOptions options;
     private readonly ICaptureSourceProvider sourceProvider;
