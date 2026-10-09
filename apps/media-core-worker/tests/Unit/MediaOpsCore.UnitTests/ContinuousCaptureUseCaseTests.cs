@@ -22,12 +22,11 @@ public sealed class ContinuousCaptureUseCaseTests
         {
             var opts = new OperationsWorkerOptions
             {
-                CaptureSourcesFilePath = tempFilePath,
                 EnableCanaryMode = false,
                 ContinuousMediaAllowList = ""
             };
             var useCase = new ContinuousCaptureUseCase(
-                new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts)),
+                new StaticCaptureSourceProvider(opts, new FileBackedCaptureSourceRepository(tempFilePath)),
                 new RadioOnlyPluginResolver(),
                 new SuccessfulAudioCapturePlugin(),
                 1);
@@ -58,9 +57,9 @@ public sealed class ContinuousCaptureUseCaseTests
 
         try
         {
-            var opts = new OperationsWorkerOptions { CaptureSourcesFilePath = tempFilePath };
+            var opts = new OperationsWorkerOptions();
             var useCase = new ContinuousCaptureUseCase(
-                new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts)),
+                new StaticCaptureSourceProvider(opts, new FileBackedCaptureSourceRepository(tempFilePath)),
                 new StaticPluginResolver(),
                 new SuccessfulAudioCapturePlugin(),
                 1);
@@ -96,13 +95,12 @@ public sealed class ContinuousCaptureUseCaseTests
         {
             var opts2 = new OperationsWorkerOptions
             {
-                CaptureSourcesFilePath = tempFilePath,
                 EnableCanaryMode = false,
                 ContinuousMediaAllowList = "radio",
                 CaptureMaxDegreeOfParallelism = 2
             };
             var useCase = new ContinuousCaptureUseCase(
-                new StaticCaptureSourceProvider(opts2, new JsonFileCaptureSourceRepository(opts2)),
+                new StaticCaptureSourceProvider(opts2, new FileBackedCaptureSourceRepository(tempFilePath)),
                 new StaticPluginResolver(),
                 gate,
                 2);
