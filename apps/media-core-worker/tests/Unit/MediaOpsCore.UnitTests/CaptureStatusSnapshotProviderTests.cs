@@ -115,6 +115,24 @@ public sealed class CaptureStatusSnapshotProviderTests
     }
 
     [Fact]
+    public async Task GetSnapshotAsync_should_not_fail_for_a_session_whose_first_window_has_not_opened()
+    {
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-5)).DateTime);
+        var reader = new FakeLiveCaptureProgressReader(
+            new Dictionary<string, IReadOnlyList<WindowCheckpoint>> { ["radio-a"] = [new WindowCheckpoint(0, 0, 0)] },
+            windowStart: default(DateTimeOffset));
+
+        var provider = CreateProvider(
+            sources: [CreateSource("radio-a")],
+            evidenceStore: new FakeEvidenceFileStore(),
+            liveCaptureProgressReader: reader);
+
+        var response = await provider.GetSnapshotAsync(today);
+
+        Assert.Single(response.Sources);
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_should_report_live_with_segments_when_a_session_is_active()
     {
         var nowBogota = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-5));

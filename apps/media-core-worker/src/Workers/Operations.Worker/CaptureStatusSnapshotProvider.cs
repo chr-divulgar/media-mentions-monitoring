@@ -218,6 +218,12 @@ public sealed class CaptureStatusSnapshotProvider : ICaptureStatusSnapshotProvid
             return null;
         }
 
+        // A session restarted a moment ago reports the minimum value until its first window opens.
+        if (progress.WindowStartedAt <= DateTimeOffset.MinValue.AddDays(1))
+        {
+            return null;
+        }
+
         var windowStart = progress.WindowStartedAt.ToOffset(BogotaOffset);
         return DateOnly.FromDateTime(windowStart.DateTime) == date ? windowStart.Hour : null;
     }

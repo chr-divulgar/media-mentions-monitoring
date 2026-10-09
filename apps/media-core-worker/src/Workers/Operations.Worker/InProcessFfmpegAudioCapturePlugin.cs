@@ -29,7 +29,7 @@ public interface ILiveCaptureProgressReader
     LiveCaptureProgress? TryGetLiveProgress(string sourceId);
 
     // The sources recording right now. Lets callers report on live capture without reading the
-    // source catalog back out of Firestore just to learn ids the worker already holds in memory.
+    // source catalog back out of the database just to learn ids the worker already holds in memory.
     IReadOnlyCollection<string> ActiveSourceIds { get; }
 
     // Sources that had a capture session which has since stopped and not been replaced.
@@ -54,6 +54,7 @@ public sealed record LiveCaptureProgress(
 
 public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILiveCaptureProgressReader, IDisposable
 {
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> lastEofWarningAt = new(StringComparer.OrdinalIgnoreCase);
     private const int AudioSampleRate = 16000;
     private const int AudioChannels = 1;
     private const int AudioBytesPerSample = 2;
@@ -1382,7 +1383,18 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
                 if (endedByEndOfInput && !cancellationTokenSource.IsCancellationRequested)
                 {
-                    logger.LogWarning("Stream ended (EOF) for source {SourceId}; reporting it as a failure so hot recovery reconnects.", sourceId);
+                    // A station that drops every 30 s would fill the log; the first drop in ten minutes
+                    // is a Warning, the repeats are Debug (the incident log keeps each reconnection).
+                    var now = DateTimeOffset.UtcNow;
+                    var repeated = lastEofWarningAt.TryGetValue(sourceId, out var previous) && now - previous < TimeSpan.FromMinutes(10);
+                    if (!repeated)
+                    {
+                        lastEofWarningAt[sourceId] = now;
+                    }
+
+                    logger.Log(
+                        repeated ? LogLevel.Debug : LogLevel.Warning,
+                        "Stream ended (EOF) for source {SourceId}; reporting it as a failure so hot recovery reconnects.", sourceId);
                     SetFailure("Stream ended (EOF).");
                 }
             }

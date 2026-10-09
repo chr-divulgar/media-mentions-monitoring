@@ -188,6 +188,34 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
         try
         {
             File.Copy(liveOpusPath, snapshotPath, overwrite: true);
+
+            // After a mid-hour session restart the audio keeps going into "<hour>.opus.resume"
+            // and is only merged at rotation; without it the snapshot ends where the restart
+            // happened and later alerts fall outside the clip.
+            var resumePath = liveOpusPath + ".resume";
+            if (File.Exists(resumePath))
+            {
+                var resumeCopy = snapshotPath + ".resume";
+                var joinedPath = snapshotPath + ".joined.opus";
+                try
+                {
+                    File.Copy(resumePath, resumeCopy, overwrite: true);
+                    OpusFileJoiner.Join([snapshotPath, resumeCopy], joinedPath);
+                    File.Move(joinedPath, snapshotPath, overwrite: true);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex, "[ClosedHourAudioSegmentReader] Could not merge the resume tail for source {SourceId}; serving the main file only.",
+                        sourceId);
+                }
+                finally
+                {
+                    File.Delete(resumeCopy);
+                    File.Delete(joinedPath);
+                }
+            }
+
             return snapshotPath;
         }
         catch (Exception ex)
