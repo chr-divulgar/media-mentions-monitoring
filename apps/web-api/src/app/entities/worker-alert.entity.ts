@@ -51,4 +51,8 @@ export class WorkerAlert {
 
   @Column()
   slaSeconds?: number;
+
+  // For a repeat, the id (as a string) of the "Nueva" alert that started its story.
+  @Column()
+  repeatOfAlertId?: string;
 }

@@ -41,6 +41,7 @@ public sealed class MongoAlertRepository : IAlertRepository, IDailyHeadlinesSour
             { "title", alert.Title is null ? BsonNull.Value : alert.Title },
             { "url", alert.Url is null ? BsonNull.Value : alert.Url },
             { "level", alert.Level.ToLabel() },
+            { "repeatOfAlertId", alert.RepeatOfAlertId is null ? BsonNull.Value : ObjectId.Parse(alert.RepeatOfAlertId) },
             { "recipients", new BsonArray(recipients) },
             { "notifiedRecipients", new BsonArray() },
             { "fullyNotified", recipients.Count == 0 },
@@ -54,7 +55,8 @@ public sealed class MongoAlertRepository : IAlertRepository, IDailyHeadlinesSour
         };
 
         await alertCollection.InsertOneAsync(document, options: null, cancellationToken).ConfigureAwait(false);
-        return document["_id"].AsObjectId.ToString();
+        alert.Id = document["_id"].AsObjectId.ToString();
+        return alert.Id;
     }
 
     public async Task MarkRecipientsNotifiedAsync(string alertId, IReadOnlyList<string> recipients, CancellationToken cancellationToken = default)
@@ -188,10 +190,11 @@ public sealed class MongoAlertRepository : IAlertRepository, IDailyHeadlinesSour
         return documents.Select(ToAlert).ToArray();
     }
 
-    public async Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, CancellationToken cancellationToken = default)
+    public async Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, string media, CancellationToken cancellationToken = default)
     {
         var filter = Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("platform", platform),
+            Builders<BsonDocument>.Filter.Eq("media", media),
             Builders<BsonDocument>.Filter.Eq("clientName", clientName),
             Builders<BsonDocument>.Filter.In("type", RepeatCheckTypes));
         var sort = Builders<BsonDocument>.Sort.Descending("$natural");
@@ -218,6 +221,10 @@ public sealed class MongoAlertRepository : IAlertRepository, IDailyHeadlinesSour
             document.TryGetValue("title", out var title) && !title.IsBsonNull ? title.AsString : null,
             document.TryGetValue("url", out var url) && !url.IsBsonNull ? url.AsString : null,
             document.TryGetValue("level", out var level) && level.IsString ? AlertLevelExtensions.Parse(level.AsString) : AlertLevel.Informative,
-            document.TryGetValue("capturedAt", out var capturedAt) && capturedAt.IsValidDateTime ? capturedAt.ToUniversalTime() : null);
+            document.TryGetValue("capturedAt", out var capturedAt) && capturedAt.IsValidDateTime ? capturedAt.ToUniversalTime() : null)
+        {
+            Id = document["_id"].AsObjectId.ToString(),
+            RepeatOfAlertId = document.TryGetValue("repeatOfAlertId", out var repeatOf) && repeatOf.IsObjectId ? repeatOf.AsObjectId.ToString() : null,
+        };
     }
 }

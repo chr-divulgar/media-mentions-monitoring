@@ -22,6 +22,8 @@ export class AlertDto {
   readonly level?: string;
   /** Seconds from capture to the first confirmed delivery (worker alerts, RQ-031); absent until sent. */
   readonly slaSeconds?: number;
+  /** For a repeat, the id of the "Nueva" alert that started its story (worker alerts); absent on older alerts. */
+  readonly repeatOfAlertId?: string;
 }
 
 /** Target for "alert within 5 minutes of capture" (AMB-001); configurable per level later. */

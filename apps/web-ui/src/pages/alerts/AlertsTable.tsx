@@ -18,20 +18,15 @@ import type {
   TableColumnType,
   TableProps,
 } from "antd";
-import { Alert as AntAlert, Button, Input, Space, Table, Tag } from "antd";
+import { Alert as AntAlert, Button, Input, Radio, Space, Table, Tag } from "antd";
 import type { FilterDropdownProps } from "antd/es/table/interface";
 import Highlighter from "react-highlight-words";
 import AlertsModal from "./AlertsModal";
+import InternetNoteModal from "./InternetNoteModal";
+import { AlertRow, groupRepeatedAlerts, hideRepeatedWithinMinute } from "./alertGrouping";
 import api from "../../services/Agent";
 import { useQuery, UseQueryResult } from "react-query";
 import { useAlert } from "./AlertsContext";
-
-// Función para formatear la fecha asumiendo que es UTC
-const getDateOffset = (dateString: string | Date | dayjs.Dayjs) => {
-  const date = dayjs(dateString);
-  const dateWithFixedOffset = date.add(5, "hour");
-  return dateWithFixedOffset;
-};
 
 // worker alerts store a real UTC instant; show it fixed at Colombia time (UTC-5)
 // regardless of the viewer's own browser timezone.
@@ -40,16 +35,28 @@ const getWorkerDate = (dateString: string | Date | dayjs.Dayjs) =>
 
 interface AlertsTableProps {
   selectedDates: DateRange | null;
-  source?: "legacy" | "worker";
-  title?: string;
+  // The Nivel and SLA columns and the SLA summary (RQ-031) are built but hidden for now; pass
+  // `showSla` to bring them back.
+  showSla?: boolean;
 }
+
+// Media filter of the table. Television alerts are stored as "tv" or "television".
+type MediaFilter = "all" | "radio" | "television" | "internet";
+const MEDIA_FILTERS: { value: MediaFilter; label: string }[] = [
+  { value: "all", label: "Todas" },
+  { value: "radio", label: "radio" },
+  { value: "television", label: "television" },
+  { value: "internet", label: "internet" },
+];
+const matchesMedia = (alertMedia: string | undefined, filter: MediaFilter): boolean => {
+  const media = (alertMedia ?? "").toLowerCase();
+  if (filter === "all") return true;
+  return filter === "television" ? media === "tv" || media === "television" : media === filter;
+};
 type DataIndex = keyof AlertDto;
 
-const AlertsTable: React.FC<AlertsTableProps> = ({
-  selectedDates,
-  source,
-  title,
-}) => {
+const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates, showSla = false }) => {
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   //#region Table Handlers
   const [searchText, setSearchText] = useState("");
   const [searchedColumn, setSearchedColumn] = useState("");
@@ -171,16 +178,23 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalKey, setModalKey] = useState(0);
+  // Internet alerts have no audio/video to cut: they open the PDF-based editor instead.
+  const [internetModalOpen, setInternetModalOpen] = useState(false);
   const { setSelectedAlert } = useAlert();
 
   const showModal = (alert: AlertDto) => {
     setModalKey((prevKey) => prevKey + 1);
     setSelectedAlert(alert);
-    setModalOpen(true);
+    if (alert.media === "internet") {
+      setInternetModalOpen(true);
+    } else {
+      setModalOpen(true);
+    }
   };
 
   const hideModal = () => {
     setModalOpen(false);
+    setInternetModalOpen(false);
   };
 
   //#endregion
@@ -191,20 +205,20 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
     isLoading: isLoadingAlerts,
     error: errorAlerts,
   }: UseQueryResult<AlertDto[]> = useQuery<AlertDto[]>({
-    queryKey: ["alerts", selectedDates, source],
+    queryKey: ["alerts", selectedDates],
     queryFn: async () =>
       await api
         .post(`/alerts`, {
           startDate: selectedDates?.[0]?.format(dateFormat),
           endDate: selectedDates?.[1]?.format(dateFormat),
-          type: ["Nueva", "RepetidaOtraPlataforma"],
-          ...(source && { source }),
+          // No type filter: every alert the worker stored is listed, ads and repeats included.
+          source: "worker",
         })
         .then((res) => res.data),
   });
 
-  // SLA compliance (RQ-031) only exists for the worker's alerts. Declared before the early
-  // returns below so the hook order never changes between renders.
+  // SLA compliance (RQ-031). Declared before the early returns below so the hook order never
+  // changes between renders.
   const { data: slaSummary } = useQuery<AlertSlaSummaryDto>({
     queryKey: ["alertsSla", selectedDates?.[0]?.format(dateFormat), selectedDates?.[1]?.format(dateFormat)],
     queryFn: () =>
@@ -214,14 +228,14 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
           endDate: selectedDates?.[1]?.format(dateFormat),
         })
         .then((res) => res.data),
-    enabled: source === "worker" && !!selectedDates?.[0] && !!selectedDates?.[1],
+    enabled: showSla && !!selectedDates?.[0] && !!selectedDates?.[1],
   });
 
   if (isLoadingAlerts) return <div>Loading...</div>;
   if (errorAlerts) return <div>Error loading Alerts</div>;
   //#endregion
 
-  const columns: TableColumnsType<AlertDto> = [
+  const columns: TableColumnsType<AlertRow> = [
     {
       title: "Cliente",
       dataIndex: "clientName",
@@ -251,10 +265,7 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
       dataIndex: "startTime",
       key: "startTime",
       //sorter: (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-      render: (text) =>
-        (source === "worker" ? getWorkerDate(text) : getDateOffset(text)).format(
-          "DD/MM/YY",
-        ),
+      render: (text) => getWorkerDate(text).format("DD/MM/YY"),
       ellipsis: true,
       width: "100px",
     },
@@ -263,10 +274,7 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
       dataIndex: "startTime",
       key: "startTime",
       //sorter: (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-      render: (text) =>
-        (source === "worker" ? getWorkerDate(text) : getDateOffset(text)).format(
-          "HH:mm:ss",
-        ),
+      render: (text) => getWorkerDate(text).format("HH:mm:ss"),
       ellipsis: true,
       width: "100px",
     },
@@ -276,15 +284,18 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
       key: "type",
       filters: [
         { text: "Nueva", value: "Nueva" },
+        { text: "Anuncio", value: "Anuncio" },
         { text: "RepetidaOtraPlataforma", value: "RepetidaOtraPlataforma" },
       ],
+      render: (type?: string, record?: AlertRow) =>
+        record?.children?.length ? `${type ?? ""} (+${record.children.length})` : type,
       onFilter: (value, record) =>
         (record.type ?? "").includes(value as string),
       sorter: (a, b) => (a.type ?? "").length - (b.type ?? "").length,
       ellipsis: true,
       width: "150px",
     },
-    ...(source === "worker"
+    ...(showSla
       ? [
           {
             title: "Nivel",
@@ -362,30 +373,43 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
       dataIndex: "filePath",
       key: "filePath",
       ellipsis: true,
-      render: (_, record) =>
-        // The edit modal builds an audio segment from filePath; a web mention has no audio to cut.
-        record.media === "internet" ? null : (
-          <Button
-            icon={<EditOutlined />}
-            onClick={() => showModal(record)}
-          ></Button>
-        ),
+      render: (_, record) => (
+        <Button
+          icon={<EditOutlined />}
+          onClick={() => showModal(record)}
+        ></Button>
+      ),
       width: "60px",
     },
   ];
 
-  const tableProps: TableProps<AlertDto> = {
+  const tableProps: TableProps<AlertRow> = {
     size: "small",
     rowKey: "id",
     columns: columns,
-    dataSource: alerts,
+    // Repeats fold under the new alert they repeat; the table's tree rows give the "+" to expand them.
+    // Groups never cross media, so filtering by media first leaves every group whole. Same-platform
+    // repeats within a minute are hidden once the groups are built (see hideRepeatedWithinMinute).
+    dataSource: hideRepeatedWithinMinute(
+      groupRepeatedAlerts((alerts ?? []).filter((alert) => matchesMedia(alert.media, mediaFilter))),
+    ),
     pagination: { pageSize: 10 },
   };
 
   return (
     <>
-      {title && <h3>{title}</h3>}
-      {slaSummary && slaSummary.measured > 0 && (
+      <Radio.Group
+        value={mediaFilter}
+        onChange={(e) => setMediaFilter(e.target.value)}
+        style={{ marginBottom: 8 }}
+      >
+        {MEDIA_FILTERS.map((option) => (
+          <Radio.Button key={option.value} value={option.value}>
+            {option.label}
+          </Radio.Button>
+        ))}
+      </Radio.Group>
+      {showSla && slaSummary && slaSummary.measured > 0 && (
         <AntAlert
           style={{ marginBottom: 8 }}
           showIcon
@@ -399,6 +423,11 @@ const AlertsTable: React.FC<AlertsTableProps> = ({
         visible={modalOpen}
         onClose={hideModal}
       ></AlertsModal>
+      <InternetNoteModal
+        key={`internet-${modalKey}`}
+        visible={internetModalOpen}
+        onClose={hideModal}
+      />
     </>
   );
 };

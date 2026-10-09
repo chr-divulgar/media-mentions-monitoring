@@ -55,11 +55,14 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
                 continue;
             }
 
-            var type = await ClassifyAsync(platform, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false);
+            var (type, repeatOfAlertId) = await ClassifyAsync(platform, media, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false);
 
             var alert = new Alert(
                 text, startTime, endTime, media, platform, filePath, matchedWords, client.Name, type,
-                level: HighestLevel(client, matchedWords));
+                level: HighestLevel(client, matchedWords))
+            {
+                RepeatOfAlertId = repeatOfAlertId,
+            };
             var recipients = ResolveRecipients(client, media, alert);
             var alertId = await alertRepository.InsertAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
 
@@ -148,7 +151,7 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
             .Max();
 
     // CaptureSource.Media says "television" — the capture module's own plugin/profile vocabulary
-    // (FirestoreDocumentMapper.NormalizeMedia's doc comment: "Only the worker's own in-memory
+    // (MongoDocumentMapper.NormalizeMedia's doc comment: "Only the worker's own in-memory
     // CaptureSource needs 'television'"). Every client's AlertRecipientsByMedia and the portal's
     // media-type catalog say "tv", so without this, TV alerts always matched zero recipients.
     private static string NormalizeMedia(string media) =>
@@ -191,8 +194,11 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
         return succeeded;
     }
 
-    private async Task<AlertType> ClassifyAsync(
+    // The alert's type and, for a repeat, the id of the "Nueva" alert it repeats — decided here, once,
+    // so nothing downstream has to guess which story a repeat belongs to.
+    private async Task<(AlertType Type, string? RepeatOfAlertId)> ClassifyAsync(
         string platform,
+        string media,
         ClientKeywordConfig client,
         string text,
         IReadOnlyList<string> matchedWords,
@@ -201,25 +207,31 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
     {
         if (IsAd(client, text, matchedWords))
         {
-            return AlertType.Ad;
+            return (AlertType.Ad, null);
         }
 
         var lastOwnPlatformAlert = await alertRepository
-            .GetLastNewOrRepeatedAlertAsync(platform, client.Name, cancellationToken)
+            .GetLastNewOrRepeatedAlertAsync(platform, client.Name, media, cancellationToken)
             .ConfigureAwait(false);
 
         if (lastOwnPlatformAlert is not null && (endTime - lastOwnPlatformAlert.EndTime).TotalSeconds <= 60)
         {
-            return AlertType.RepeatedWithinMinute;
+            return (AlertType.RepeatedWithinMinute, StoryRoot(lastOwnPlatformAlert));
         }
 
-        if (await IsDuplicateOnOtherPlatformAsync(platform, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false))
+        var duplicated = await FindDuplicateOnOtherPlatformAsync(platform, media, client, text, matchedWords, endTime, cancellationToken).ConfigureAwait(false);
+        if (duplicated is not null)
         {
-            return AlertType.RepeatedOtherPlatform;
+            return (AlertType.RepeatedOtherPlatform, StoryRoot(duplicated));
         }
 
-        return AlertType.New;
+        return (AlertType.New, null);
     }
+
+    // A repeat of a repeat still belongs to the story's first alert, so every repeat of one story
+    // points at the same "Nueva".
+    private static string? StoryRoot(Alert alert) =>
+        alert.Type == AlertType.New ? alert.Id : alert.RepeatOfAlertId ?? alert.Id;
 
     private static bool IsAd(ClientKeywordConfig client, string text, IReadOnlyList<string> matchedWords)
     {
@@ -247,8 +259,9 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
         return false;
     }
 
-    private async Task<bool> IsDuplicateOnOtherPlatformAsync(
+    private async Task<Alert?> FindDuplicateOnOtherPlatformAsync(
         string platform,
+        string media,
         ClientKeywordConfig client,
         string text,
         IReadOnlyList<string> matchedWords,
@@ -260,7 +273,7 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
         foreach (var otherPlatform in platforms.Where(candidate => !string.Equals(candidate, platform, StringComparison.Ordinal)))
         {
             var lastAlert = await alertRepository
-                .GetLastNewOrRepeatedAlertAsync(otherPlatform, client.Name, cancellationToken)
+                .GetLastNewOrRepeatedAlertAsync(otherPlatform, client.Name, media, cancellationToken)
                 .ConfigureAwait(false);
 
             // Same 60s window as the same-platform check above — without this, a match against
@@ -275,17 +288,17 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
                 var (before, after) = GetContextAroundKeyword(text, keyword);
                 if (before.Length > 0 && lastAlert.Text.Contains(before, StringComparison.OrdinalIgnoreCase))
                 {
-                    return true;
+                    return lastAlert;
                 }
 
                 if (after.Length > 0 && lastAlert.Text.Contains(after, StringComparison.OrdinalIgnoreCase))
                 {
-                    return true;
+                    return lastAlert;
                 }
             }
         }
 
-        return false;
+        return null;
     }
 
     private static (string Before, string After) GetContextAroundKeyword(string text, string keyword)

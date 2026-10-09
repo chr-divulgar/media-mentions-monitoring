@@ -96,6 +96,50 @@ public sealed class DetectAlertsUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_points_every_repeat_at_the_new_alert_that_started_the_story()
+    {
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "petroleo"), "CaracolTV", "RCN");
+
+        await useCase.ExecuteAsync("RCN", "tv", "first.opus", "hola buenas tardes hablamos de petroleo en la region hoy", BaseTime, BaseTime.AddSeconds(20));
+        await useCase.ExecuteAsync("CaracolTV", "tv", "second.opus", "hola buenas tardes hablamos de petroleo en otra emisora", BaseTime.AddSeconds(5), BaseTime.AddSeconds(30));
+        await useCase.ExecuteAsync("CaracolTV", "tv", "third.opus", "ya con petroleo seguimos con otro tema distinto", BaseTime.AddSeconds(25), BaseTime.AddSeconds(50));
+
+        var first = repository.Inserted.Single(a => a.FilePath == "first.opus");
+        var second = repository.Inserted.Single(a => a.FilePath == "second.opus");
+        var third = repository.Inserted.Single(a => a.FilePath == "third.opus");
+        Assert.Equal(AlertType.New, first.Type);
+        Assert.Null(first.RepeatOfAlertId);
+        Assert.Equal(AlertType.RepeatedOtherPlatform, second.Type);
+        Assert.Equal(first.Id, second.RepeatOfAlertId);
+        Assert.Equal(AlertType.RepeatedWithinMinute, third.Type);
+        Assert.Equal(first.Id, third.RepeatOfAlertId);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_does_not_repeat_an_alert_of_a_different_media()
+    {
+        // The same story on TV and on radio within a minute: each medium has its own "Nueva".
+        var repository = new InMemoryAlertRepository();
+        repository.Seed(new Alert(
+            "hola buenas tardes hablamos de petroleo en la region hoy",
+            BaseTime.AddSeconds(-40),
+            BaseTime.AddSeconds(-20),
+            "tv",
+            "RCN",
+            "other.opus",
+            new[] { "petroleo" },
+            "Ecopetrol",
+            AlertType.New));
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "petroleo"), "Javeriana", "RCN");
+
+        await useCase.ExecuteAsync("Javeriana", "radio", "file.opus", "hola buenas tardes hablamos de petroleo en otra emisora", BaseTime, BaseTime.AddSeconds(20));
+
+        var alert = repository.Inserted.Single(a => a.FilePath == "file.opus");
+        Assert.Equal(AlertType.New, alert.Type);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_classifies_as_new_when_matching_other_platform_alert_is_older_than_a_minute()
     {
         var repository = new InMemoryAlertRepository();
@@ -455,6 +499,7 @@ public sealed class DetectAlertsUseCaseTests
         public Task<string> InsertAsync(Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken = default)
         {
             var id = (nextId++).ToString();
+            alert.Id = id;
             Inserted.Add(alert);
             Recipients[id] = recipients;
             Notified[id] = new HashSet<string>();
@@ -462,10 +507,10 @@ public sealed class DetectAlertsUseCaseTests
             return Task.FromResult(id);
         }
 
-        public Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, CancellationToken cancellationToken = default)
+        public Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, string media, CancellationToken cancellationToken = default)
         {
             var match = Inserted
-                .Where(alert => alert.Platform == platform && alert.ClientName == clientName && RepeatCheckTypes.Contains(alert.Type))
+                .Where(alert => alert.Platform == platform && alert.ClientName == clientName && alert.Media == media && RepeatCheckTypes.Contains(alert.Type))
                 .OrderByDescending(alert => alert.EndTime)
                 .FirstOrDefault();
             return Task.FromResult(match);

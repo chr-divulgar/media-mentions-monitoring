@@ -32,6 +32,13 @@ public sealed class Alert
         CapturedAt = capturedAt ?? endTime;
     }
 
+    // The stored alert's id: null until it is persisted (InsertAsync), set when it is read back.
+    public string? Id { get; set; }
+
+    // For a repeat, the id of the "Nueva" alert that started the story; null for everything else
+    // (and for alerts stored before this field existed). Repeats of repeats point at the same root.
+    public string? RepeatOfAlertId { get; init; }
+
     public string Text { get; }
 
     public DateTimeOffset StartTime { get; }

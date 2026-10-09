@@ -15,7 +15,9 @@ public interface IAlertRepository
     Task<string> InsertAsync(Alert alert, IReadOnlyList<string> recipients, CancellationToken cancellationToken = default);
 
     // Only alerts of type New/RepeatedOtherPlatform count, matching Helper.GetLastNewOrRepeatedAlert.
-    Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, CancellationToken cancellationToken = default);
+    // Only alerts of the same media count too: a story is a repeat of another radio, TV or web
+    // alert, never of one from a different medium (each medium's "Nueva" starts its own story).
+    Task<Alert?> GetLastNewOrRepeatedAlertAsync(string platform, string clientName, string media, CancellationToken cancellationToken = default);
 
     // Merges recipients that IAlertNotifier just confirmed as sent into the alert's already-
     // notified set, so a later retry only targets whoever is still missing.

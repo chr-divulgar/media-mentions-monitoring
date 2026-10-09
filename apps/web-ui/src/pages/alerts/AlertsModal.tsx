@@ -155,13 +155,19 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
 
   const onFinish = () => {
     formSummary.validateFields().then((values) => {
+      // The form holds every field of the note (the alert's own data, the program slot, rate,
+      // classification...). The date is the clip's Colombia day; the start time stays the clip's
+      // exact instant and the duration its real length.
+      const fields = { ...values };
+      delete fields.startTime;
+      delete fields.duration;
+      delete fields.date;
       setNote({
         ...note,
-        index: values.index,
-        program: values.program,
-        title: values.title,
-        summary: values.summary,
-        audioLabel: values.audioLabel,
+        ...fields,
+        date: values.date?.format("YYYY-MM-DD"),
+        startTime: note?.startTime,
+        duration: note?.duration,
       });
       setCurrent(current + 1);
     });

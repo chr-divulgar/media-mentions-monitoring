@@ -19,7 +19,6 @@ import {
 import { splitAudio } from './audio-chunker';
 import { transcribeWithPython } from './google-speech';
 import OpenAI from 'openai';
-import { exec } from 'child_process';
 import * as path from 'path';
 import { ConfigService } from '@nestjs/config';
 import { Alert, Note, Transcription, WorkerAlert } from '../entities';
@@ -74,23 +73,6 @@ export class AlertsService {
     } catch (error) {
       throw new Error(`Error fetching response from OpenAI.${error}`);
     }
-  }
-
-  async runPythonScript(scriptPath: string, args: string[]): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const command = `python ${scriptPath} ${args.join(' ')}`;
-      exec(command, { encoding: 'utf8' }, (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`Error: ${error.message}`));
-          return;
-        }
-        if (stderr) {
-          reject(new Error(`Stderr: ${stderr}`));
-          return;
-        }
-        resolve(stdout);
-      });
-    });
   }
 
   async getAlerts(getAlertasDto: GetAlertsDto) {
@@ -188,23 +170,37 @@ export class AlertsService {
     );
 
     const chunkPaths = await splitAudio(filePath, 60);
-
-    // Procesar todos los chunks en paralelo sin límite de concurrencia
-    const texts = await Promise.all(
-      chunkPaths.map((chunk) =>
-        transcribeWithPython(chunk).catch((e) => {
-          console.error('Error transcribing chunk', chunk, e);
-          return '--error--' as string;
-        }),
-      ),
-    );
-    const fullText = texts.join(' ');
-
     const chunksDir = path.dirname(chunkPaths[0]);
+
+    let fullText: string;
     try {
-      await fs.rm(chunksDir, { recursive: true, force: true });
-    } catch (err) {
-      console.error('Error deleting chunks directory:', err);
+      // Procesar todos los chunks en paralelo sin límite de concurrencia
+      const results = await Promise.all(
+        chunkPaths.map((chunk) =>
+          transcribeWithPython(chunk).then(
+            (text) => ({ text, error: undefined }),
+            (error: Error) => ({ text: '--error--', error }),
+          ),
+        ),
+      );
+
+      const failures = results.flatMap((result) =>
+        result.error ? [result.error] : [],
+      );
+      // Nothing transcribed at all: say why, instead of saving a note full of "--error--".
+      if (failures.length === results.length) {
+        throw failures[0];
+      }
+      failures.forEach((error) =>
+        console.error('Error transcribing a chunk:', error.message),
+      );
+      fullText = results.map((result) => result.text).join(' ');
+    } finally {
+      try {
+        await fs.rm(chunksDir, { recursive: true, force: true });
+      } catch (err) {
+        console.error('Error deleting chunks directory:', err);
+      }
     }
 
     const alertId = getTranscriptionDto.filename
@@ -238,24 +234,28 @@ export class AlertsService {
   ): Promise<ValidDatesDto> {
     const getAlerts = getAlertsDto || {};
     const { clientName } = getAlerts;
-    const query: FindOneOptions<Alert> = {
+    const query: FindOneOptions<WorkerAlert> = {
       where: { ...(clientName && { clientName }) },
     };
-    // Get the first document by ascending order of date
-    const min = await this.alertsRepo.findOne({
+    // The worker's alerts are the only ones listed: the pickable range follows them. Days are
+    // Bogotá days, like the list itself (see getAlerts), and today is always pickable so the
+    // default selection is valid before the day's first alert arrives.
+    const bogotaDay = (value: Date) =>
+      new Date(value.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const today = bogotaDay(new Date());
+
+    const min = await this.workerAlertsRepo.findOne({
       ...query,
       order: { endTime: 'ASC' },
     });
-
-    // Get the last document by descending order of date
-    const max = await this.alertsRepo.findOne({
+    const max = await this.workerAlertsRepo.findOne({
       ...query,
       order: { endTime: 'DESC' },
     });
-    if (min === null || max === null) throw new Error('No alerts found');
+    const lastDay = max ? bogotaDay(max.endTime) : today;
     return {
-      minDate: this.getDate(min.endTime),
-      maxDate: this.getDate(max.endTime),
+      minDate: min ? bogotaDay(min.endTime) : today,
+      maxDate: lastDay > today ? lastDay : today,
     };
   }
 
