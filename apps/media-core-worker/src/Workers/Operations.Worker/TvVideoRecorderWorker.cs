@@ -17,13 +17,10 @@ namespace MediaOpsCore.Workers.Operations;
 public sealed class TvVideoRecorderWorker : BackgroundService
 {
     private const string TelevisionDirectory = "television";
-    // The audio capture of a channel starts the moment it is live; the video must not trail it. These two
-    // waits are the whole lag between them (they were 30 s and 60 s: video came in up to ~90 s late), so
-    // they are short. A pass that finds the channel off air costs one plain GET of its /live page.
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(30);
     // How often the set of active TV sources is re-read: a channel excluded at startup and later
-    // recovered by the reconciliation (or newly added) starts recording within seconds. The set is the
-    // capture's in-memory one, so a short interval costs no database reads.
+    // recovered by the reconciliation (or newly added) starts recording within seconds. Both the source
+    // set and the audio state it is checked against are in memory, so this costs no network or database.
     private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(5);
 
     private readonly OperationsWorkerOptions options;
@@ -33,6 +30,10 @@ public sealed class TvVideoRecorderWorker : BackgroundService
     private readonly ILogger<TvVideoRecorderWorker> logger;
     private readonly Func<CaptureSource, CancellationToken, Task<IReadOnlyList<string>>> resolveVideoUrl;
     private readonly Func<DateTimeOffset> clock;
+    // A channel's video starts when its audio capture does: the audio session is what proves the channel
+    // is live, and it starts the moment the stream resolves. Waiting for it (rather than polling the
+    // channel again) keeps the two files in step without hitting YouTube while a channel is off air.
+    private readonly Func<string, bool> isAudioCapturing;
     private readonly Dictionary<string, Task> recorders = new(StringComparer.OrdinalIgnoreCase);
 
     public TvVideoRecorderWorker(
@@ -40,11 +41,13 @@ public sealed class TvVideoRecorderWorker : BackgroundService
         ICaptureSourceProvider sourceProvider,
         YtdlpLiveStreamUrlResolver resolver,
         ISourceIncidentRecorder incidentRecorder,
+        ILiveCaptureProgressReader audioProgress,
         ILogger<TvVideoRecorderWorker> logger)
         : this(
             options, sourceProvider, incidentRecorder, logger,
             (source, ct) => ResolveAsync(resolver, options, source, ct),
-            (urls, duration, path, ct) => Task.Run(() => InProcessMp4Recorder.Record(urls, duration, path, ct), ct))
+            (urls, duration, path, ct) => Task.Run(() => InProcessMp4Recorder.Record(urls, duration, path, ct), ct),
+            isAudioCapturing: sourceId => audioProgress.TryGetLiveProgress(sourceId) is not null)
     {
     }
 
@@ -57,9 +60,11 @@ public sealed class TvVideoRecorderWorker : BackgroundService
         ILogger<TvVideoRecorderWorker> logger,
         Func<CaptureSource, CancellationToken, Task<IReadOnlyList<string>>> resolveVideoUrl,
         Func<IReadOnlyList<string>, TimeSpan, string, CancellationToken, Task<string?>> record,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        Func<string, bool>? isAudioCapturing = null)
     {
         this.clock = clock ?? (() => DateTimeOffset.UtcNow);
+        this.isAudioCapturing = isAudioCapturing ?? (_ => true);
         this.options = options;
         this.sourceProvider = sourceProvider;
         this.record = record;
@@ -103,6 +108,11 @@ public sealed class TvVideoRecorderWorker : BackgroundService
         foreach (var source in await ActiveTvSourcesAsync(cancellationToken).ConfigureAwait(false))
         {
             if (recorders.TryGetValue(source.SourceId, out var running) && !running.IsCompleted)
+            {
+                continue;
+            }
+
+            if (!isAudioCapturing(source.SourceId))
             {
                 continue;
             }

@@ -160,6 +160,43 @@ public sealed class TvVideoRecorderReconcileTests
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task ReconcileAsync_waits_for_the_channels_audio_to_be_capturing_before_recording_its_video()
+    {
+        // The audio capture is the signal that the channel is live: the video starts with it, instead of
+        // trailing it by however long the recorder's own polling takes.
+        var root = Path.Combine(Path.GetTempPath(), $"tv-video-{Guid.NewGuid():N}");
+        var capturing = new HashSet<string>();
+        var provider = new FakeProvider();
+        var recorded = new List<string>();
+        using var cts = new CancellationTokenSource();
+        var worker = new TvVideoRecorderWorker(
+            new OperationsWorkerOptions { AudioOutputRootPath = root },
+            provider, new NullIncidents(), NullLogger<TvVideoRecorderWorker>.Instance,
+            (_, _) => Task.FromResult<IReadOnlyList<string>>(["https://live.example/v.m3u8"]),
+            (_, _, path, _) =>
+            {
+                recorded.Add(path);
+                cts.Cancel();
+                return Task.FromResult<string?>(null);
+            },
+            isAudioCapturing: capturing.Contains);
+        try
+        {
+            provider.Active.Add(new CaptureSource("noticias-caracol-live", "youtube", "Noticias Caracol", "television", "https://www.youtube.com/@NoticiasCaracol/live"));
+            Assert.Empty(await worker.ReconcileAsync(cts.Token)); // channel off air: no audio, no video
+
+            capturing.Add("noticias-caracol-live");
+            await Task.WhenAll(await worker.ReconcileAsync(cts.Token));
+
+            Assert.Contains("noticias-caracol-live", Assert.Single(recorded));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
 }
 
 public sealed class LocalSystemProcessRunnerTests
