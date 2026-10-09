@@ -58,7 +58,13 @@ export class AudioService {
     const startSeconds =
       endSeconds > durationIn / 2 ? endSeconds - durationIn / 2 : 0;
 
-    const cachedDuration = await this.tryReuseCachedFile(outputPath);
+    // A clip cut while the hour was still being recorded is short; it must not be reused once the
+    // hour is closed, or the alert falls outside it (no marker, truncated audio).
+    const expectedDuration = Math.min(durationIn, 3600 - startSeconds);
+    const cachedDuration = await this.tryReuseCachedFile(
+      outputPath,
+      expectedDuration - 5,
+    );
     if (cachedDuration !== null) {
       return { startSeconds, duration: cachedDuration };
     } else {
@@ -435,12 +441,16 @@ export class AudioService {
   // request for that alert would keep serving the same bad file forever. Probing it is cheap and
   // is what lets a single bad historical write self-heal instead of poisoning the cache
   // permanently.
-  private async tryReuseCachedFile(outputPath: string): Promise<number | null> {
+  private async tryReuseCachedFile(
+    outputPath: string,
+    minDuration = 0,
+  ): Promise<number | null> {
     if (!(await this.checkFileExists(outputPath))) return null;
 
     try {
       const duration = await this.getAudioDuration(outputPath);
-      if (duration > 0) return duration;
+      if (duration > 0 && duration >= minDuration) return duration;
+      if (duration > 0) return null; // valid but incomplete: regenerate over it
     } catch {
       // Falls through to treat it as unusable below.
     }
