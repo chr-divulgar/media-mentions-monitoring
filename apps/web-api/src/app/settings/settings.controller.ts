@@ -111,6 +111,7 @@ export class SettingsController {
       phone?: string;
       password?: string;
       disabled?: boolean;
+      notifyPlatformErrors?: boolean;
     },
   ) {
     try {

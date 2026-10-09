@@ -1,6 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { FirebaseAdminService } from '../firebase/firebase-admin.service';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ClientDto, MediaTypeDto } from '@repo/shared';
+import {
+  ConfigDbService,
+  isDuplicateKey,
+  toApiDocument,
+  toObjectId,
+} from '../config-db/config-db.service';
 
 const DEFAULT_MEDIA: Array<Omit<MediaTypeDto, 'id'> & { order: number }> = [
   { name: 'internet', label: 'Internet', order: 0 },
@@ -10,29 +15,24 @@ const DEFAULT_MEDIA: Array<Omit<MediaTypeDto, 'id'> & { order: number }> = [
   { name: 'redes', label: 'Redes Sociales', order: 4 },
 ];
 
+// Clients and media types live in the local MongoDB `config` database (collections `clients` and
+// `mediaTypes`); the worker reads the same `clients` documents.
 @Injectable()
 export class ClientsService {
-  constructor(private readonly firebaseAdmin: FirebaseAdminService) {}
-
-  private get clientsCol() {
-    return this.firebaseAdmin.firestore.collection('clients');
-  }
-
-  private get mediaCol() {
-    return this.firebaseAdmin.firestore.collection('media_types');
-  }
+  constructor(private readonly configDb: ConfigDbService) {}
 
   // ─── Clients ──────────────────────────────────────────────────────────────
 
   async getClients(): Promise<ClientDto[]> {
-    const snap = await this.clientsCol.orderBy('name').get();
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as ClientDto) }));
+    const docs = await this.configDb.clients.find().sort({ name: 1 }).toArray();
+    return docs.map((doc) => toApiDocument(doc)) as unknown as ClientDto[];
   }
 
   async getClient(id: string): Promise<ClientDto> {
-    const doc = await this.clientsCol.doc(id).get();
-    if (!doc.exists) throw new NotFoundException('Cliente no encontrado');
-    return { id: doc.id, ...(doc.data() as ClientDto) };
+    const objectId = toObjectId(id);
+    const doc = objectId && (await this.configDb.clients.findOne({ _id: objectId }));
+    if (!doc) throw new NotFoundException('Cliente no encontrado');
+    return toApiDocument(doc) as unknown as ClientDto;
   }
 
   async createClient(dto: ClientDto): Promise<ClientDto> {
@@ -44,16 +44,21 @@ export class ClientsService {
       alertEmails: dto.alertEmails ?? {},
       notes: dto.notes ?? {},
     };
-    const ref = await this.clientsCol.add(payload);
-    return { id: ref.id, ...payload };
+    try {
+      const result = await this.configDb.clients.insertOne({ ...payload });
+      return { id: result.insertedId.toHexString(), ...payload };
+    } catch (error) {
+      if (isDuplicateKey(error)) {
+        throw new ConflictException(`Ya existe un cliente llamado "${dto.name}"`);
+      }
+      throw error;
+    }
   }
 
   async updateClient(id: string, dto: ClientDto): Promise<ClientDto> {
-    const ref = this.clientsCol.doc(id);
-    const doc = await ref.get();
-    if (!doc.exists) throw new NotFoundException('Cliente no encontrado');
+    const objectId = toObjectId(id);
+    if (!objectId) throw new NotFoundException('Cliente no encontrado');
 
-    const existing = doc.data() as ClientDto;
     const payload: Record<string, unknown> = {};
     if (dto.name !== undefined) payload['name'] = dto.name;
     if (dto.words !== undefined) payload['words'] = dto.words;
@@ -62,68 +67,81 @@ export class ClientsService {
     if (dto.alertEmails !== undefined) payload['alertEmails'] = dto.alertEmails;
     if (dto.notes !== undefined) payload['notes'] = dto.notes;
 
-    await ref.update(payload);
-    return { id, ...existing, ...payload };
+    try {
+      // MongoDB rejects an empty $set: with nothing to change the update is just a read.
+      const updated = Object.keys(payload).length
+        ? await this.configDb.clients.findOneAndUpdate({ _id: objectId }, { $set: payload }, { returnDocument: 'after' })
+        : await this.configDb.clients.findOne({ _id: objectId });
+      if (!updated) throw new NotFoundException('Cliente no encontrado');
+      return toApiDocument(updated) as unknown as ClientDto;
+    } catch (error) {
+      if (isDuplicateKey(error)) {
+        throw new ConflictException(`Ya existe un cliente llamado "${dto.name}"`);
+      }
+      throw error;
+    }
   }
 
   async deleteClient(id: string): Promise<void> {
-    const doc = await this.clientsCol.doc(id).get();
-    if (!doc.exists) throw new NotFoundException('Cliente no encontrado');
-    await this.clientsCol.doc(id).delete();
+    const objectId = toObjectId(id);
+    const result = objectId && (await this.configDb.clients.deleteOne({ _id: objectId }));
+    if (!result?.deletedCount) throw new NotFoundException('Cliente no encontrado');
   }
 
   // ─── Media Types ──────────────────────────────────────────────────────────
 
   async getMediaTypes(): Promise<MediaTypeDto[]> {
-    const snap = await this.mediaCol.get();
-    if (snap.empty) {
+    let docs = await this.configDb.mediaTypes.find().toArray();
+    if (docs.length === 0) {
       // Seed defaults on first call
-      const batch = this.firebaseAdmin.firestore.batch();
-      for (const m of DEFAULT_MEDIA) {
-        batch.set(this.mediaCol.doc(), m);
-      }
-      await batch.commit();
-      return this.getMediaTypes();
+      await this.configDb.mediaTypes.insertMany(DEFAULT_MEDIA.map((media) => ({ ...media })));
+      docs = await this.configDb.mediaTypes.find().toArray();
     }
-    const docs = snap.docs.map((d) => ({
-      id: d.id,
-      ...(d.data() as MediaTypeDto & { order?: number }),
-    }));
-    // Sort by order field if present, otherwise keep Firestore ID order (insertion order)
+    // Sort by order field if present, otherwise keep insertion order
     docs.sort((a, b) => {
-      const aOrd = (a as { order?: number }).order;
-      const bOrd = (b as { order?: number }).order;
+      const aOrd = a.order as number | undefined;
+      const bOrd = b.order as number | undefined;
       if (aOrd !== undefined && bOrd !== undefined) return aOrd - bOrd;
       if (aOrd !== undefined) return -1;
       if (bOrd !== undefined) return 1;
       return 0;
     });
-    return docs;
+    return docs.map((doc) => toApiDocument(doc)) as unknown as MediaTypeDto[];
   }
 
   async createMediaType(dto: MediaTypeDto): Promise<MediaTypeDto> {
-    const snap = await this.mediaCol.get();
-    const orders = snap.docs.map((d) => (d.data().order as number) ?? 0);
-    const maxOrder = orders.length > 0 ? Math.max(...orders) + 1 : 0;
+    const last = await this.configDb.mediaTypes.find().sort({ order: -1 }).limit(1).toArray();
+    const maxOrder = last.length > 0 ? ((last[0].order as number) ?? 0) + 1 : 0;
     const payload = { name: dto.name, label: dto.label, order: maxOrder };
-    const ref = await this.mediaCol.add(payload);
-    return { id: ref.id, ...payload };
+    try {
+      const result = await this.configDb.mediaTypes.insertOne({ ...payload });
+      return { id: result.insertedId.toHexString(), ...payload };
+    } catch (error) {
+      if (isDuplicateKey(error)) {
+        throw new ConflictException(`Ya existe un tipo de medio "${dto.name}"`);
+      }
+      throw error;
+    }
   }
 
   async updateMediaType(id: string, dto: MediaTypeDto): Promise<MediaTypeDto> {
-    const ref = this.mediaCol.doc(id);
-    const doc = await ref.get();
-    if (!doc.exists) throw new NotFoundException('Tipo de medio no encontrado');
+    const objectId = toObjectId(id);
+    if (!objectId) throw new NotFoundException('Tipo de medio no encontrado');
+
     const payload: Record<string, unknown> = {};
     if (dto.name !== undefined) payload['name'] = dto.name;
     if (dto.label !== undefined) payload['label'] = dto.label;
-    await ref.update(payload);
-    return { id, ...(doc.data() as MediaTypeDto), ...payload };
+
+    const updated = Object.keys(payload).length
+      ? await this.configDb.mediaTypes.findOneAndUpdate({ _id: objectId }, { $set: payload }, { returnDocument: 'after' })
+      : await this.configDb.mediaTypes.findOne({ _id: objectId });
+    if (!updated) throw new NotFoundException('Tipo de medio no encontrado');
+    return toApiDocument(updated) as unknown as MediaTypeDto;
   }
 
   async deleteMediaType(id: string): Promise<void> {
-    const doc = await this.mediaCol.doc(id).get();
-    if (!doc.exists) throw new NotFoundException('Tipo de medio no encontrado');
-    await this.mediaCol.doc(id).delete();
+    const objectId = toObjectId(id);
+    const result = objectId && (await this.configDb.mediaTypes.deleteOne({ _id: objectId }));
+    if (!result?.deletedCount) throw new NotFoundException('Tipo de medio no encontrado');
   }
 }

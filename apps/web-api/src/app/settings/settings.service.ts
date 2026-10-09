@@ -1,8 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PlatformDto, SlotDto, Day } from '@repo/shared';
 import { FirebaseAdminService } from '../firebase/firebase-admin.service';
-
-const PLATFORMS_COLLECTION = 'platforms';
+import {
+  ConfigDbService,
+  isDuplicateKey,
+  toApiDocument,
+  toObjectId,
+} from '../config-db/config-db.service';
+import { UsersBackupService } from '../config-db/users-backup.service';
 
 function nameToDisplay(name: string): string {
   // Split camelCase into words: "CaracolBucaramanga" → "Caracol Bucaramanga"
@@ -101,50 +106,45 @@ interface PlatformDoc {
   isExcluded?: boolean;
 }
 
-function buildOptionalPlatformFields(
-  dto: PlatformDto,
-  existing: Omit<PlatformDoc, 'id'>,
-): Partial<Omit<PlatformDoc, 'id'>> {
-  const candidates: Partial<Omit<PlatformDoc, 'id'>> = {
-    audience: dto.audience == null ? existing.audience : Number(dto.audience),
-    rate: dto.rate == null ? existing.rate : Number(dto.rate),
-    sourceId: dto.sourceId !== undefined ? dto.sourceId : existing.sourceId,
-    streamUrl: dto.streamUrl !== undefined ? dto.streamUrl : existing.streamUrl,
-    primaryUrl:
-      dto.primaryUrl !== undefined ? dto.primaryUrl : existing.primaryUrl,
-    country: dto.country !== undefined ? dto.country : existing.country,
-    fallbackStreamUrls:
-      dto.fallbackStreamUrls !== undefined
-        ? dto.fallbackStreamUrls
-        : existing.fallbackStreamUrls,
-    isExcluded:
-      dto.isExcluded !== undefined ? dto.isExcluded : existing.isExcluded,
+/**
+ * The fields an edit changes, and only those: the document is updated with `$set`, never
+ * rewritten whole, so what the capture worker keeps in the same document (isExcluded, a
+ * re-resolved streamUrl, discovered fallback URLs) is not overwritten with a stale copy.
+ * A field the request leaves out keeps its value.
+ */
+export function buildPlatformUpdate(dto: PlatformDto): Record<string, unknown> {
+  const candidates: Record<string, unknown> = {
+    name: dto.name,
+    url: dto.url,
+    media: dto.media,
+    zone: dto.zone,
+    city: dto.city,
+    slots: dto.slots,
+    audience: dto.audience == null ? undefined : Number(dto.audience),
+    rate: dto.rate == null ? undefined : Number(dto.rate),
+    sourceId: dto.sourceId,
+    streamUrl: dto.streamUrl,
+    primaryUrl: dto.primaryUrl,
+    country: dto.country,
+    fallbackStreamUrls: dto.fallbackStreamUrls,
+    isExcluded: dto.isExcluded,
   };
-
-  return Object.fromEntries(
-    Object.entries(candidates).filter(([, value]) => value !== undefined),
-  ) as Partial<Omit<PlatformDoc, 'id'>>;
+  return Object.fromEntries(Object.entries(candidates).filter(([, value]) => value !== undefined));
 }
 
 @Injectable()
 export class SettingsService {
-  constructor(private readonly firebaseAdmin: FirebaseAdminService) {}
+  constructor(
+    private readonly firebaseAdmin: FirebaseAdminService,
+    private readonly configDb: ConfigDbService,
+    private readonly usersBackup: UsersBackupService,
+  ) {}
 
-  private get db() {
-    return this.firebaseAdmin.firestore;
-  }
-
-  // ─── Platforms ────────────────────────────────────────────────────────────
+  // ─── Platforms (MongoDB, config.platforms) ───────────────────────────────
 
   async getPlatforms(media: string): Promise<PlatformDoc[]> {
-    const snap = await this.db
-      .collection(PLATFORMS_COLLECTION)
-      .where('media', '==', media)
-      .get();
-    return snap.docs.map((doc) => ({
-      id: doc.id,
-      ...(doc.data() as Omit<PlatformDoc, 'id'>),
-    }));
+    const docs = await this.configDb.platforms.find({ media }).toArray();
+    return docs.map((doc) => toApiDocument(doc)) as unknown as PlatformDoc[];
   }
 
   async createPlatform(dto: PlatformDto): Promise<PlatformDoc> {
@@ -169,34 +169,41 @@ export class SettingsService {
         : {}),
       ...(dto.isExcluded !== undefined ? { isExcluded: dto.isExcluded } : {}),
     };
-    const ref = await this.db.collection(PLATFORMS_COLLECTION).add(data);
-    return { id: ref.id, ...data };
+    try {
+      const result = await this.configDb.platforms.insertOne({ ...data });
+      return { id: result.insertedId.toHexString(), ...data };
+    } catch (error) {
+      if (isDuplicateKey(error)) {
+        throw new ConflictException(`Ya existe una fuente con el Source ID "${dto.sourceId}"`);
+      }
+      throw error;
+    }
   }
 
   async updatePlatform(dto: PlatformDto): Promise<PlatformDoc> {
-    if (!dto.id) throw new NotFoundException('Platform id required');
-    const ref = this.db.collection(PLATFORMS_COLLECTION).doc(dto.id);
-    const snap = await ref.get();
-    if (!snap.exists) throw new NotFoundException('Platform not found');
+    const id = toObjectId(dto.id);
+    if (!id) throw new NotFoundException('Platform id required');
 
-    const existing = snap.data() as Omit<PlatformDoc, 'id'>;
-    const optionalFields = buildOptionalPlatformFields(dto, existing);
-
-    const updated: Omit<PlatformDoc, 'id'> = {
-      name: dto.name ?? existing.name,
-      url: dto.url ?? existing.url,
-      media: dto.media ?? existing.media,
-      zone: dto.zone ?? existing.zone ?? 'Nacional',
-      city: dto.city ?? existing.city ?? 'Nacional',
-      slots: dto.slots ?? existing.slots,
-      ...optionalFields,
-    };
-    await ref.update(updated);
-    return { id: dto.id, ...updated };
+    try {
+      const updated = await this.configDb.platforms.findOneAndUpdate(
+        { _id: id },
+        { $set: buildPlatformUpdate(dto) },
+        { returnDocument: 'after' },
+      );
+      if (!updated) throw new NotFoundException('Platform not found');
+      return toApiDocument(updated) as unknown as PlatformDoc;
+    } catch (error) {
+      if (isDuplicateKey(error)) {
+        throw new ConflictException(`Ya existe una fuente con el Source ID "${dto.sourceId}"`);
+      }
+      throw error;
+    }
   }
 
   async deletePlatform(id: string): Promise<{ success: boolean }> {
-    await this.db.collection(PLATFORMS_COLLECTION).doc(id).delete();
+    const objectId = toObjectId(id);
+    if (!objectId) throw new NotFoundException('Platform not found');
+    await this.configDb.platforms.deleteOne({ _id: objectId });
     return { success: true };
   }
 
@@ -229,6 +236,7 @@ export class SettingsService {
         disabled: u.disabled,
         role: doc.role ?? 'initial',
         phone: doc.phone ?? '',
+        notifyPlatformErrors: doc.notifyPlatformErrors === true,
       };
     });
   }
@@ -239,6 +247,7 @@ export class SettingsService {
     displayName?: string;
     role?: string;
     phone?: string;
+    notifyPlatformErrors?: boolean;
   }) {
     const user = await this.firebaseAdmin.auth.createUser({
       email: dto.email,
@@ -255,9 +264,17 @@ export class SettingsService {
         name: dto.displayName ?? dto.email,
         role,
         phone,
+        notifyPlatformErrors: dto.notifyPlatformErrors === true,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+    await this.usersBackup.upsert(user.uid, {
+      email: dto.email,
+      name: dto.displayName ?? dto.email,
+      role,
+      phone,
+      notifyPlatformErrors: dto.notifyPlatformErrors === true,
+    });
     return {
       uid: user.uid,
       email: user.email,
@@ -274,6 +291,7 @@ export class SettingsService {
     phone?: string;
     password?: string;
     disabled?: boolean;
+    notifyPlatformErrors?: boolean;
   }) {
     const authUpdate: Record<string, unknown> = {};
     if (dto.displayName !== undefined) authUpdate.displayName = dto.displayName;
@@ -288,11 +306,19 @@ export class SettingsService {
     if (dto.displayName !== undefined) fsUpdate.name = dto.displayName;
     if (dto.role !== undefined) fsUpdate.role = dto.role;
     if (dto.phone !== undefined) fsUpdate.phone = dto.phone;
+    if (dto.notifyPlatformErrors !== undefined)
+      fsUpdate.notifyPlatformErrors = dto.notifyPlatformErrors;
 
     await this.firebaseAdmin.firestore
       .collection('users')
       .doc(dto.uid)
       .set(fsUpdate, { merge: true });
+    await this.usersBackup.upsert(dto.uid, {
+      name: fsUpdate.name as string | undefined,
+      role: fsUpdate.role as string | undefined,
+      phone: fsUpdate.phone as string | undefined,
+      notifyPlatformErrors: fsUpdate.notifyPlatformErrors as boolean | undefined,
+    });
 
     return { success: true };
   }
@@ -300,6 +326,7 @@ export class SettingsService {
   async deleteUser(uid: string) {
     await this.firebaseAdmin.auth.deleteUser(uid);
     await this.firebaseAdmin.firestore.collection('users').doc(uid).delete();
+    await this.usersBackup.remove(uid);
     return { success: true };
   }
 }
