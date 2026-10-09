@@ -20,7 +20,11 @@ public sealed record ArticleContent(
     string? FullText = null,
     // The site refused automated access outright (an anti-bot challenge that not even the
     // browser fallback got past) — a retry would hit the same wall, so it is final.
-    bool Blocked = false)
+    bool Blocked = false,
+    // Null when PublishedAt came from structured/conventional markup. "page-text-scan" when no
+    // convention matched and the date was guessed from the first date-like text on the page — a
+    // weaker signal, kept so those records can be audited or surfaced later.
+    string? PublishedAtSource = null)
 {
     public bool Succeeded => ErrorMessage is null;
 }

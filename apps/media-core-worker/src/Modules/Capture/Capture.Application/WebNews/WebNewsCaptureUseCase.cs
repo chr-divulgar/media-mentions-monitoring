@@ -42,9 +42,11 @@ public static class WebNewsClock
 {
     private static readonly TimeSpan BogotaOffset = TimeSpan.FromHours(-5);
 
+    // The calendar date exactly as the page prints it, with no time-zone conversion: sites often
+    // publish in UTC, and shifting that to Bogota would turn a same-day article into "yesterday".
+    // Only "now" is read in Bogota time.
     public static bool IsToday(DateTimeOffset publishedAt, DateTimeOffset now) =>
-        DateOnly.FromDateTime(publishedAt.ToOffset(BogotaOffset).DateTime) ==
-        DateOnly.FromDateTime(now.ToOffset(BogotaOffset).DateTime);
+        DateOnly.FromDateTime(publishedAt.DateTime) == DateOnly.FromDateTime(now.ToOffset(BogotaOffset).DateTime);
 }
 
 /// <summary>

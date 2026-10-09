@@ -235,4 +235,78 @@ public sealed class HtmlArticleReaderTests
 
         Assert.Equal(new DateTimeOffset(2026, 10, 10, 0, 0, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
     }
+
+    [Theory]
+    [InlineData("Publicado el 06/10/2026 por la redacción", 2026, 10, 6)]
+    [InlineData("Publicado el 6 de octubre de 2026", 2026, 10, 6)]
+    [InlineData("Publicado 2026-10-06", 2026, 10, 6)]
+    public async Task ParseAsync_scans_page_text_as_last_resort_and_flags_it(string text, int year, int month, int day)
+    {
+        var html = $"<html><body><div><script>var d='01/01/2000';</script><b>{text}</b></div></body></html>";
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(new DateTimeOffset(year, month, day, 0, 0, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
+        Assert.Equal("page-text-scan", content.PublishedAtSource);
+    }
+
+    [Fact]
+    public async Task ParseAsync_leaves_the_source_null_when_a_conventional_date_is_found()
+    {
+        var content = await HtmlArticleReader.ParseAsync("<html><body><time datetime=\"2026-10-06T08:00:00-05:00\"></time></body></html>");
+
+        Assert.Null(content.PublishedAtSource);
+    }
+
+    [Fact]
+    public async Task ParseAsync_reads_the_rdfa_dc_date_content_attribute()
+    {
+        const string html = """
+            <html><body>
+              <span property="dc:date" datatype="xsd:dateTime" content="2026-10-05T16:17:00-05:00" class="date-display-single">Lunes 05 de Octubre de 2026 - 4:17pm</span>
+            </body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 5, 16, 17, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
+        Assert.Null(content.PublishedAtSource);
+    }
+
+    [Fact]
+    public async Task ParseAsync_reads_the_date_from_a_span_with_class_date()
+    {
+        const string html = """
+            <html><body>
+              <p class="post-meta"><span class="date"><i class="fa fa-clock-o"></i>
+                06 Oct 2026  </span></p>
+            </body></html>
+            """;
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(new DateTimeOffset(2026, 10, 6, 0, 0, 0, TimeSpan.FromHours(-5)), content.PublishedAt);
+    }
+
+    [Fact]
+    public void FindClientRedirect_reads_the_tco_style_stub()
+    {
+        // Verbatim from https://t.co/... — the page the reader got instead of the article.
+        const string stub = """
+            <head><noscript><META http-equiv="refresh" content="0;URL=https://runrunpolitico.com/noticias/consejo/"></noscript><title>https://runrunpolitico.com/noticias/consejo/</title></head><script>window.opener = null; location.replace("https:\/\/runrunpolitico.com\/noticias\/consejo\/")</script>
+            """;
+
+        Assert.Equal("https://runrunpolitico.com/noticias/consejo/", HtmlArticleReader.FindClientRedirect(stub, new Uri("https://t.co/abc")));
+        Assert.Equal(
+            "https://runrunpolitico.com/noticias/consejo/",
+            HtmlArticleReader.FindClientRedirect(@"<script>location.replace(""https:\/\/runrunpolitico.com\/noticias\/consejo\/"")</script>", null));
+    }
+
+    [Fact]
+    public void FindClientRedirect_ignores_real_pages()
+    {
+        var article = "<html><head><meta http-equiv=\"refresh\" content=\"0;URL=https://x.co/\"></head><body>" + new string('a', 5000) + "</body></html>";
+
+        Assert.Null(HtmlArticleReader.FindClientRedirect(article, null));
+    }
 }

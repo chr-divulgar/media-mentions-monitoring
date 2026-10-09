@@ -48,6 +48,16 @@ public sealed class WebNewsClockTests
     }
 
     [Fact]
+    public void IsToday_compares_the_published_date_as_printed_without_converting_time_zones()
+    {
+        // 06-oct 00:26 UTC is 05-oct 19:26 in Bogota, but the page says the 6th: that is what counts.
+        var publishedAt = new DateTimeOffset(2026, 10, 6, 0, 26, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 10, 6, 10, 0, 0, Bogota);
+
+        Assert.True(WebNewsClock.IsToday(publishedAt, now));
+    }
+
+    [Fact]
     public void IsToday_is_false_just_after_midnight_bogota_for_yesterdays_article()
     {
         var publishedAt = new DateTimeOffset(2026, 10, 1, 23, 59, 0, Bogota);

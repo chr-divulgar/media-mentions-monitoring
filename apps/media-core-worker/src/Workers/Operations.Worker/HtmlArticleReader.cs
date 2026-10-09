@@ -40,7 +40,10 @@ public sealed partial class HtmlArticleReader : IArticleReader
         this.browser = browser;
     }
 
-    public async Task<ArticleContent> ReadAsync(string url, CancellationToken cancellationToken = default)
+    public Task<ArticleContent> ReadAsync(string url, CancellationToken cancellationToken = default) =>
+        ReadAsync(url, 0, cancellationToken);
+
+    private async Task<ArticleContent> ReadAsync(string url, int redirectHops, CancellationToken cancellationToken)
     {
         try
         {
@@ -65,7 +68,15 @@ public sealed partial class HtmlArticleReader : IArticleReader
                 return new ArticleContent(null, null, null, $"El sitio respondió HTTP {(int)response.StatusCode}");
             }
 
-            return await ParseAsync(html).ConfigureAwait(false);
+            // Link shorteners (t.co) answer 200 with a tiny page that only redirects from the
+            // browser; the real article is one more hop away.
+            if (redirectHops < MaxClientRedirects && FindClientRedirect(html, response.RequestMessage?.RequestUri) is { } target)
+            {
+                logger.LogInformation("[HtmlArticleReader] {Url} is a client-side redirect stub; following to {Target}.", url, target);
+                return await ReadAsync(target, redirectHops + 1, cancellationToken).ConfigureAwait(false);
+            }
+
+            return LogDateSource(url, await ParseAsync(html).ConfigureAwait(false));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -77,6 +88,36 @@ public sealed partial class HtmlArticleReader : IArticleReader
             return new ArticleContent(null, null, null, exception.Message);
         }
     }
+
+    private const int MaxClientRedirects = 2;
+    // A real article is far bigger; only a stub this small is trusted to be "just a redirect".
+    private const int MaxRedirectStubLength = 4000;
+
+    // The target of a <meta http-equiv="refresh"> or location.replace("...") stub, else null.
+    internal static string? FindClientRedirect(string html, Uri? baseUri)
+    {
+        if (html.Length > MaxRedirectStubLength)
+        {
+            return null;
+        }
+
+        var raw = MetaRefreshTarget().Match(html) is { Success: true } meta
+            ? meta.Groups[1].Value
+            : LocationReplaceTarget().Match(html) is { Success: true } script ? script.Groups[1].Value.Replace(@"\/", "/") : null;
+        if (raw is null)
+        {
+            return null;
+        }
+
+        var target = System.Net.WebUtility.HtmlDecode(raw.Trim());
+        return Uri.TryCreate(baseUri, target, out var absolute) && absolute.Scheme is "http" or "https" ? absolute.ToString() : null;
+    }
+
+    [GeneratedRegex(@"http-equiv\s*=\s*[""']?refresh[""']?[^>]*content\s*=\s*[""']\s*\d+\s*;\s*url\s*=\s*([^""'>]+)", RegexOptions.IgnoreCase)]
+    private static partial Regex MetaRefreshTarget();
+
+    [GeneratedRegex(@"location\.(?:replace|href)\s*(?:\(\s*|=\s*)[""']([^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex LocationReplaceTarget();
 
     // The page a real browser passes on its own (a script checks the browser and sets a cookie) but
     // a plain HTTP client never can — no point retrying it the plain way.
@@ -111,7 +152,19 @@ public sealed partial class HtmlArticleReader : IArticleReader
         var html = await browser.GetHtmlAsync(url, cancellationToken).ConfigureAwait(false);
         return html is null
             ? new ArticleContent(null, null, null, $"{Blocked}, también con navegador", Blocked: true)
-            : await ParseAsync(html).ConfigureAwait(false);
+            : LogDateSource(url, await ParseAsync(html).ConfigureAwait(false));
+    }
+
+    private ArticleContent LogDateSource(string url, ArticleContent content)
+    {
+        if (content.PublishedAtSource is not null)
+        {
+            logger.LogWarning(
+                "[HtmlArticleReader] No conventional publish date on {Url}; used {Source}: {PublishedAt:O}.",
+                url, content.PublishedAtSource, content.PublishedAt);
+        }
+
+        return content;
     }
 
     // Internal so the extraction heuristics can be covered with saved HTML fixtures.
@@ -122,6 +175,13 @@ public sealed partial class HtmlArticleReader : IArticleReader
 
         var title = ExtractTitle(document);
         var publishedAt = ExtractPublishedAt(document);
+        string? publishedAtSource = null;
+        if (publishedAt is null && ScanPageTextForDate(document) is { } scanned)
+        {
+            publishedAt = scanned;
+            publishedAtSource = PageTextScanSource;
+        }
+
         var paragraphs = ExtractQualifyingParagraphs(document);
         var metaDescription = paragraphs.Count == 0 ? ExtractMetaContent(document, "og:description") : null;
         var firstParagraph = paragraphs.Count > 0 ? paragraphs[0] : metaDescription;
@@ -138,8 +198,55 @@ public sealed partial class HtmlArticleReader : IArticleReader
             firstParagraph = TruncateAtFirstSentence(firstParagraph);
         }
 
-        return new ArticleContent(title, firstParagraph, publishedAt, null, fullText);
+        return new ArticleContent(title, firstParagraph, publishedAt, null, fullText, PublishedAtSource: publishedAtSource);
     }
+
+    private const string PageTextScanSource = "page-text-scan";
+
+    // ponytail: last resort — first date-like text in the article (or body), no notion of which
+    // date is "the" publish date. Upgrade path: weigh matches by proximity to the title.
+    private static DateTimeOffset? ScanPageTextForDate(IDocument document)
+    {
+        var scope = document.QuerySelector("article") ?? document.Body;
+        if (scope is null)
+        {
+            return null;
+        }
+
+        foreach (var node in scope.QuerySelectorAll("*"))
+        {
+            // Skip script/style content and only look at an element's own text, in document order.
+            if (node.LocalName is "script" or "style" or "noscript")
+            {
+                continue;
+            }
+
+            foreach (var child in node.ChildNodes.Where(n => n.NodeType == NodeType.Text))
+            {
+                foreach (Match match in DateLikeText().Matches(child.TextContent))
+                {
+                    var text = match.Value;
+                    // Exact Spanish formats first: invariant parsing would read "06/10/2026" as June 10.
+                    if (DateTime.TryParseExact(text, SpanishDateFormats, Spanish, DateTimeStyles.None, out var exact))
+                    {
+                        return new DateTimeOffset(exact, BogotaOffset);
+                    }
+
+                    if (TryParseFlexibleDate(text, out var flexible))
+                    {
+                        return flexible;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // ISO (2026-10-06), numeric day-first (06/10/2026) and Spanish month names ("06 Oct 2026",
+    // "6 de octubre de 2026").
+    [GeneratedRegex(@"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}\b|\b\d{1,2}\s+(?:de\s+)?[\p{L}]{3,10}\.?\s+(?:de\s+)?\d{4}\b", RegexOptions.IgnoreCase)]
+    private static partial Regex DateLikeText();
 
     private static string? ExtractTitle(IDocument document)
     {
@@ -170,9 +277,13 @@ public sealed partial class HtmlArticleReader : IArticleReader
         d => d.QuerySelector("meta[name='sailthru.date']")?.GetAttribute("content"),
         d => d.QuerySelector("meta[name='parsely-pub-date']")?.GetAttribute("content"),
         d => d.QuerySelector("meta[name='DC.date.issued']")?.GetAttribute("content"),
+        // Drupal RDFa (seguimiento.co): <span property="dc:date" content="2026-10-05T16:17:00-05:00">.
+        d => d.QuerySelector("[property='dc:date'][content]")?.GetAttribute("content"),
         d => d.QuerySelector("time[datetime]")?.GetAttribute("datetime"),
         // Some sites print the date as a <time> tag's visible text with no datetime attribute at all.
         d => d.QuerySelector("time")?.TextContent,
+        // Themes with no <time> and no meta tags (e.g. revistametro.co) print it as <span class="date">06 Oct 2026</span>.
+        d => d.QuerySelector("span.date")?.TextContent,
     ];
 
     private static DateTimeOffset? ExtractPublishedAt(IDocument document)
