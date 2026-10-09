@@ -18,6 +18,7 @@ import {
   Col,
   Divider,
   TimePicker,
+  Switch,
 } from "antd";
 import dayjs from "dayjs";
 import {
@@ -54,6 +55,7 @@ interface FirebaseUserDto {
   role?: string;
   phone?: string;
   disabled?: boolean;
+  notifyPlatformErrors?: boolean;
 }
 
 // ─── Slot generation helpers ────────────────────────────────────────────────
@@ -758,6 +760,7 @@ const UserModal: React.FC<{
         displayName: initial?.displayName ?? "",
         role: initial?.role ?? "initial",
         phone: initial?.phone ?? "",
+        notifyPlatformErrors: initial?.notifyPlatformErrors ?? false,
         password: "",
       });
     }
@@ -811,6 +814,14 @@ const UserModal: React.FC<{
           ]}
         >
           <Input placeholder="+573001234567" />
+        </Form.Item>
+        <Form.Item
+          name="notifyPlatformErrors"
+          label="Notificar errores de la plataforma"
+          valuePropName="checked"
+          extra="Recibe los avisos de fallos de la plataforma (p. ej. credenciales de YouTube por renovar o WhatsApp desconectado): por WhatsApp si tiene teléfono, por correo como respaldo."
+        >
+          <Switch />
         </Form.Item>
         {!isEdit && (
           <Form.Item
