@@ -92,3 +92,14 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 Nest is [MIT licensed](LICENSE).
 
 python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+## Python (transcripción)
+
+`POST /alerts/getText` ejecuta `scripts/getText.py`, que necesita el paquete `SpeechRecognition`. Se instala una vez en un entorno virtual del proyecto:
+
+```bash
+pnpm --filter web-api setup:python                              # elige Python 3.11/3.12
+pnpm --filter web-api setup:python -Python "C:\ruta\python.exe"  # o uno concreto
+```
+
+La API usa `apps/web-api/.venv` automáticamente; `PYTHON_BIN` en el `.env` fuerza otro intérprete. Si falta el paquete, el editor de alertas lo dice en lugar de mostrar `--error--`.

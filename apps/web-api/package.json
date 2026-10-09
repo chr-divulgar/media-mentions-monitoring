@@ -13,6 +13,8 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "migrate:firestore": "node scripts/migrate-firestore-to-mongo.js",
+    "setup:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-python.ps1",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
