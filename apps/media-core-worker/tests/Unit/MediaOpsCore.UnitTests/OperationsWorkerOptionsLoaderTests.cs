@@ -22,7 +22,6 @@ public sealed class OperationsWorkerOptionsLoaderTests
         // NormalizeConfiguredPaths deliberately resolves these to absolute paths (so the worker
         // finds its config regardless of the process's current working directory) — only the
         // relative suffix is still meaningful to assert on.
-        Assert.EndsWith(Path.Combine("stage", "capture-sources.json"), options.CaptureSourcesFilePath);
         Assert.EndsWith(Path.Combine("stage", "plugin-profiles.json"), options.PluginProfilesFilePath);
         Assert.Equal("radio,video", options.ContinuousMediaAllowList);
         Assert.Equal(64, options.CaptureMaxDegreeOfParallelism);
@@ -109,7 +108,6 @@ public sealed class OperationsWorkerOptionsLoaderTests
             {
               "heartbeatIntervalSeconds": 12,
               "discreteWorkerIntervalSeconds": 45,
-              "captureSourcesFilePath": "stage/capture-sources.json",
               "pluginProfilesFilePath": "stage/plugin-profiles.json",
               "continuousMediaAllowList": "radio",
               "captureMaxDegreeOfParallelism": 12,
@@ -183,55 +181,6 @@ public sealed class OperationsWorkerOptionsLoaderTests
                 File.Delete(tempPath);
             }
         }
-    }
-
-    // Firestore credentials only ever come from environment variables (the same FIREBASE_* names
-    // apps/web-api's service account already uses) — never from worker-options.json, since that
-    // file is checked into the repo and a private key has no business living there.
-    [Fact]
-    public void Load_should_parse_firestore_credentials_from_environment_variables()
-    {
-        using var env = new EnvironmentVariableScope(
-            ("FIREBASE_PROJECT_ID", "media-mentions-monitoring"),
-            ("FIREBASE_CLIENT_EMAIL", "firebase-adminsdk-fbsvc@media-mentions-monitoring.iam.gserviceaccount.com"),
-            ("FIREBASE_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\\nFAKEKEY\\n-----END PRIVATE KEY-----\\n"),
-            ("FIREBASE_FIRESTORE_COLLECTION", "platforms"),
-            ("FIREBASE_REQUEST_TIMEOUT_SECONDS", "20"));
-
-        var options = OperationsWorkerOptionsLoader.Load();
-
-        Assert.NotNull(options.Firestore);
-        Assert.True(options.Firestore!.IsEnabled);
-        Assert.Equal("media-mentions-monitoring", options.Firestore.ProjectId);
-        Assert.Equal("firebase-adminsdk-fbsvc@media-mentions-monitoring.iam.gserviceaccount.com", options.Firestore.ClientEmail);
-        Assert.Equal("platforms", options.Firestore.CollectionPath);
-        Assert.Equal(20, options.Firestore.RequestTimeoutSeconds);
-    }
-
-    [Fact]
-    public void Load_should_leave_Firestore_null_when_no_credentials_are_set()
-    {
-        using var env = new EnvironmentVariableScope(
-            ("FIREBASE_PROJECT_ID", null),
-            ("FIREBASE_CLIENT_EMAIL", null),
-            ("FIREBASE_PRIVATE_KEY", null));
-
-        var options = OperationsWorkerOptionsLoader.Load();
-
-        Assert.Null(options.Firestore);
-    }
-
-    [Fact]
-    public void Load_should_leave_Firestore_null_when_only_some_credentials_are_set()
-    {
-        using var env = new EnvironmentVariableScope(
-            ("FIREBASE_PROJECT_ID", "media-mentions-monitoring"),
-            ("FIREBASE_CLIENT_EMAIL", null),
-            ("FIREBASE_PRIVATE_KEY", null));
-
-        var options = OperationsWorkerOptionsLoader.Load();
-
-        Assert.Null(options.Firestore);
     }
 
     [Fact]

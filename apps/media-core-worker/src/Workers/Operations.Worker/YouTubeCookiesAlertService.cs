@@ -13,11 +13,15 @@ public interface IYouTubeCookiesAlertService
 public sealed class YouTubeCookiesAlertService : IYouTubeCookiesAlertService
 {
     private readonly ILogger<YouTubeCookiesAlertService> logger;
+    // Null when no platform-error notifier is registered.
+    private readonly IPlatformErrorNotifier? platformErrorNotifier;
 
     public YouTubeCookiesAlertService(
         OperationsWorkerOptions options,
-        ILogger<YouTubeCookiesAlertService> logger)
+        ILogger<YouTubeCookiesAlertService> logger,
+        IPlatformErrorNotifier? platformErrorNotifier = null)
     {
+        this.platformErrorNotifier = platformErrorNotifier;
         AlertFilePath = Path.IsPathRooted(options.YoutubeCookiesAlertFilePath)
             ? options.YoutubeCookiesAlertFilePath
             : Path.GetFullPath(options.YoutubeCookiesAlertFilePath);
@@ -31,6 +35,9 @@ public sealed class YouTubeCookiesAlertService : IYouTubeCookiesAlertService
 
     public void WriteAlert(string sourceId, string errorMessage)
     {
+        // The flag stays until an operator deletes it, and this runs for every failing source on
+        // every reconciliation pass: notify once per outage, when the flag first appears.
+        var isNewAlert = !File.Exists(AlertFilePath);
         try
         {
             var dir = Path.GetDirectoryName(AlertFilePath);
@@ -59,6 +66,14 @@ public sealed class YouTubeCookiesAlertService : IYouTubeCookiesAlertService
             logger.LogError(
                 "YouTube auth alert written to '{Path}'. TV capture suspended until cookies are renewed.",
                 AlertFilePath);
+
+            if (isNewAlert && platformErrorNotifier is not null)
+            {
+                _ = platformErrorNotifier.NotifyAsync(
+                    "⚠️ Error de la plataforma: se requiere actualizar manualmente las credenciales (cookies) de YouTube. " +
+                    "Mientras tanto la captura de TV está detenida." + Environment.NewLine + $"Fuente afectada: {sourceId}.",
+                    "Error de plataforma: credenciales de YouTube");
+            }
         }
         catch (Exception ex)
         {

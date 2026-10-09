@@ -4,13 +4,13 @@ public sealed record KeywordAdContext(string Before, string After);
 
 public sealed record KeywordConfig(string Value, IReadOnlyList<KeywordAdContext> Adds, AlertLevel Level = AlertLevel.Informative);
 
-// AlertRecipientsByMedia mirrors Firestore's `clients.alerts` field (packages/shared/models/clients.dto.ts):
+// AlertRecipientsByMedia mirrors the `clients.alerts` field of the config database (packages/shared/models/clients.dto.ts):
 // mediaName -> WhatsApp numbers for that media, for any media type in the `media_types` catalog
 // (internet/radio/tv/prensa/redes), not just radio/tv.
 public sealed record ClientKeywordConfig(
     string Name,
     IReadOnlyList<KeywordConfig> Keywords,
     IReadOnlyDictionary<string, IReadOnlyList<string>> AlertRecipientsByMedia,
-    // mediaName -> email addresses (Firestore `clients.alertEmails`); optional so a client with no
+    // mediaName -> email addresses (`clients.alertEmails`); optional so a client with no
     // email channel configured keeps working exactly as before.
     IReadOnlyDictionary<string, IReadOnlyList<string>>? AlertEmailsByMedia = null);

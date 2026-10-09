@@ -1,0 +1,84 @@
+using MediaOpsCore.Workers.Operations;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace MediaOpsCore.UnitTests;
+
+public sealed class PlatformErrorNotifierTests : IDisposable
+{
+    private readonly string tempDir = Path.Combine(Path.GetTempPath(), $"platform-err-{Guid.NewGuid():N}");
+
+    public void Dispose()
+    {
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
+    }
+
+    [Fact]
+    public void TryMapOptedInUser_keeps_enabled_users_and_their_contact_fields()
+    {
+        var users = new[]
+        {
+            """{ "notifyPlatformErrors": true,  "phone": "+573001112233", "email": "a@x.co" }""",
+            """{ "notifyPlatformErrors": true,  "phone": "", "email": "b@x.co" }""",
+            """{ "notifyPlatformErrors": false, "phone": "+573004445566", "email": "c@x.co" }""",
+            """{ "notifyPlatformErrors": true }""",
+            """{ "phone": "+573007778899" }""",
+        }
+        .Select(json => MongoDocumentMapper.TryMapOptedInUser(MongoDB.Bson.BsonDocument.Parse(json)))
+        .OfType<MongoDocumentMapper.OptedInUser>()
+        .ToArray();
+
+        Assert.Equal(
+            [new MongoDocumentMapper.OptedInUser("+573001112233", "a@x.co"), new MongoDocumentMapper.OptedInUser(null, "b@x.co")],
+            users);
+    }
+
+    [Fact]
+    public void Watchdog_alerts_once_per_outage_after_the_grace_period()
+    {
+        var sut = new WhatsAppConnectionWatchdog(new OperationsWorkerOptions(), new HttpClient(), new CountingNotifier(), NullLogger<WhatsAppConnectionWatchdog>.Instance);
+        var t0 = new DateTimeOffset(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
+
+        Assert.False(sut.Observe(false, t0));
+        Assert.False(sut.Observe(false, t0.AddMinutes(2)));
+        Assert.True(sut.Observe(false, t0.AddMinutes(3)));
+        Assert.False(sut.Observe(false, t0.AddMinutes(10)));
+
+        Assert.False(sut.Observe(true, t0.AddMinutes(11)));
+        Assert.False(sut.Observe(false, t0.AddMinutes(12)));
+        Assert.True(sut.Observe(false, t0.AddMinutes(15)));
+    }
+
+    [Fact]
+    public void WriteAlert_notifies_once_while_the_flag_stays_and_again_after_it_is_cleared()
+    {
+        var notifier = new CountingNotifier();
+        var sut = new YouTubeCookiesAlertService(
+            new OperationsWorkerOptions { YoutubeCookiesAlertFilePath = Path.Combine(tempDir, "flag") },
+            NullLogger<YouTubeCookiesAlertService>.Instance,
+            notifier);
+
+        sut.WriteAlert("rcn_tv", "expired");
+        sut.WriteAlert("caracol_tv", "expired");
+        Assert.Equal(1, notifier.Calls);
+        Assert.Contains("cookies", notifier.LastMessage, StringComparison.OrdinalIgnoreCase);
+
+        sut.ClearAlert();
+        sut.WriteAlert("rcn_tv", "expired again");
+        Assert.Equal(2, notifier.Calls);
+    }
+
+    private sealed class CountingNotifier : IPlatformErrorNotifier
+    {
+        public int Calls { get; private set; }
+        public string LastMessage { get; private set; } = string.Empty;
+
+        public Task NotifyAsync(string message, string subject, bool viaWhatsApp = true, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            LastMessage = message;
+            return Task.CompletedTask;
+        }
+    }
+}

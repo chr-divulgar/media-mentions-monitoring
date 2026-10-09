@@ -21,7 +21,7 @@ public sealed class SourceIncidentTests
 
         var reason = IncidentReason.Humanize(raw);
 
-        Assert.Equal("avformat_open_input failed with FFmpeg error code -5.", reason);
+        Assert.Equal("avformat_open_input failed with FFmpeg error code -5", reason);
     }
 
     [Theory]

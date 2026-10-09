@@ -9,3 +9,6 @@ src/Workers/Operations.Worker/native/win-x64/**/*.exe
 src/Workers/Operations.Worker/sidecar-whatsapp/node_modules/
 publish/
 
+
+publish-staging/
+publish-prev/

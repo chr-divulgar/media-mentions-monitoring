@@ -16,7 +16,6 @@ public static class OperationsWorkerOptionsLoader
     private sealed record WorkerOptionsFileModel(
         int? SegmentationIntervalSeconds,
         int? DiscreteWorkerIntervalSeconds,
-        string? CaptureSourcesFilePath,
         string? PluginProfilesFilePath,
         string? ContinuousMediaAllowList,
         int? CaptureMaxDegreeOfParallelism,
@@ -63,6 +62,7 @@ public static class OperationsWorkerOptionsLoader
         int? StartupDiscoveryRequestTimeoutSeconds,
         string? YtdlpBinDirectory,
         int? YtdlpResolutionTimeoutSeconds,
+        bool? YoutubeLiveProbeEnabled,
         bool? UseBrowserCookies,
         string? BrowserCookiesSource,
         string? YoutubeCookiesFilePath,
@@ -80,7 +80,11 @@ public static class OperationsWorkerOptionsLoader
         int? WebNewsRequestTimeoutSeconds,
         int? WebNewsMaxFailedAttempts,
         bool? DailyHeadlinesEnabled,
-        string? DailyHeadlinesTime);
+        string? DailyHeadlinesTime,
+        bool? ConnectivityCheckEnabled = null,
+        string? ConnectivityCheckUrls = null,
+        int? ConnectivityCheckIntervalSeconds = null,
+        int? ConnectivityCheckTimeoutSeconds = null);
 
     public static OperationsWorkerOptions Load(string? configPath = null)
     {
@@ -115,11 +119,6 @@ public static class OperationsWorkerOptionsLoader
         if (model.DiscreteWorkerIntervalSeconds.HasValue)
         {
             options.DiscreteWorkerInterval = TimeSpan.FromSeconds(model.DiscreteWorkerIntervalSeconds.Value);
-        }
-
-        if (!string.IsNullOrWhiteSpace(model.CaptureSourcesFilePath))
-        {
-            options.CaptureSourcesFilePath = model.CaptureSourcesFilePath;
         }
 
         if (!string.IsNullOrWhiteSpace(model.PluginProfilesFilePath))
@@ -334,6 +333,26 @@ public static class OperationsWorkerOptionsLoader
             options.EnableStartupDiscoveryOnFailedOnly = model.EnableStartupDiscoveryOnFailedOnly.Value;
         }
 
+        if (model.ConnectivityCheckEnabled.HasValue)
+        {
+            options.ConnectivityCheckEnabled = model.ConnectivityCheckEnabled.Value;
+        }
+
+        if (model.ConnectivityCheckUrls is not null)
+        {
+            options.ConnectivityCheckUrls = model.ConnectivityCheckUrls;
+        }
+
+        if (model.ConnectivityCheckIntervalSeconds is > 0)
+        {
+            options.ConnectivityCheckIntervalSeconds = model.ConnectivityCheckIntervalSeconds.Value;
+        }
+
+        if (model.ConnectivityCheckTimeoutSeconds is > 0)
+        {
+            options.ConnectivityCheckTimeoutSeconds = model.ConnectivityCheckTimeoutSeconds.Value;
+        }
+
         if (model.StartupValidationTimeoutSeconds.HasValue)
         {
             options.StartupValidationTimeoutSeconds = model.StartupValidationTimeoutSeconds.Value;
@@ -347,6 +366,11 @@ public static class OperationsWorkerOptionsLoader
         if (!string.IsNullOrWhiteSpace(model.YtdlpBinDirectory))
         {
             options.YtdlpBinDirectory = model.YtdlpBinDirectory;
+        }
+
+        if (model.YoutubeLiveProbeEnabled.HasValue)
+        {
+            options.YoutubeLiveProbeEnabled = model.YoutubeLiveProbeEnabled.Value;
         }
 
         if (model.YtdlpResolutionTimeoutSeconds.HasValue)
@@ -376,35 +400,7 @@ public static class OperationsWorkerOptionsLoader
             options.YoutubeCookiesAlertFilePath = model.YoutubeCookiesAlertFilePath;
         }
 
-        // Same service-account variables apps/web-api already uses for Firestore (FIREBASE_*) —
-        // secrets only ever come from the environment, never from worker-options.json.
-        var firebaseProjectId = Environment.GetEnvironmentVariable("FIREBASE_PROJECT_ID");
-        var firebaseClientEmail = Environment.GetEnvironmentVariable("FIREBASE_CLIENT_EMAIL");
-        var firebasePrivateKey = Environment.GetEnvironmentVariable("FIREBASE_PRIVATE_KEY");
-        var firebaseCollectionPath = Environment.GetEnvironmentVariable("FIREBASE_FIRESTORE_COLLECTION");
-        var firebaseTimeoutSecondsStr = Environment.GetEnvironmentVariable("FIREBASE_REQUEST_TIMEOUT_SECONDS");
-
-        if (!string.IsNullOrWhiteSpace(firebaseProjectId) &&
-            !string.IsNullOrWhiteSpace(firebaseClientEmail) &&
-            !string.IsNullOrWhiteSpace(firebasePrivateKey))
-        {
-            var timeoutSeconds = 15;
-            if (!string.IsNullOrWhiteSpace(firebaseTimeoutSecondsStr) && int.TryParse(firebaseTimeoutSecondsStr, out var envTimeout))
-            {
-                timeoutSeconds = envTimeout;
-            }
-
-            options.Firestore = new FirestoreCaptureSourceRepositoryOptions
-            {
-                ProjectId = firebaseProjectId.Trim(),
-                ClientEmail = firebaseClientEmail.Trim(),
-                PrivateKeyPem = firebasePrivateKey,
-                CollectionPath = string.IsNullOrWhiteSpace(firebaseCollectionPath) ? "platforms" : firebaseCollectionPath.Trim('/'),
-                RequestTimeoutSeconds = timeoutSeconds
-            };
-        }
-
-        // Archive server credentials, like the Firebase/SMTP ones, only ever come from the environment.
+        // Archive server credentials, like the SMTP ones, only ever come from the environment.
         var archiveUrl = Environment.GetEnvironmentVariable("ARCHIVE_FTP_URL");
         var archiveUser = Environment.GetEnvironmentVariable("ARCHIVE_FTP_USER");
         var archivePassword = Environment.GetEnvironmentVariable("ARCHIVE_FTP_PASSWORD");
@@ -412,6 +408,12 @@ public static class OperationsWorkerOptionsLoader
             && !string.IsNullOrWhiteSpace(archiveUser) && archivePassword is not null)
         {
             options.ArchiveFtp = new FtpArchiveCredentials(archiveUrl.Trim(), archiveUser.Trim(), archivePassword);
+        }
+
+        var archivePublicBaseUrl = Environment.GetEnvironmentVariable("ARCHIVE_PUBLIC_BASE_URL");
+        if (!string.IsNullOrWhiteSpace(archivePublicBaseUrl) && Uri.TryCreate(archivePublicBaseUrl.Trim(), UriKind.Absolute, out _))
+        {
+            options.ArchivePublicBaseUrl = archivePublicBaseUrl.Trim();
         }
 
         // Email channel for alerts; like the Firebase credentials, only ever read from the environment.
@@ -524,7 +526,6 @@ public static class OperationsWorkerOptionsLoader
         string applicationRoot,
         string? configDirectory)
     {
-        options.CaptureSourcesFilePath = ResolveConfiguredPath(options.CaptureSourcesFilePath, applicationRoot, configDirectory);
         options.PluginProfilesFilePath = ResolveConfiguredPath(options.PluginProfilesFilePath, applicationRoot, configDirectory);
         options.StageFilesystemRootPath = ResolveConfiguredPath(options.StageFilesystemRootPath, applicationRoot, configDirectory);
         options.YtdlpBinDirectory = ResolveConfiguredPath(options.YtdlpBinDirectory, applicationRoot, configDirectory);

@@ -7,11 +7,16 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 {
     private readonly OperationsWorkerOptions options;
     private readonly ICaptureSourceRepository sourceRepository;
+    private readonly IConnectivityMonitor? connectivity;
     private readonly object syncRoot = new();
     private IReadOnlyList<CaptureSource>? resolvedSources;
 
-    public StaticCaptureSourceProvider(OperationsWorkerOptions options, ICaptureSourceRepository sourceRepository)
+    public StaticCaptureSourceProvider(
+        OperationsWorkerOptions options,
+        ICaptureSourceRepository sourceRepository,
+        IConnectivityMonitor? connectivity = null)
     {
+        this.connectivity = connectivity;
         this.options = options ?? throw new ArgumentNullException(nameof(options));
         this.sourceRepository = sourceRepository ?? throw new ArgumentNullException(nameof(sourceRepository));
     }
@@ -44,6 +49,13 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
         {
             if (resolvedSources is null)
             {
+                // Before the connection has been seen working (startup waits for it) report nothing
+                // yet and try again, rather than keeping a first read taken too early.
+                if (connectivity is { IsOnline: false })
+                {
+                    return [];
+                }
+
                 // Excluded sources are loaded into configuredSources (visible for reconciliation)
                 // but must not start capturing — skip them in the initial resolved set.
                 resolvedSources = sourceRepository
@@ -121,6 +133,13 @@ public sealed class StaticCaptureSourceProvider : ICaptureSourceProvider
 
     public Task<bool> PersistExclusionAsync(string sourceId, bool excluded, CancellationToken cancellationToken = default)
     {
+        // A failure without internet says nothing about the source: saving it as excluded would
+        // leave it out of the catalogue until somebody noticed. It stays excluded in memory only.
+        if (excluded && connectivity is { IsOnline: false })
+        {
+            return Task.FromResult(false);
+        }
+
         return sourceRepository.UpdateExclusionAsync(sourceId, excluded, cancellationToken);
     }
 

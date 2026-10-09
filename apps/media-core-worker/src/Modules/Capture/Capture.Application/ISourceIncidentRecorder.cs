@@ -39,6 +39,11 @@ public static class IncidentKinds
     public const string ArticleFailed = "article-failed";
     public const string SendFailed = "send-failed";
 
+    // ConnectivityMonitor, worker-wide: the machine lost (or never had) its internet connection, and
+    // got it back. While it is out, recovery work is paused and no source is marked excluded.
+    public const string ConnectionLost = "connection-lost";
+    public const string ConnectionRestored = "connection-restored";
+
     /// <summary>Source id for events that concern the whole worker, not one source.</summary>
     public const string WorkerSourceId = "*";
 }

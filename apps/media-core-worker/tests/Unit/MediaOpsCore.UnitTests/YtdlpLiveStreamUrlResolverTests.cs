@@ -230,6 +230,44 @@ public sealed class YtdlpLiveStreamUrlResolverTests
         Assert.Equal(LiveStreamResolutionFailure.BinaryNotFound, result.Failure);
     }
 
+    // ── live page check before yt-dlp ───────────────────────────────────────
+
+    private sealed class FixedProbe(YouTubeLiveStatus status) : IYouTubeLiveProbe
+    {
+        public Task<YouTubeLiveStatus> CheckAsync(string liveUrl, CancellationToken cancellationToken) => Task.FromResult(status);
+    }
+
+    private static YtdlpLiveStreamUrlResolver BuildProbedResolver(YouTubeLiveStatus status, bool probeEnabled = true) =>
+        // The throwing provider makes "yt-dlp was reached" observable: it comes back as BinaryNotFound.
+        new(
+            new ThrowingYtdlpBinaryProvider(),
+            new FakeProcessRunner(),
+            new OperationsWorkerOptions { YtdlpResolutionTimeoutSeconds = 30, YoutubeLiveProbeEnabled = probeEnabled },
+            NullLogger<YtdlpLiveStreamUrlResolver>.Instance,
+            new FixedProbe(status));
+
+    [Fact]
+    public async Task A_channel_the_live_page_says_is_not_live_never_reaches_ytdlp()
+    {
+        var result = await BuildProbedResolver(YouTubeLiveStatus.NotLive)
+            .TryResolveStreamUrlAsync(MakeSource(primaryUrl: YoutubeChannelUrl));
+
+        Assert.Equal(LiveStreamResolutionFailure.Unavailable, result.Failure);
+        Assert.Equal("El canal no está en vivo", result.Detail);
+    }
+
+    [Theory]
+    [InlineData(YouTubeLiveStatus.Live, true)]
+    [InlineData(YouTubeLiveStatus.Unknown, true)]
+    [InlineData(YouTubeLiveStatus.NotLive, false)]
+    public async Task Live_unknown_or_a_disabled_probe_still_go_to_ytdlp(YouTubeLiveStatus status, bool probeEnabled)
+    {
+        var result = await BuildProbedResolver(status, probeEnabled)
+            .TryResolveStreamUrlAsync(MakeSource(primaryUrl: YoutubeChannelUrl));
+
+        Assert.Equal(LiveStreamResolutionFailure.BinaryNotFound, result.Failure);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private static YtdlpLiveStreamUrlResolver BuildResolver(

@@ -27,9 +27,8 @@ public sealed class StaticCaptureSourceProviderCanaryTests
             {
                 EnableCanaryMode = false,
                 ContinuousMediaAllowList = "radio,video",
-                CaptureSourcesFilePath = tempFilePath
             };
-            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
+            var provider = new StaticCaptureSourceProvider(opts, new FileBackedCaptureSourceRepository(tempFilePath));
 
             var sources = await provider.ListActiveSourcesAsync();
 
@@ -71,9 +70,8 @@ public sealed class StaticCaptureSourceProviderCanaryTests
                 CanaryPlatformMaxPercent = 20,
                 CanaryPlatformPercent = 20,
                 ContinuousMediaAllowList = "radio,video",
-                CaptureSourcesFilePath = tempFilePath
             };
-            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
+            var provider = new StaticCaptureSourceProvider(opts, new FileBackedCaptureSourceRepository(tempFilePath));
 
             var sources = await provider.ListActiveSourcesAsync();
 
@@ -112,9 +110,8 @@ public sealed class StaticCaptureSourceProviderCanaryTests
                 CanaryPlatformPercent = 20,
                 CanaryPlatformAllowList = "rcn",
                 ContinuousMediaAllowList = "radio,video",
-                CaptureSourcesFilePath = tempFilePath
             };
-            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
+            var provider = new StaticCaptureSourceProvider(opts, new FileBackedCaptureSourceRepository(tempFilePath));
 
             var sources = await provider.ListActiveSourcesAsync();
 
@@ -155,9 +152,8 @@ public sealed class StaticCaptureSourceProviderCanaryTests
             {
                 EnableCanaryMode = false,
                 ContinuousMediaAllowList = "radio",
-                CaptureSourcesFilePath = tempFilePath
             };
-            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
+            var provider = new StaticCaptureSourceProvider(opts, new FileBackedCaptureSourceRepository(tempFilePath));
 
             var sources = await provider.ListConfiguredSourcesAsync();
 
@@ -196,9 +192,8 @@ public sealed class StaticCaptureSourceProviderCanaryTests
             var opts = new OperationsWorkerOptions
             {
                 EnableCanaryMode = false,
-                CaptureSourcesFilePath = tempFilePath
             };
-            var provider = new StaticCaptureSourceProvider(opts, new JsonFileCaptureSourceRepository(opts));
+            var provider = new StaticCaptureSourceProvider(opts, new FileBackedCaptureSourceRepository(tempFilePath));
 
             var sources = await provider.ListConfiguredSourcesAsync();
 

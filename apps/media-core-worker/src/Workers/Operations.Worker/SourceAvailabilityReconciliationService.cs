@@ -10,9 +10,9 @@ namespace MediaOpsCore.Workers.Operations;
 public sealed class SourceAvailabilityReconciliationService : BackgroundService, ICaptureAttemptObserver, IYouTubeReconciliationTrigger
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(1);
-    // Minute 0 is included so that sources excluded at :59 are retried at the very
-    // start of the next hour rather than waiting until :01 or :30.
-    private static readonly HashSet<int> ScheduledReconciliationMinutes = [0, 1, 30, 59];
+    // Excluded sources are retried on every tick (each minute). Radio is a quick connection test and
+    // a TV channel is first checked with a plain request (YouTubeLiveProbe), so this is cheap.
+    private const int RetryParallelism = 4;
 
     private readonly StaticCaptureSourceProvider captureSourceProvider;
     private readonly IStartupStreamValidator streamValidator;
@@ -22,6 +22,13 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     private readonly IYouTubeCookiesAlertService cookiesAlertService;
     private readonly ILogger<SourceAvailabilityReconciliationService> logger;
     private readonly ISourceIncidentRecorder incidents;
+    private readonly IConnectivityMonitor? connectivity;
+    // The scheduled pass and the one run when the connection returns must not overlap.
+    private readonly SemaphoreSlim excludedPassGate = new(1, 1);
+    // One short story per outage instead of a log line and an incident per failed minute.
+    private readonly OutageSummaryTracker outages;
+    private string lastPassSummary = string.Empty;
+    private DateTimeOffset lastPassSummaryAt = DateTimeOffset.MinValue;
 
     private readonly ConcurrentDictionary<string, byte> inFlightHotRecovery = new(StringComparer.OrdinalIgnoreCase);
     // Resolved sources found with a stopped session on the previous tick — see RecoverSilentlyStoppedSourcesAsync.
@@ -36,8 +43,11 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
         ILiveStreamUrlResolver liveStreamUrlResolver,
         IYouTubeCookiesAlertService cookiesAlertService,
         ILogger<SourceAvailabilityReconciliationService> logger,
-        ISourceIncidentRecorder? incidents = null)
+        ISourceIncidentRecorder? incidents = null,
+        IConnectivityMonitor? connectivity = null)
     {
+        this.connectivity = connectivity;
+        outages = new OutageSummaryTracker(logger, TimeSpan.FromHours(-5));
         this.captureSourceProvider = captureSourceProvider;
         this.streamValidator = streamValidator;
         this.pluginResolver = pluginResolver;
@@ -92,7 +102,12 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         serviceStopping = stoppingToken;
-        logger.LogInformation("Source availability reconciliation service started. Scheduled checks at minutes {Minutes}.", string.Join(",", ScheduledReconciliationMinutes.OrderBy(value => value)));
+        if (connectivity is not null)
+        {
+            connectivity.CameOnline += OnConnectionRestored;
+        }
+
+        logger.LogInformation("Source availability reconciliation service started. Excluded sources are retried every minute.");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -127,14 +142,46 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                 break;
             }
         }
+
+        if (connectivity is not null)
+        {
+            connectivity.CameOnline -= OnConnectionRestored;
+        }
+    }
+
+    // The connection is back after an outage: recover every excluded source now (radio and TV)
+    // instead of waiting for the next :00/:01/:30/:59 slot, and let any session that stopped
+    // meanwhile be picked up on the next tick.
+    private void OnConnectionRestored()
+    {
+        logger.LogInformation("Internet connection returned; recovering the excluded sources now.");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var configuredSources = await captureSourceProvider.ListConfiguredSourcesAsync(serviceStopping).ConfigureAwait(false);
+                await RunExcludedSourcesPassAsync(configuredSources, "reconnection", "Recuperada al volver la conexión", serviceStopping, waitForTurn: true)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogError(exception, "Recovery after the internet connection returned failed.");
+            }
+        });
     }
 
     // Safety net for any session that stops without reporting a failure: the source stays in the
     // resolved list, so scheduled reconciliation (which only looks at non-resolved sources) never
-    // retries it and it stays down for good. In-memory only — no Firestore traffic — so it runs on
+    // retries it and it stays down for good. In-memory only — no database traffic — so it runs on
     // every tick.
     private async Task RecoverSilentlyStoppedSourcesAsync(CancellationToken cancellationToken)
     {
+        // Offline nothing can be reconnected; the connection's return triggers the recovery.
+        if (connectivity is { IsOnline: false })
+        {
+            return;
+        }
+
         // Same filtered set ContinuousCaptureUseCase starts sessions for (media allow-list, canary)
         // — a resolved source outside it never gets a session and must not be "recovered" forever.
         var resolved = await captureSourceProvider.ListActiveSourcesAsync(cancellationToken).ConfigureAwait(false);
@@ -232,6 +279,19 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
             while (!serviceStopping.IsCancellationRequested)
             {
+                // No attempt counts, and no "retry-failed" is recorded, while there is no internet.
+                if (connectivity is { IsOnline: false })
+                {
+                    try
+                    {
+                        await connectivity.WaitUntilOnlineAsync(serviceStopping).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                }
+
                 attempt++;
 
                 // Validate conservative fallbacks — no exclusion persisted on each failed attempt.
@@ -240,7 +300,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
                 if (recovered is not null)
                 {
-                    incidents.Record(recovered.SourceId, IncidentKinds.Recovered, $"Reconectada en el intento {attempt}");
+                    RecordRecovery(recovered.SourceId, $"Reconectada en el intento {attempt}");
                     captureSourceProvider.AddOrUpdateResolvedSource(recovered);
                     await captureSourceProvider
                         .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, CancellationToken.None)
@@ -261,7 +321,7 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
                     return;
                 }
 
-                incidents.Record(failedSource.SourceId, IncidentKinds.RetryFailed, failureReason);
+                RecordRetryFailure(failedSource.SourceId, failureReason);
 
                 var sourceNow = DateTimeOffset.UtcNow.ToOffset(sourceOffset);
 
@@ -345,11 +405,11 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             var (recovered, failureReason) = await TryRecoverSourceAsync(source, cancellationToken).ConfigureAwait(false);
             if (recovered is null)
             {
-                incidents.Record(source.SourceId, IncidentKinds.RetryFailed, failureReason);
+                RecordRetryFailure(source.SourceId, failureReason);
                 continue;
             }
 
-            incidents.Record(recovered.SourceId, IncidentKinds.Recovered, "Recuperada al renovar las cookies");
+            RecordRecovery(recovered.SourceId, "Recuperada al renovar las cookies");
 
             captureSourceProvider.AddOrUpdateResolvedSource(recovered);
             await captureSourceProvider
@@ -372,13 +432,53 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
     private async Task ReconcileExcludedAtScheduledMinutesAsync(CancellationToken cancellationToken)
     {
-        var configuredSources = await captureSourceProvider.ListConfiguredSourcesAsync(cancellationToken).ConfigureAwait(false);
-        var operationalNow = ResolveOperationalNow(configuredSources);
-        if (!ScheduledReconciliationMinutes.Contains(operationalNow.Minute))
+        // Offline every retry would fail for the wrong reason; the pass runs when the connection returns.
+        if (connectivity is { IsOnline: false })
         {
             return;
         }
 
+        var configuredSources = await captureSourceProvider.ListConfiguredSourcesAsync(cancellationToken).ConfigureAwait(false);
+        var operationalNow = ResolveOperationalNow(configuredSources);
+        await RunExcludedSourcesPassAsync(
+            configuredSources,
+            $"minute {operationalNow.Minute}",
+            $"Recuperada en la revisión de las :{operationalNow.Minute:00}",
+            cancellationToken,
+            waitForTurn: false).ConfigureAwait(false);
+    }
+
+    // Retries every configured source that is not capturing (radio and TV). Shared by the scheduled
+    // pass and the one that follows a lost connection. A pass already running is not doubled up: the
+    // scheduled one skips, the reconnection one waits its turn.
+    private async Task RunExcludedSourcesPassAsync(
+        IReadOnlyList<CaptureSource> configuredSources,
+        string label,
+        string recoveredReason,
+        CancellationToken cancellationToken,
+        bool waitForTurn)
+    {
+        if (!await excludedPassGate.WaitAsync(waitForTurn ? Timeout.InfiniteTimeSpan : TimeSpan.Zero, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        try
+        {
+            await RunExcludedSourcesPassCoreAsync(configuredSources, label, recoveredReason, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            excludedPassGate.Release();
+        }
+    }
+
+    private async Task RunExcludedSourcesPassCoreAsync(
+        IReadOnlyList<CaptureSource> configuredSources,
+        string label,
+        string recoveredReason,
+        CancellationToken cancellationToken)
+    {
         var resolvedIds = captureSourceProvider
             .ListResolvedSources()
             .Select(source => source.SourceId)
@@ -392,65 +492,99 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
 
         if (excludedSources.Length == 0)
         {
-            logger.LogInformation("Scheduled excluded-source reconciliation at minute {Minute} finished. Recovered=0, StillExcluded=0.", operationalNow.Minute);
+            logger.LogInformation("Excluded-source reconciliation ({Label}) finished. Recovered=0, StillExcluded=0.", label);
             return;
         }
 
-        var recoveredIds = new List<string>();
-        var stillExcludedIds = new List<string>();
+        var recoveredIds = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var stillExcludedIds = new System.Collections.Concurrent.ConcurrentBag<string>();
 
-        foreach (var source in excludedSources)
-        {
-            var (recovered, failureReason) = await TryRecoverSourceAsync(source, cancellationToken).ConfigureAwait(false);
-            if (recovered is null)
+        await Parallel.ForEachAsync(
+            excludedSources,
+            new ParallelOptions { MaxDegreeOfParallelism = RetryParallelism, CancellationToken = cancellationToken },
+            async (source, token) =>
             {
-                incidents.Record(source.SourceId, IncidentKinds.RetryFailed, failureReason);
-                stillExcludedIds.Add(source.SourceId);
-                continue;
-            }
+                var (recovered, failureReason) = await TryRecoverSourceAsync(source, token).ConfigureAwait(false);
+                if (recovered is null)
+                {
+                    RecordRetryFailure(source.SourceId, failureReason);
+                    stillExcludedIds.Add(source.SourceId);
+                    return;
+                }
 
-            incidents.Record(recovered.SourceId, IncidentKinds.Recovered, $"Recuperada en la revisión de las :{operationalNow.Minute:00}");
+                RecordRecovery(recovered.SourceId, recoveredReason);
 
-            captureSourceProvider.AddOrUpdateResolvedSource(recovered);
-            await captureSourceProvider
-                .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, cancellationToken)
-                .ConfigureAwait(false);
-            await captureSourceProvider
-                .PersistExclusionAsync(recovered.SourceId, false, cancellationToken)
-                .ConfigureAwait(false);
-            recoveredIds.Add(source.SourceId);
-            _ = Task.Run(() => TriggerCaptureAsync(recovered), CancellationToken.None);
-        }
+                captureSourceProvider.AddOrUpdateResolvedSource(recovered);
+                await captureSourceProvider
+                    .PersistStreamUrlAsync(recovered.SourceId, recovered.StreamUrl, token)
+                    .ConfigureAwait(false);
+                await captureSourceProvider
+                    .PersistExclusionAsync(recovered.SourceId, false, token)
+                    .ConfigureAwait(false);
+                recoveredIds.Add(source.SourceId);
+                _ = Task.Run(() => TriggerCaptureAsync(recovered), CancellationToken.None);
+            }).ConfigureAwait(false);
 
-        logger.LogInformation(
-            "Scheduled excluded-source reconciliation at minute {Minute} finished. Recovered={RecoveredCount} [{RecoveredIds}] StillExcluded={StillExcludedCount} [{StillExcludedIds}]",
-            operationalNow.Minute,
-            recoveredIds.Count,
-            string.Join(",", recoveredIds),
-            stillExcludedIds.Count,
-            string.Join(",", stillExcludedIds));
-
-        // Emit a TV-specific status board whenever TV sources are involved so operators can track them at a glance
-        var tvResolved = captureSourceProvider.ListResolvedSources()
-            .Where(s => liveStreamUrlResolver.CanResolve(s))
-            .Select(s => s.SourceId)
-            .ToList();
-        var tvExcluded = configuredSources
-            .Where(s => liveStreamUrlResolver.CanResolve(s) && !tvResolved.Contains(s.SourceId, StringComparer.OrdinalIgnoreCase))
-            .Select(s => s.SourceId)
-            .ToList();
-
-        if (tvResolved.Count > 0 || tvExcluded.Count > 0)
+        // The same "still excluded" board every minute says nothing new: log when it changes, and
+        // once an hour otherwise.
+        var recoveredList = recoveredIds.Order().ToArray();
+        var stillExcludedList = stillExcludedIds.Order().ToArray();
+        var summary = $"{string.Join(",", recoveredList)}|{string.Join(",", stillExcludedList)}";
+        var now = DateTimeOffset.UtcNow;
+        if (recoveredList.Length > 0 || summary != lastPassSummary || now - lastPassSummaryAt >= TimeSpan.FromHours(1))
         {
-            var authAlertActive = cookiesAlertService.AlertExists();
+            lastPassSummary = summary;
+            lastPassSummaryAt = now;
+
             logger.LogInformation(
-                "TV source status — Active={ActiveCount} [{ActiveIds}] Excluded={ExcludedCount} [{ExcludedIds}]{AuthAlert}",
-                tvResolved.Count,
-                string.Join(",", tvResolved),
-                tvExcluded.Count,
-                string.Join(",", tvExcluded),
-                authAlertActive ? " [AUTH ALERT ACTIVE — renew cookies]" : "");
+                "Excluded-source reconciliation ({Label}) finished. Recovered={RecoveredCount} [{RecoveredIds}] StillExcluded={StillExcludedCount} [{StillExcludedIds}]",
+                label,
+                recoveredList.Length,
+                string.Join(",", recoveredList),
+                stillExcludedList.Length,
+                string.Join(",", stillExcludedList));
+
+            // TV-specific status board so operators can track the channels at a glance
+            var tvResolved = captureSourceProvider.ListResolvedSources()
+                .Where(s => liveStreamUrlResolver.CanResolve(s))
+                .Select(s => s.SourceId)
+                .ToList();
+            var tvExcluded = configuredSources
+                .Where(s => liveStreamUrlResolver.CanResolve(s) && !tvResolved.Contains(s.SourceId, StringComparer.OrdinalIgnoreCase))
+                .Select(s => s.SourceId)
+                .ToList();
+
+            if (tvResolved.Count > 0 || tvExcluded.Count > 0)
+            {
+                var authAlertActive = cookiesAlertService.AlertExists();
+                logger.LogInformation(
+                    "TV source status - Active={ActiveCount} [{ActiveIds}] Excluded={ExcludedCount} [{ExcludedIds}]{AuthAlert}",
+                    tvResolved.Count,
+                    string.Join(",", tvResolved),
+                    tvExcluded.Count,
+                    string.Join(",", tvExcluded),
+                    authAlertActive ? " [AUTH ALERT ACTIVE - renew cookies]" : "");
+            }
         }
+    }
+
+    // A failed retry is recorded as an incident (and logged) only when it is new: the first failure
+    // of an outage or a change of reason. The minutes in between are summarised on recovery.
+    private void RecordRetryFailure(string sourceId, string? reason)
+    {
+        if (outages.RecordFailure(sourceId, reason))
+        {
+            incidents.Record(sourceId, IncidentKinds.RetryFailed, reason);
+        }
+    }
+
+    private void RecordRecovery(string sourceId, string recoveredReason)
+    {
+        var summary = outages.RecordRecovery(sourceId);
+        incidents.Record(
+            sourceId,
+            IncidentKinds.Recovered,
+            summary is null ? recoveredReason : $"{recoveredReason}. Estuvo sin servicio: {summary}");
     }
 
     private static DateTimeOffset ResolveOperationalNow(IReadOnlyList<CaptureSource> configuredSources)

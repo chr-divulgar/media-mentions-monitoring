@@ -47,7 +47,8 @@ public static partial class IncidentReason
             return null;
         }
 
-        var text = ExceptionPrefix().Replace(firstLine, string.Empty);
+        // Trailing periods go: callers put the reason inside their own sentence.
+        var text = ExceptionPrefix().Replace(firstLine, string.Empty).TrimEnd('.', ' ');
 
         if (text.StartsWith("Stream ended (EOF)", StringComparison.OrdinalIgnoreCase))
         {

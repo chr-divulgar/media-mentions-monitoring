@@ -40,13 +40,12 @@ public sealed class StartupSourceInitializationServiceTests
 
             var options = new OperationsWorkerOptions
             {
-                CaptureSourcesFilePath = tempFilePath,
                 EnableCanaryMode = false,
                 EnableStartupValidation = true,
                 EnableStartupDiscoveryOnFailedOnly = true
             };
 
-            var provider = new StaticCaptureSourceProvider(options, new JsonFileCaptureSourceRepository(options));
+            var provider = new StaticCaptureSourceProvider(options, new FileBackedCaptureSourceRepository(tempFilePath));
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
             {
                 ["https://ok.example.com/live.aac"] = true,
@@ -117,13 +116,12 @@ public sealed class StartupSourceInitializationServiceTests
 
             var options = new OperationsWorkerOptions
             {
-                CaptureSourcesFilePath = tempFilePath,
                 EnableCanaryMode = false,
                 EnableStartupValidation = true,
                 EnableStartupDiscoveryOnFailedOnly = true
             };
 
-            var provider = new StaticCaptureSourceProvider(options, new JsonFileCaptureSourceRepository(options));
+            var provider = new StaticCaptureSourceProvider(options, new FileBackedCaptureSourceRepository(tempFilePath));
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
             {
                 ["https://ok.example.com/live.aac"] = true,
@@ -190,13 +188,12 @@ public sealed class StartupSourceInitializationServiceTests
 
             var options = new OperationsWorkerOptions
             {
-                CaptureSourcesFilePath = tempFilePath,
                 EnableCanaryMode = false,
                 EnableStartupValidation = true,
                 EnableStartupDiscoveryOnFailedOnly = true
             };
 
-            var provider = new StaticCaptureSourceProvider(options, new JsonFileCaptureSourceRepository(options));
+            var provider = new StaticCaptureSourceProvider(options, new FileBackedCaptureSourceRepository(tempFilePath));
             var discoveredTokenizedUrl = "https://stream-177.zeno.fm/t8sz23cfhfhvv?zt=eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4OTM0NTYwMDB9.signature";
 
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
@@ -254,13 +251,12 @@ public sealed class StartupSourceInitializationServiceTests
 
             var options = new OperationsWorkerOptions
             {
-                CaptureSourcesFilePath = tempFilePath,
                 EnableCanaryMode = false,
                 EnableStartupValidation = true,
                 EnableStartupDiscoveryOnFailedOnly = true
             };
 
-            var provider = new StaticCaptureSourceProvider(options, new JsonFileCaptureSourceRepository(options));
+            var provider = new StaticCaptureSourceProvider(options, new FileBackedCaptureSourceRepository(tempFilePath));
             var validator = new FakeValidator(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
             {
                 ["https://bad.example.com/live.aac"] = false,

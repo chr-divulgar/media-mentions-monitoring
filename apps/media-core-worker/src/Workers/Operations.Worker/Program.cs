@@ -28,6 +28,11 @@ builder.Services.AddSingleton(options);
 
 // Add hosted service for YouTube cookies HTTP endpoint
 builder.Services.AddSingleton<VideoSegmentService>();
+// Internet access comes first: registered before every other hosted service so it is the first one
+// started, and Program waits on it (below) before touching any source. See ConnectivityMonitor.
+builder.Services.AddSingleton<ConnectivityMonitor>();
+builder.Services.AddSingleton<IConnectivityMonitor>(sp => sp.GetRequiredService<ConnectivityMonitor>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ConnectivityMonitor>());
 builder.Services.AddSingleton<YouTubeCookiesHttpService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<YouTubeCookiesHttpService>());
 // Archive of closed TV video: upload to the server, and only then let the purge delete it. The
@@ -42,6 +47,23 @@ if (options.IsArchiveActive)
 {
 	builder.Services.AddSingleton<IArchiveStorage, FtpArchiveStorage>();
 	builder.Services.AddHostedService<ArchiveUploadWorker>();
+}
+// One headless Chromium shared by the anti-bot fallback of HtmlArticleReader and the note PDFs.
+if (options.HeadlessBrowserEnabled)
+{
+	builder.Services.AddSingleton(sp => new HeadlessBrowser(
+		options.HeadlessBrowserPath,
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HeadlessBrowser>>()));
+}
+// PDF copy of a web note (RQ-014): needs the archive, its public https base URL and the browser.
+if (options.IsArchiveActive && options.ArchivePublicBaseUrl is not null && options.HeadlessBrowserEnabled)
+{
+	builder.Services.AddSingleton(sp => new NotePdfService(
+		sp.GetRequiredService<HeadlessBrowser>(),
+		sp.GetRequiredService<IArchiveStorage>(),
+		options.ArchivePublicBaseUrl,
+		Path.Combine(options.StageFilesystemRootPath, "note-pdf"),
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<NotePdfService>>()));
 }
 builder.Services.AddHostedService(sp => new RetentionPurgeWorker(
 	options,
@@ -59,32 +81,14 @@ builder.Services.AddSingleton<IOperationalMetrics, MeterOperationalMetrics>();
 builder.Services.AddSingleton(new SourceIncidentLog(Path.Combine(options.StageFilesystemRootPath, "monitoringArtifacts")));
 builder.Services.AddSingleton<ISourceIncidentRecorder>(sp => sp.GetRequiredService<SourceIncidentLog>());
 builder.Services.AddSingleton<ISourceIncidentReader>(sp => sp.GetRequiredService<SourceIncidentLog>());
-// Capture source repositories: Firestore primary (when configured, same "platforms" collection
-// and service account apps/web-api already uses) + JSON file fallback.
-builder.Services.AddSingleton<JsonFileCaptureSourceRepository>();
-if (options.Firestore?.IsEnabled == true)
-{
-    var firestoreOptions = options.Firestore;
-    builder.Services.AddSingleton(firestoreOptions);
-    builder.Services.AddSingleton(sp => new GoogleServiceAccountTokenProvider(
-        sp.GetRequiredService<HttpClient>(),
-        firestoreOptions.ClientEmail!,
-        firestoreOptions.PrivateKeyPem!));
-    builder.Services.AddSingleton<FirestoreCaptureSourceRepository>();
-    // Capture coverage audit trail: one document per clock hour in the same Firestore project.
-    builder.Services.AddSingleton<FirestoreCaptureSummaryStore>();
-    builder.Services.AddHostedService<CaptureSummaryArchiveWorker>();
-    builder.Services.AddSingleton<ICaptureSourceRepository>(sp =>
-        new FallbackCaptureSourceRepository(
-            sp.GetRequiredService<FirestoreCaptureSourceRepository>(),
-            sp.GetRequiredService<JsonFileCaptureSourceRepository>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FallbackCaptureSourceRepository>>()));
-}
-else
-{
-    builder.Services.AddSingleton<ICaptureSourceRepository>(sp =>
-        sp.GetRequiredService<JsonFileCaptureSourceRepository>());
-}
+// The configuration lives in the local MongoDB (`config` database): the capture sources
+// (`platforms`), the clients and the backup copy of the users. apps/web-api writes it through its
+// settings screens; there is no file or Firestore catalogue any more.
+builder.Services.AddSingleton<MongoConfigStore>();
+builder.Services.AddSingleton<ICaptureSourceRepository, MongoCaptureSourceRepository>();
+// Capture coverage audit trail: one document per clock hour.
+builder.Services.AddSingleton<ICaptureSummaryStore, MongoCaptureSummaryStore>();
+builder.Services.AddHostedService<CaptureSummaryArchiveWorker>();
 builder.Services.AddSingleton<StaticCaptureSourceProvider>();
 builder.Services.AddSingleton<ICaptureSourceProvider>(sp => sp.GetRequiredService<StaticCaptureSourceProvider>());
 builder.Services.AddSingleton<IStartupStreamValidator, FfmpegStartupStreamValidator>();
@@ -93,6 +97,17 @@ builder.Services.AddSingleton<IStartupSourceDiscoveryService, HttpStartupSourceD
 builder.Services.AddSingleton<IProcessRunner, LocalSystemProcessRunner>();
 builder.Services.AddSingleton<YtdlpBinaryProvider>();
 builder.Services.AddSingleton<IYtdlpBinaryProvider>(sp => sp.GetRequiredService<YtdlpBinaryProvider>());
+// Users who opted in (Settings > Usuarios) get a WhatsApp when the platform itself needs a human.
+builder.Services.AddSingleton<IPlatformErrorNotifier>(sp => new PlatformErrorNotifier(
+	sp.GetRequiredService<MongoConfigStore>(),
+	sp.GetRequiredService<HttpWhatsAppAlertNotifier>(),
+	options.Smtp is null ? null : sp.GetRequiredService<SmtpAlertEmailNotifier>(),
+	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PlatformErrorNotifier>>()));
+builder.Services.AddHostedService(sp => new WhatsAppConnectionWatchdog(
+	options,
+	sp.GetRequiredService<HttpClient>(),
+	sp.GetRequiredService<IPlatformErrorNotifier>(),
+	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<WhatsAppConnectionWatchdog>>()));
 builder.Services.AddSingleton<IYouTubeCookiesAlertService, YouTubeCookiesAlertService>();
 builder.Services.AddSingleton<IYouTubeCookiesValidator, YouTubeCookiesValidator>();
 builder.Services.AddSingleton<IYouTubeHealthSnapshotProvider, YouTubeHealthSnapshotProvider>();
@@ -103,6 +118,7 @@ builder.Services.AddSingleton<ICaptureStatusSnapshotProvider>(sp => new CaptureS
 	sp.GetRequiredService<ILiveCaptureProgressReader>(),
 	sp.GetService<ISourceIncidentReader>(),
 	options.WebNewsEnabled));
+builder.Services.AddSingleton<IYouTubeLiveProbe>(sp => new YouTubeLiveProbe(sp.GetRequiredService<HttpClient>()));
 builder.Services.AddSingleton<YtdlpLiveStreamUrlResolver>();
 builder.Services.AddSingleton<ILiveStreamUrlResolver>(sp => sp.GetRequiredService<YtdlpLiveStreamUrlResolver>());
 if (options.TvVideoEnabled)
@@ -127,30 +143,8 @@ builder.Services.AddSingleton(new MongoAlertingOptions
 	MonitoringDatabaseName = options.MongoMonitoringDatabaseName,
 	AlertCollectionName = options.MongoAlertCollectionName
 });
-// Client/keyword config (for alert detection) comes from the same Firestore "clients" collection
-// apps/web-api already manages — the config operators actually edit today. No local Mongo
-// fallback: see NullClientConfigRepository's own doc comment for why.
-if (options.Firestore?.IsEnabled == true)
-{
-	var clientConfigFirestoreOptions = new FirestoreCaptureSourceRepositoryOptions
-	{
-		ProjectId = options.Firestore.ProjectId,
-		ClientEmail = options.Firestore.ClientEmail,
-		PrivateKeyPem = options.Firestore.PrivateKeyPem,
-		CollectionPath = "clients",
-		RequestTimeoutSeconds = options.Firestore.RequestTimeoutSeconds
-	};
-	builder.Services.AddSingleton<IClientConfigRepository>(sp => new FirestoreClientConfigRepository(
-		sp.GetRequiredService<HttpClient>(),
-		sp.GetRequiredService<GoogleServiceAccountTokenProvider>(),
-		clientConfigFirestoreOptions,
-		sp.GetRequiredService<ICaptureSourceProvider>(),
-		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FirestoreClientConfigRepository>>()));
-}
-else
-{
-	builder.Services.AddSingleton<IClientConfigRepository, NullClientConfigRepository>();
-}
+// Client/keyword config (for alert detection): the `config.clients` collection apps/web-api manages.
+builder.Services.AddSingleton<IClientConfigRepository, MongoClientConfigRepository>();
 builder.Services.AddSingleton<MongoAlertRepository>();
 builder.Services.AddSingleton<IAlertRepository>(sp => sp.GetRequiredService<MongoAlertRepository>());
 builder.Services.AddSingleton<IDailyHeadlinesSource>(sp => sp.GetRequiredService<MongoAlertRepository>());
@@ -219,12 +213,6 @@ if (options.WebNewsEnabled)
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GoogleNewsLinkResolver>>()));
-	if (options.HeadlessBrowserEnabled)
-	{
-		builder.Services.AddSingleton(sp => new HeadlessBrowser(
-			options.HeadlessBrowserPath,
-			sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HeadlessBrowser>>()));
-	}
 	builder.Services.AddSingleton<IArticleReader>(sp => new HtmlArticleReader(
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
@@ -276,6 +264,16 @@ host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping
 // (error 1053) waiting for a status update that used to only arrive at host.RunAsync(), at the
 // very end of this file.
 await host.StartAsync();
+
+// First thing the worker does: make sure there is internet. Without it the source catalogue would
+// come from the stale local copy and every source would fail validation and be marked excluded, so
+// the worker waits here (the monitor retries every minute) and carries on once the connection is up.
+// After StartAsync on purpose: that is what tells the Service Control Manager the service is running.
+await host.Services.GetRequiredService<IConnectivityMonitor>().WaitUntilOnlineAsync();
+
+// The configuration is in the local MongoDB: it may still be starting when the machine boots.
+await host.Services.GetRequiredService<MongoConfigStore>()
+	.WaitUntilReadyAsync(host.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<MongoConfigStore>>());
 
 // Pre-warm yt-dlp binary resolution so it is ready before the first TV source capture.
 // Logs a warning and continues if yt-dlp cannot be found or downloaded.

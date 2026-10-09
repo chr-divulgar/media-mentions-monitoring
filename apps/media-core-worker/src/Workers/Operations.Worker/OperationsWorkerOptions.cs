@@ -68,6 +68,10 @@ public sealed class OperationsWorkerOptions
     // From ARCHIVE_FTP_URL / _USER / _PASSWORD only — never from worker-options.json.
     public FtpArchiveCredentials? ArchiveFtp { get; set; }
 
+    // From ARCHIVE_PUBLIC_BASE_URL only: the https address under which the archive's FTP folder is
+    // published, so a note's PDF gets a link anyone with access can open. Null disables note PDFs.
+    public string? ArchivePublicBaseUrl { get; set; }
+
     public bool IsArchiveActive => ArchiveEnabled && ArchiveFtp is not null;
 
     public int DefaultFlacWindowDurationSeconds { get; set; } = 30;
@@ -110,7 +114,6 @@ public sealed class OperationsWorkerOptions
 
     public string? CanaryPlatformAllowList { get; set; }
 
-    public string CaptureSourcesFilePath { get; set; } = "stage/capture-sources.json";
 
     public bool EnableStartupValidation { get; set; } = true;
 
@@ -118,11 +121,25 @@ public sealed class OperationsWorkerOptions
 
     public int StartupValidationTimeoutSeconds { get; set; } = 12;
 
+    // The worker verifies internet access before anything else and waits (retrying every
+    // ConnectivityCheckIntervalSeconds) while there is none; see ConnectivityMonitor.
+    public bool ConnectivityCheckEnabled { get; set; } = true;
+
+    // Comma-separated URLs; reaching any one of them counts as online. Empty uses the defaults.
+    public string ConnectivityCheckUrls { get; set; } = string.Empty;
+
+    public int ConnectivityCheckIntervalSeconds { get; set; } = 60;
+
+    public int ConnectivityCheckTimeoutSeconds { get; set; } = 8;
+
     public int StartupDiscoveryRequestTimeoutSeconds { get; set; } = 10;
 
     public string YtdlpBinDirectory { get; set; } = "bin";
 
     public int YtdlpResolutionTimeoutSeconds { get; set; } = 60;
+
+    // Plain check of a channel's /live page before yt-dlp; off makes every retry go to yt-dlp.
+    public bool YoutubeLiveProbeEnabled { get; set; } = true;
 
     public bool UseBrowserCookies { get; set; } = false;
 
@@ -131,8 +148,6 @@ public sealed class OperationsWorkerOptions
     public string? YoutubeCookiesFilePath { get; set; }
 
     public string YoutubeCookiesAlertFilePath { get; set; } = "stage/cookies/youtube-auth-required.flag";
-
-    public FirestoreCaptureSourceRepositoryOptions? Firestore { get; set; }
 
     // Alert email channel. Null (the default) means email recipients are skipped; set only when
     // SMTP_HOST and SMTP_FROM are present in the environment (credentials never live in the JSON).

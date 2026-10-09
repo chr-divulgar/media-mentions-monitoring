@@ -59,7 +59,7 @@ flag, path, secure, expiration, name, value), comments start with `#`.
    recovering several sources can involve multiple sequential yt-dlp calls (each up to
    `YtdlpResolutionTimeoutSeconds`) — far longer than the 10-second timeout NestJS's caller uses.
    Worst case, if this immediate attempt doesn't recover a source, the normal reconciliation
-   cadence still applies (next hot-recovery minute, or the next scheduled tick at :00/:01/:30/:59).
+   cadence still applies (next hot-recovery minute, or the next per-minute reconciliation tick).
 
 ---
 

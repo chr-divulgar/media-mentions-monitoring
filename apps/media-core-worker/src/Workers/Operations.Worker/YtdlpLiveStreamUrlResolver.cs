@@ -22,13 +22,16 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
     private readonly IProcessRunner processRunner;
     private readonly OperationsWorkerOptions options;
     private readonly ILogger<YtdlpLiveStreamUrlResolver> logger;
+    private readonly IYouTubeLiveProbe? liveProbe;
 
     public YtdlpLiveStreamUrlResolver(
         IYtdlpBinaryProvider binaryProvider,
         IProcessRunner processRunner,
         OperationsWorkerOptions options,
-        ILogger<YtdlpLiveStreamUrlResolver> logger)
+        ILogger<YtdlpLiveStreamUrlResolver> logger,
+        IYouTubeLiveProbe? liveProbe = null)
     {
+        this.liveProbe = liveProbe;
         this.binaryProvider = binaryProvider;
         this.processRunner = processRunner;
         this.options = options;
@@ -43,7 +46,7 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
     // is checked first: StreamUrl for a YouTube source is a resolved, expiring googlevideo.com
     // CDN manifest once resolution has run once, so it no longer looks like YouTube at all.
     // Host-based (not a substring Contains) to avoid a false match on a lookalike domain.
-    // internal: also used by FirestoreDocumentMapper to bootstrap a YouTube source's streamUrl
+    // internal: also used by MongoDocumentMapper to bootstrap a YouTube source's streamUrl
     // from primaryUrl before this resolver has ever run (see TryMapCaptureSource).
     internal static bool IsYouTubeUrl(string? url)
     {
@@ -88,6 +91,19 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
         string preferredFormat,
         CancellationToken cancellationToken)
     {
+        // A plain GET of the channel's /live page first: when it says the channel is not live there
+        // is nothing for yt-dlp (and the account's cookies) to resolve.
+        var probeUrl = string.IsNullOrWhiteSpace(source.PrimaryUrl) ? source.StreamUrl : source.PrimaryUrl;
+        if (liveProbe is not null
+            && options.YoutubeLiveProbeEnabled
+            && IsYouTubeUrl(probeUrl)
+            && probeUrl.TrimEnd('/').EndsWith("/live", StringComparison.OrdinalIgnoreCase)
+            && await liveProbe.CheckAsync(probeUrl, cancellationToken).ConfigureAwait(false) == YouTubeLiveStatus.NotLive)
+        {
+            logger.LogDebug("[YtdlpResolver] {SourceId} is not live (live page check); yt-dlp skipped.", source.SourceId);
+            return new LiveStreamResolutionResult(null, LiveStreamResolutionFailure.Unavailable, "El canal no está en vivo");
+        }
+
         (string Cmd, string[] Args) runner;
         try
         {
@@ -173,7 +189,11 @@ public sealed class YtdlpLiveStreamUrlResolver : ILiveStreamUrlResolver
             if (!result.Succeeded)
             {
                 var failure = ClassifyFailure(result.StandardError);
-                logger.LogWarning(
+                // "Not currently live" is an ordinary state retried every minute, not a warning;
+                // the reconciliation summarises it once per outage.
+                var notLive = result.StandardError?.Contains("not currently live", StringComparison.OrdinalIgnoreCase) == true;
+                logger.Log(
+                    notLive ? LogLevel.Debug : LogLevel.Warning,
                     "[YtdlpResolver] yt-dlp exited {Code} [{Failure}] for source {SourceId}. Stderr: {Stderr}",
                     result.ExitCode, failure, source.SourceId,
                     result.StandardError?.Trim().Split('\n')[0]);

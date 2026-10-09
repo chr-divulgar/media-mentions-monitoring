@@ -50,7 +50,7 @@ status.
 
 **Key constraints**:
 - Windows-only deployment (mudslide CLI, hardcoded paths).
-- Python required for `scripts/getText.py` (Google Speech Recognition).
+- Python required for `scripts/getText.py` (Google Speech Recognition). Run `pnpm --filter web-api setup:python` once: it creates `apps/web-api/.venv` with `requirements.txt`, which the API uses automatically (`PYTHON_BIN` overrides the interpreter).
 - TypeORM MongoDB driver (not Mongoose).
 - Production: UI built into `apps/web-api/public/` before API build.
 
@@ -84,15 +84,19 @@ src/
 **Startup initialization flow**:
 1. `StartupSourceInitializationService.InitializeAsync()` validates each configured `streamUrl` via FFmpeg.
 2. For sources with a `primaryUrl`, `HttpStartupSourceDiscoveryService` runs HTML-scraping heuristics to discover/refresh fallback stream URLs (fire-and-forget after startup).
-3. Invalid sources are marked `excluded: true` in `stage/capture-sources.json` for diagnosis.
+3. Invalid sources are marked `isExcluded: true` in the `config.platforms` collection (MongoDB) for diagnosis.
 
 **Supported media types** (via `plugin-profiles.json`):
 - `radio` — default codec profile, all Colombian radio stations
 - `video` — generic video stream (RTSP/HLS)
 - `youtube` / `video` — YouTube-specific profile (currently defined, not yet populated)
 
-**Stage configuration files** (checked into `stage/`):
-- `capture-sources.json` — source registry (sourceId, platform, media, streamUrl, primaryUrl, fallbackStreamUrls)
+**Configuration data** lives in the local MongoDB `config` database (see `docs/CONFIG_DATABASE.md`):
+`platforms` (the capture sources: sourceId, name, media, streamUrl, primaryUrl, fallbackStreamUrls, isExcluded, slots...),
+`clients`, `mediaTypes` and `users` (a backup copy; Firestore stays the source of users and roles). The web-api's
+settings screens edit it and the worker reads it — there is no file or Firestore catalogue.
+
+**Stage configuration files** (runtime tuning, in `stage/`):
 - `plugin-profiles.json` — media/platform → codec mapping
 - `worker-options.json` — runtime tuning (heartbeat, parallelism, FLAC silence chunking, output paths)
 

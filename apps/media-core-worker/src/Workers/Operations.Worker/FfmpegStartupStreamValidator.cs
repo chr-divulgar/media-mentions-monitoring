@@ -17,7 +17,39 @@ public sealed class FfmpegStartupStreamValidator : IStartupStreamValidator
         EnsureFfmpegInitialized();
     }
 
+    private static readonly HttpClient ContentTypeClient = new() { Timeout = TimeSpan.FromSeconds(6) };
+
+    // "Invalid data" is all FFmpeg says when the URL answers with a web page (e.g. SonicPanel's
+    // "Stream is Offline"); one header-only request on the failure path tells the operator that.
     public async Task<StartupStreamValidationResult> ValidateAsync(string streamUrl, CancellationToken cancellationToken = default)
+    {
+        var result = await ValidateWithRetriesAsync(streamUrl, cancellationToken).ConfigureAwait(false);
+        if (result.Succeeded || result.ErrorMessage?.Contains("-1094995529", StringComparison.Ordinal) != true)
+        {
+            return result;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, streamUrl);
+            request.Headers.TryAddWithoutValidation("User-Agent", DefaultHttpUserAgent);
+            using var response = await ContentTypeClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+            if (response.Content.Headers.ContentType?.MediaType?.Equals("text/html", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new StartupStreamValidationResult(false, "La URL devuelve una página web, no audio (emisora fuera del aire o URL incorrecta)");
+            }
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or UriFormatException)
+        {
+            // Keep FFmpeg's own error: this check only improves the message.
+        }
+
+        return result;
+    }
+
+    private async Task<StartupStreamValidationResult> ValidateWithRetriesAsync(string streamUrl, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(streamUrl))
         {

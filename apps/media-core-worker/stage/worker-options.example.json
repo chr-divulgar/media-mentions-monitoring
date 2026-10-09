@@ -1,7 +1,6 @@
 ﻿{
   "segmentationIntervalSeconds": 30,
   "discreteWorkerIntervalSeconds": 1800,
-  "captureSourcesFilePath": "stage/capture-sources.json",
   "pluginProfilesFilePath": "stage/plugin-profiles.json",
   "continuousMediaAllowList": "radio,television",
   "captureMaxDegreeOfParallelism": 64,
@@ -50,6 +49,11 @@
   "webNewsMaxFailedAttempts": 3,
   "dailyHeadlinesEnabled": false,
   "dailyHeadlinesTime": "07:00",
+  "connectivityCheckEnabled": true,
+  "connectivityCheckUrls": "",
+  "_connectivityComment": "Before anything else the worker checks internet access and, while there is none, retries every connectivityCheckIntervalSeconds. connectivityCheckUrls: comma-separated; reaching any one counts as online (empty = gstatic and clients3.google.com). With Firestore enabled it must be reachable too.",
+  "connectivityCheckIntervalSeconds": 60,
+  "connectivityCheckTimeoutSeconds": 8,
 
   "firebaseDatabase": {
     "baseUrl": "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
