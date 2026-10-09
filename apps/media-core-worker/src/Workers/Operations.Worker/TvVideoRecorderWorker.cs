@@ -92,7 +92,7 @@ public sealed class TvVideoRecorderWorker : BackgroundService
     // Starts a recorder for every active TV source that has none running. The source list is the
     // capture's own in-memory set (ICaptureSourceProvider): excluded sources are not in it, and the
     // reconciliation puts them back once they recover — so this follows exactly what audio does,
-    // without reading Firestore every minute. Returns the recorders it started.
+    // without reading the database every minute. Returns the recorders it started.
     internal async Task<IReadOnlyList<Task>> ReconcileAsync(CancellationToken cancellationToken)
     {
         var started = new List<Task>();

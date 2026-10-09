@@ -10,6 +10,13 @@ public interface IBrowserPageReader
     Task<string?> GetHtmlAsync(string url, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Prints a page to PDF the way a real browser does (the permanent copy of a web note, RQ-014).</summary>
+public interface IBrowserPagePrinter
+{
+    // False when the page could not be loaded or never got past an anti-bot challenge.
+    Task<bool> PrintPdfAsync(string url, string outputPath, CancellationToken cancellationToken = default);
+}
+
 /// <summary>
 /// One shared headless Chromium (Playwright) for everything that needs a real browser: today the
 /// fallback for outlets behind an anti-bot challenge, later the permanent PDF copy of each note
@@ -19,7 +26,7 @@ public interface IBrowserPageReader
 /// not the machine's user profile) the first time it is needed — nothing installed on the host.
 /// On Linux, Chromium's system libraries come with `playwright install --with-deps` in the image.
 /// </summary>
-public sealed class HeadlessBrowser : IBrowserPageReader, IAsyncDisposable
+public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, IAsyncDisposable
 {
     private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36";
     private static readonly TimeSpan NavigationTimeout = TimeSpan.FromSeconds(30);
@@ -46,31 +53,9 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IAsyncDisposable
         IBrowserContext? context = null;
         try
         {
-            var running = await EnsureBrowserAsync(cancellationToken).ConfigureAwait(false);
-            context = await running.NewContextAsync(new BrowserNewContextOptions { UserAgent = UserAgent, Locale = "es-CO" }).ConfigureAwait(false);
-            var page = await context.NewPageAsync().ConfigureAwait(false);
-
-            await page.GotoAsync(url, new PageGotoOptions
-            {
-                WaitUntil = WaitUntilState.DOMContentLoaded,
-                Timeout = (float)NavigationTimeout.TotalMilliseconds,
-            }).ConfigureAwait(false);
-
-            // Cloudflare's interstitial ("Just a moment...") replaces itself with the real page once
-            // its script has checked the browser; wait for that rather than reading the interstitial.
-            var deadline = DateTime.UtcNow + ChallengeWait;
-            while (IsChallengeTitle(await page.TitleAsync().ConfigureAwait(false)))
-            {
-                if (DateTime.UtcNow > deadline)
-                {
-                    logger.LogWarning("[HeadlessBrowser] Still on the anti-bot challenge after {Seconds}s: {Url}", ChallengeWait.TotalSeconds, url);
-                    return null;
-                }
-
-                await page.WaitForTimeoutAsync(1000).ConfigureAwait(false);
-            }
-
-            return await page.ContentAsync().ConfigureAwait(false);
+            context = await NewContextAsync(cancellationToken).ConfigureAwait(false);
+            var page = await OpenPageAsync(context, url, WaitUntilState.DOMContentLoaded).ConfigureAwait(false);
+            return page is null ? null : await page.ContentAsync().ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -90,6 +75,77 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IAsyncDisposable
 
             pageGate.Release();
         }
+    }
+
+    public async Task<bool> PrintPdfAsync(string url, string outputPath, CancellationToken cancellationToken = default)
+    {
+        await pageGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        IBrowserContext? context = null;
+        try
+        {
+            context = await NewContextAsync(cancellationToken).ConfigureAwait(false);
+            // Load, not DOMContentLoaded: the PDF should include the images and styles.
+            var page = await OpenPageAsync(context, url, WaitUntilState.Load).ConfigureAwait(false);
+            if (page is null)
+            {
+                return false;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+            await page.PdfAsync(new PagePdfOptions { Path = outputPath, Format = "A4", PrintBackground = true }).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "[HeadlessBrowser] Could not print {Url} to PDF.", url);
+            return false;
+        }
+        finally
+        {
+            if (context is not null)
+            {
+                await context.CloseAsync().ConfigureAwait(false);
+            }
+
+            pageGate.Release();
+        }
+    }
+
+    private async Task<IBrowserContext> NewContextAsync(CancellationToken cancellationToken)
+    {
+        var running = await EnsureBrowserAsync(cancellationToken).ConfigureAwait(false);
+        return await running.NewContextAsync(new BrowserNewContextOptions { UserAgent = UserAgent, Locale = "es-CO" }).ConfigureAwait(false);
+    }
+
+    // Null when the page never got past an anti-bot challenge.
+    private async Task<IPage?> OpenPageAsync(IBrowserContext context, string url, WaitUntilState waitUntil)
+    {
+        var page = await context.NewPageAsync().ConfigureAwait(false);
+        await page.GotoAsync(url, new PageGotoOptions
+        {
+            WaitUntil = waitUntil,
+            Timeout = (float)NavigationTimeout.TotalMilliseconds,
+        }).ConfigureAwait(false);
+
+        // Cloudflare's interstitial ("Just a moment...") replaces itself with the real page once
+        // its script has checked the browser; wait for that rather than reading the interstitial.
+        var deadline = DateTime.UtcNow + ChallengeWait;
+        while (IsChallengeTitle(await page.TitleAsync().ConfigureAwait(false)))
+        {
+            if (DateTime.UtcNow > deadline)
+            {
+                logger.LogWarning("[HeadlessBrowser] Still on the anti-bot challenge after {Seconds}s: {Url}", ChallengeWait.TotalSeconds, url);
+                return null;
+            }
+
+            await page.WaitForTimeoutAsync(1000).ConfigureAwait(false);
+        }
+
+        return page;
     }
 
     internal static bool IsChallengeTitle(string? title) =>

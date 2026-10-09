@@ -166,7 +166,13 @@ public sealed class VideoSegmentServiceTests
         public Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default)
         {
             Downloads++;
-            if (DownloadSucceeds) File.Copy(Sample, localPath, overwrite: true);
+            if (DownloadSucceeds)
+            {
+                File.Copy(Sample, localPath, overwrite: true);
+                // A real download is written now; File.Copy would keep the sample's old mtime and
+                // the cache would see the file as already expired.
+                File.SetLastWriteTimeUtc(localPath, DateTime.UtcNow);
+            }
             return Task.FromResult(DownloadSucceeds);
         }
     }

@@ -11,7 +11,7 @@ namespace MediaOpsCore.Workers.Operations;
 /// - Local, every few minutes: a capture artifact is only emitted at rotation, so without this the
 ///   in-progress hour exists nowhere but the sessions' memory and a worker stopped mid-hour loses
 ///   it. A file write costs nothing, so this can be frequent.
-/// - Firestore, once per hour: the audit trail. Written only when the hour closes, with every
+/// - The audit store (MongoDB), once per hour: the audit trail. Written only when the hour closes, with every
 ///   source in a single document, so the database is touched 24 times a day and never read.
 ///
 /// Neither path reads the source catalog — the plugin already knows which sources are recording.
@@ -22,14 +22,14 @@ public sealed class CaptureSummaryArchiveWorker : BackgroundService
     private static readonly TimeSpan BogotaOffset = TimeSpan.FromHours(-5);
     // A stalled session keeps reporting the window it froze in and never rotates out of it, so
     // waiting for every session to leave an hour needs a ceiling — otherwise one frozen source
-    // would keep that hour out of Firestore indefinitely.
+    // would keep that hour out of the audit store indefinitely.
     private static readonly TimeSpan MaxArchiveDeferral = TimeSpan.FromMinutes(15);
     private const double WindowSeconds = 3600.0;
 
     private readonly ILiveCaptureProgressReader liveCaptureProgressReader;
     private readonly StageMirrorMonitoringArtifactRepository monitoringArtifactRepository;
     private readonly IEvidenceFileStore evidenceFileStore;
-    private readonly FirestoreCaptureSummaryStore summaryStore;
+    private readonly ICaptureSummaryStore summaryStore;
     private readonly ILogger<CaptureSummaryArchiveWorker> logger;
 
     private string? lastSeenHourKey;
@@ -40,7 +40,7 @@ public sealed class CaptureSummaryArchiveWorker : BackgroundService
         ILiveCaptureProgressReader liveCaptureProgressReader,
         StageMirrorMonitoringArtifactRepository monitoringArtifactRepository,
         IEvidenceFileStore evidenceFileStore,
-        FirestoreCaptureSummaryStore summaryStore,
+        ICaptureSummaryStore summaryStore,
         ILogger<CaptureSummaryArchiveWorker> logger)
     {
         this.liveCaptureProgressReader = liveCaptureProgressReader;
@@ -113,7 +113,7 @@ public sealed class CaptureSummaryArchiveWorker : BackgroundService
     /// An hour is finished when no session is still recording into it — not when the clock says so.
     /// Rotation is driven by each session's own audio timeline, so a source running behind the wall
     /// clock closes its hour minutes late; archiving on the clock change froze those last minutes in
-    /// Firestore as uncovered, even though the audio was captured and the local file caught up.
+    /// the audit store as uncovered, even though the audio was captured and the local file caught up.
     /// Pure so the decision can be unit tested without a clock.
     /// </summary>
     internal static bool CanArchiveHour(

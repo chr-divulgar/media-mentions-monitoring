@@ -37,7 +37,7 @@ public sealed class ArchiveUploadTests
         try
         {
             var older = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 4), "rcn_tv", "rcn_tv_2026-10-04_17-00-00.mp4", Now.AddHours(-20));
-            var newer = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "rcn_tv", "rcn_tv_2026-10-05_17-00-00.mp4", Now.AddHours(-2));
+            var newer = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "rcn_tv", "rcn_tv_2026-10-05_10-00-00.mp4", Now.AddHours(-2));
             // Audio is not archived at all: not the opus, not its transcription, not a resume file.
             ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_17-00-00.opus", Now.AddHours(-2));
             ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_17-00-00.json", Now.AddHours(-2));
@@ -69,6 +69,59 @@ public sealed class ArchiveUploadTests
                 root, (relative, _) => relative.EndsWith("done.mp4", StringComparison.Ordinal), Now, TimeSpan.FromMinutes(20));
 
             Assert.Equal([keep], pending.Select(p => p.LocalPath));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+}
+
+public sealed class ArchiveInProgressTests
+{
+    // 15:30 Bogota: the 15:00 recording is still open however old its mtime looks.
+    private static readonly DateTime Now = new(2026, 10, 6, 20, 30, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void FindPendingFiles_skips_the_hour_still_being_recorded_even_if_its_mtime_looks_idle()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var day = new DateOnly(2026, 10, 6);
+            ArchiveFixture.MakeFile(root, "television", day, "rcn_tv", "rcn_tv_2026-10-06_15-00-04.mp4", Now.AddMinutes(-25));
+            var closed = ArchiveFixture.MakeFile(root, "television", day, "rcn_tv", "rcn_tv_2026-10-06_14-00-07.mp4", Now.AddMinutes(-40));
+
+            var pending = ArchiveUpload.FindPendingFiles(root, (_, _) => false, Now, TimeSpan.FromMinutes(20));
+
+            Assert.Equal([closed], pending.Select(p => p.LocalPath));
+            Assert.Equal(2, ArchiveUpload.FindPendingFiles(root, (_, _) => false, Now.AddMinutes(31), TimeSpan.FromMinutes(20)).Count);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+}
+
+public sealed class ArchiveSourceOffsetTests
+{
+    // 20:30 UTC. A Mexico City source (-6) is at 14:30 and still recording its 14:00 file; read as
+    // Bogota time (15:30) that same file would look closed.
+    private static readonly DateTime Now = new(2026, 10, 6, 20, 30, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void FindPendingFiles_reads_the_file_name_in_the_sources_own_time_zone()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 6), "azteca_tv", "azteca_tv_2026-10-06_14-00-03.mp4", Now.AddMinutes(-25));
+            var offsets = new Dictionary<string, TimeSpan> { ["azteca_tv"] = TimeSpan.FromHours(-6) };
+
+            Assert.Empty(ArchiveUpload.FindPendingFiles(root, (_, _) => false, Now, TimeSpan.FromMinutes(20), offsets));
+            Assert.Single(ArchiveUpload.FindPendingFiles(root, (_, _) => false, Now, TimeSpan.FromMinutes(20)));
+            Assert.Single(ArchiveUpload.FindPendingFiles(root, (_, _) => false, Now.AddMinutes(31), TimeSpan.FromMinutes(20), offsets));
         }
         finally
         {
