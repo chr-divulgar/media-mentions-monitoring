@@ -9,6 +9,7 @@ import {
   Radio,
   Upload,
   Button,
+  Space,
   message,
   Collapse,
 } from "antd";
@@ -32,25 +33,10 @@ import {
   InboxOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
-import { useQuery } from "react-query";
-import api from "../../services/Agent";
 import { NoteDto } from "@repo/shared/index";
-import type { MediaTypeDto, PlatformDto } from "@repo/shared/index";
+import { useNoteFields } from "./noteFields/useNoteFields";
+import { normalizeMedia } from "./noteFields/noteMedia";
 import styles from "./NoteEditModal.module.css";
-
-interface ClientTopicNode {
-  name?: string;
-  subtopics?: Array<{
-    name?: string;
-    subsubtopics?: Array<{ name?: string }>;
-  }>;
-}
-
-interface ClientWithTopics {
-  id?: string;
-  name?: string;
-  topics?: ClientTopicNode[];
-}
 
 interface NoteEditModalProps {
   open: boolean;
@@ -69,385 +55,28 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
   onCancel,
 }) => {
   const [form] = Form.useForm();
-  const selectedMedia = Form.useWatch("media", form) as string | undefined;
-  const selectedDate = Form.useWatch("date", form) as dayjs.Dayjs | undefined;
-  const selectedStartTime = Form.useWatch("startTime", form) as
-    | dayjs.Dayjs
-    | undefined;
-  const selectedProgram = Form.useWatch("program", form) as string | undefined;
-  const selectedIndex = Form.useWatch("index", form) as string | undefined;
-  const selectedRate = Form.useWatch("rate", form) as
-    | string
-    | number
-    | undefined;
-  const selectedDuration = Form.useWatch("duration", form) as
-    | string
-    | number
-    | undefined;
-  const selectedAttachment = Form.useWatch("attachment", form) as
-    | string
-    | undefined;
-  const selectedMediaName = Form.useWatch("mediaName", form) as
-    | string
-    | undefined;
-  const selectedClientName = Form.useWatch("clientName", form) as
-    | string
-    | undefined;
-  const selectedTopicName = Form.useWatch("topic", form) as string | undefined;
-  const selectedSubtopicName = Form.useWatch("subtopic", form) as
-    | string
-    | undefined;
+  const {
+    mediaTypes,
+    platforms,
+    clients,
+    selectedMedia,
+    selectedAttachment,
+    selectedClientName,
+    hasGeneratedPdfLink,
+    isRadioOrTelevision,
+    topicOptions,
+    subtopicOptions,
+    subsubtopicOptions,
+    disableSubtopic,
+    disableSubsubtopic,
+    programOptions,
+    canSelectTime,
+    getFileDurationInSeconds,
+    getExpectedExtension,
+    getAcceptByMedia,
+    isAttachmentAllowed,
+  } = useNoteFields(form, { noteId: note?.id });
 
-  const { data: mediaTypes = [] } = useQuery<MediaTypeDto[]>(
-    ["media-types"],
-    async () => {
-      const res = await api.get("/clients/media/all");
-      return res.data as MediaTypeDto[];
-    },
-    { staleTime: Infinity },
-  );
-
-  const { data: platforms = [] } = useQuery<PlatformDto[]>(
-    ["platforms-by-media", selectedMedia],
-    async () => {
-      const res = await api.get(`/settings/get-platforms/${selectedMedia}`);
-      return res.data as PlatformDto[];
-    },
-    { enabled: !!selectedMedia, staleTime: 5 * 60 * 1000 },
-  );
-
-  const { data: clients = [] } = useQuery<ClientWithTopics[]>(
-    ["clients"],
-    async () => {
-      const res = await api.get("/clients");
-      return res.data as ClientWithTopics[];
-    },
-    { staleTime: 5 * 60 * 1000 },
-  );
-
-  const selectedDateText = React.useMemo(() => {
-    if (!selectedDate?.isValid()) return undefined;
-    return selectedDate.format("YYYY-MM-DD");
-  }, [selectedDate]);
-
-  const { data: notesByDate = [] } = useQuery<NoteDto[]>(
-    ["notes-by-date-media", selectedDateText, selectedMedia],
-    async () => {
-      if (!selectedDateText) return [];
-      const res = await api.post("/notes/list", {
-        startDate: selectedDateText,
-        endDate: selectedDateText,
-      });
-      return (res.data ?? []) as NoteDto[];
-    },
-    {
-      enabled: !!selectedDateText && !!selectedMedia,
-      staleTime: 30 * 1000,
-    },
-  );
-
-  const selectedClient = React.useMemo(
-    () => clients.find((client) => client.name === selectedClientName),
-    [clients, selectedClientName],
-  );
-
-  const topicOptions = React.useMemo(
-    () =>
-      (selectedClient?.topics ?? [])
-        .filter((topic) => topic?.name)
-        .map((topic) => ({ value: topic.name, label: topic.name })),
-    [selectedClient],
-  );
-
-  const selectedTopic = React.useMemo(
-    () =>
-      (selectedClient?.topics ?? []).find(
-        (topic) => topic.name === selectedTopicName,
-      ),
-    [selectedClient, selectedTopicName],
-  );
-
-  const subtopicOptions = React.useMemo(
-    () =>
-      (selectedTopic?.subtopics ?? [])
-        .filter((subtopic) => subtopic?.name)
-        .map((subtopic) => ({ value: subtopic.name, label: subtopic.name })),
-    [selectedTopic],
-  );
-
-  const selectedSubtopic = React.useMemo(
-    () =>
-      (selectedTopic?.subtopics ?? []).find(
-        (subtopic) => subtopic.name === selectedSubtopicName,
-      ),
-    [selectedTopic, selectedSubtopicName],
-  );
-
-  const subsubtopicOptions = React.useMemo(
-    () =>
-      (selectedSubtopic?.subsubtopics ?? [])
-        .filter((subsubtopic) => subsubtopic?.name)
-        .map((subsubtopic) => ({
-          value: subsubtopic.name,
-          label: subsubtopic.name,
-        })),
-    [selectedSubtopic],
-  );
-
-  const disableSubtopic = !selectedTopicName || subtopicOptions.length === 0;
-  const disableSubsubtopic =
-    !selectedSubtopicName || subsubtopicOptions.length === 0;
-
-  const toMinutes = React.useCallback((value?: string): number => {
-    if (!value || !/^\d{2}:\d{2}$/.test(value)) return -1;
-    const [hoursText, minutesText] = value.split(":");
-    const hours = Number(hoursText);
-    const minutes = Number(minutesText);
-    if (
-      Number.isNaN(hours) ||
-      Number.isNaN(minutes) ||
-      hours < 0 ||
-      hours > 23 ||
-      minutes < 0 ||
-      minutes > 59
-    ) {
-      return -1;
-    }
-    return hours * 60 + minutes;
-  }, []);
-
-  const toPositiveNumber = React.useCallback(
-    (value: unknown): number | null => {
-      const numeric = Number(value);
-      if (!Number.isFinite(numeric) || numeric <= 0) return null;
-      return numeric;
-    },
-    [],
-  );
-
-  const normalizeMedia = React.useCallback((value?: string) => {
-    return (value ?? "")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
-  }, []);
-
-  const getExpectedExtension = React.useCallback(
-    (media?: string) => {
-      const normalizedMedia = normalizeMedia(media);
-      if (normalizedMedia.includes("radio")) return "mp3";
-      if (normalizedMedia.includes("television")) return "mp4";
-      return "pdf";
-    },
-    [normalizeMedia],
-  );
-
-  const getAcceptByMedia = React.useCallback(
-    (media?: string) => {
-      const expectedExtension = getExpectedExtension(media);
-      if (expectedExtension === "mp3") return ".mp3,audio/mpeg";
-      if (expectedExtension === "mp4") return ".mp4,video/mp4";
-      return ".pdf,application/pdf";
-    },
-    [getExpectedExtension],
-  );
-
-  const isAttachmentAllowed = React.useCallback(
-    (fileName: string, media?: string) => {
-      const expectedExtension = getExpectedExtension(media);
-      return fileName.toLowerCase().endsWith(`.${expectedExtension}`);
-    },
-    [getExpectedExtension],
-  );
-
-  const isRadioOrTelevision = React.useMemo(() => {
-    const normalized = normalizeMedia(selectedMedia);
-    return (
-      normalized.includes("radio") ||
-      normalized.includes("television") ||
-      normalized.includes("tv")
-    );
-  }, [selectedMedia, normalizeMedia]);
-
-  const selectedPlatform = React.useMemo(
-    () => platforms.find((platform) => platform.name === selectedMediaName),
-    [platforms, selectedMediaName],
-  );
-
-  const selectedDayType = React.useMemo(() => {
-    if (!selectedDate?.isValid()) return undefined;
-    const dayNumber = selectedDate.day();
-    if (dayNumber === 0) return "sunday";
-    if (dayNumber === 6) return "saturday";
-    return "weekday";
-  }, [selectedDate]);
-
-  const selectedStartTimeText = React.useMemo(() => {
-    if (!selectedStartTime) return undefined;
-    return selectedStartTime.format("HH:mm");
-  }, [selectedStartTime]);
-
-  const attachmentExtension = React.useMemo(() => {
-    const fallback = getExpectedExtension(selectedMedia);
-    if (!selectedAttachment) return fallback;
-    const extensionMatch = /\.([a-zA-Z0-9]+)$/.exec(selectedAttachment);
-    return extensionMatch?.[1]?.toLowerCase() ?? fallback;
-  }, [selectedAttachment, selectedMedia, getExpectedExtension]);
-
-  const daySlots = React.useMemo(() => {
-    if (!selectedPlatform || !selectedDayType) return [];
-    return [...(selectedPlatform.slots ?? [])]
-      .filter((slot) => slot.day === selectedDayType)
-      .sort((a, b) => a.start.localeCompare(b.start));
-  }, [selectedPlatform, selectedDayType]);
-
-  const closestSlotIndex = React.useMemo(() => {
-    if (!daySlots.length || !selectedStartTimeText) return -1;
-
-    const currentMinutes = toMinutes(selectedStartTimeText);
-    if (currentMinutes < 0) return -1;
-
-    let bestIndex = -1;
-    let bestDistance = Number.POSITIVE_INFINITY;
-
-    daySlots.forEach((slot, index) => {
-      const start = toMinutes(slot.start);
-      const end = toMinutes(slot.end);
-      if (start < 0 || end < 0) return;
-
-      const isWithin =
-        end === 1439
-          ? currentMinutes >= start && currentMinutes <= end
-          : currentMinutes >= start && currentMinutes < end;
-
-      const distance = isWithin
-        ? 0
-        : Math.min(
-            Math.abs(currentMinutes - start),
-            Math.abs(currentMinutes - end),
-          );
-
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestIndex = index;
-      }
-    });
-
-    return bestIndex;
-  }, [daySlots, selectedStartTimeText, toMinutes]);
-
-  const programOptions = React.useMemo(() => {
-    if (closestSlotIndex < 0 || !daySlots.length) return [];
-
-    const candidateIndexes = [
-      closestSlotIndex - 1,
-      closestSlotIndex,
-      closestSlotIndex + 1,
-    ].filter((index) => index >= 0 && index < daySlots.length);
-
-    return candidateIndexes.map((index) => {
-      const slot = daySlots[index];
-      const slotLabel = `${slot.start} - ${slot.end} - (${slot.label ?? ""})`;
-      return {
-        value: slotLabel,
-        label: slotLabel,
-        slot,
-      };
-    });
-  }, [closestSlotIndex, daySlots]);
-
-  const programSlotMap = React.useMemo(
-    () => new Map(programOptions.map((item) => [item.value, item.slot])),
-    [programOptions],
-  );
-
-  const closestProgramValue = React.useMemo(() => {
-    if (!programOptions.length) return undefined;
-    const middleIndex = Math.min(1, programOptions.length - 1);
-    return programOptions[middleIndex]?.value;
-  }, [programOptions]);
-
-  const hasProgramContext =
-    !!selectedDayType && !!selectedStartTimeText && programOptions.length > 0;
-
-  const effectiveProgramValue = React.useMemo(() => {
-    if (!hasProgramContext) return undefined;
-    const optionExists = programOptions.some(
-      (option) => option.value === selectedProgram,
-    );
-    if (optionExists) return selectedProgram;
-    return closestProgramValue ?? programOptions[0]?.value;
-  }, [hasProgramContext, programOptions, selectedProgram, closestProgramValue]);
-
-  const selectedProgramSlot = React.useMemo(() => {
-    if (!effectiveProgramValue) return undefined;
-    return programSlotMap.get(effectiveProgramValue);
-  }, [programSlotMap, effectiveProgramValue]);
-
-  const composedAudioLabel = React.useMemo(() => {
-    const resolvedIndex =
-      selectedIndex && selectedIndex.trim().length > 0 ? selectedIndex : "##";
-    if (!selectedProgramSlot?.audioLabel) return undefined;
-    return `NOTA_${resolvedIndex}${selectedProgramSlot.audioLabel}.${attachmentExtension}`;
-  }, [selectedIndex, selectedProgramSlot, attachmentExtension]);
-
-  const canSelectTime =
-    !!selectedMedia && !!selectedDate && selectedDate.isValid();
-
-  const getFileDurationInSeconds = React.useCallback(
-    (file: File, media?: string): Promise<number | undefined> => {
-      const expectedExtension = getExpectedExtension(media);
-      if (expectedExtension !== "mp3" && expectedExtension !== "mp4") {
-        return Promise.resolve(undefined);
-      }
-
-      return new Promise((resolve) => {
-        const objectUrl = URL.createObjectURL(file);
-        const element = document.createElement(
-          expectedExtension === "mp4" ? "video" : "audio",
-        );
-
-        element.preload = "metadata";
-        element.onloadedmetadata = () => {
-          const duration = Number(element.duration);
-          URL.revokeObjectURL(objectUrl);
-          if (!Number.isFinite(duration) || duration <= 0) {
-            resolve(undefined);
-            return;
-          }
-          resolve(Math.max(1, Math.round(duration)));
-        };
-
-        element.onerror = () => {
-          URL.revokeObjectURL(objectUrl);
-          resolve(undefined);
-        };
-
-        element.src = objectUrl;
-      });
-    },
-    [getExpectedExtension],
-  );
-
-  const nextIndex = React.useMemo(() => {
-    if (!selectedDateText || !selectedMedia) return undefined;
-
-    const normalizedSelectedMedia = normalizeMedia(selectedMedia);
-    const maxIndex = notesByDate
-      .filter(
-        (current) =>
-          current.date === selectedDateText &&
-          normalizeMedia(current.media) === normalizedSelectedMedia &&
-          current.id !== note?.id,
-      )
-      .reduce((acc, current) => {
-        const match = /\d+/.exec(current.index ?? "");
-        const parsed = Number(match?.[0] ?? 0);
-        return Number.isFinite(parsed) && parsed > acc ? parsed : acc;
-      }, 0);
-
-    return String(maxIndex + 1).padStart(2, "0");
-  }, [selectedDateText, selectedMedia, notesByDate, normalizeMedia, note?.id]);
 
   const renderFieldLabel = React.useCallback(
     (icon: React.ReactNode, text: string) => (
@@ -499,237 +128,6 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
     }
   }, [note, form]);
 
-  React.useEffect(() => {
-    if (!selectedMedia) {
-      form.setFieldValue("mediaName", undefined);
-      form.setFieldsValue({
-        startTime: undefined,
-        audioLabel: undefined,
-        rate: undefined,
-        audience: undefined,
-        value: undefined,
-        duration: undefined,
-        index: undefined,
-      });
-      return;
-    }
-
-    const currentMediaName = form.getFieldValue("mediaName");
-    if (!currentMediaName) {
-      return;
-    }
-
-    const existsInCurrentMedia = platforms.some(
-      (platform) => platform.name === currentMediaName,
-    );
-
-    if (!existsInCurrentMedia) {
-      form.setFieldValue("mediaName", undefined);
-    }
-  }, [selectedMedia, platforms, form]);
-
-  React.useEffect(() => {
-    if (!selectedAttachment) {
-      return;
-    }
-
-    if (!isAttachmentAllowed(selectedAttachment, selectedMedia)) {
-      form.setFieldValue("attachment", undefined);
-    }
-  }, [selectedAttachment, selectedMedia, isAttachmentAllowed, form]);
-
-  React.useEffect(() => {
-    if (!selectedMediaName) {
-      form.setFieldsValue({ zone: undefined, city: undefined });
-      return;
-    }
-
-    form.setFieldsValue({
-      zone: selectedPlatform?.zone ?? undefined,
-      city: selectedPlatform?.city ?? undefined,
-    });
-  }, [selectedMediaName, selectedPlatform, form]);
-
-  React.useEffect(() => {
-    if (!selectedPlatform) {
-      form.setFieldsValue({
-        program: undefined,
-        audioLabel: undefined,
-        rate: undefined,
-        audience: undefined,
-        value: undefined,
-        duration: undefined,
-      });
-      return;
-    }
-
-    if (!isRadioOrTelevision) {
-      form.setFieldsValue({
-        audioLabel: undefined,
-        rate:
-          selectedPlatform.rate == null
-            ? undefined
-            : String(selectedPlatform.rate),
-        audience:
-          selectedPlatform.audience == null
-            ? undefined
-            : String(selectedPlatform.audience),
-        value: undefined,
-        duration: undefined,
-      });
-    }
-  }, [selectedPlatform, isRadioOrTelevision, form]);
-
-  React.useEffect(() => {
-    if (!isRadioOrTelevision || !selectedPlatform) {
-      return;
-    }
-
-    if (!hasProgramContext) {
-      form.setFieldsValue({
-        program: undefined,
-        audioLabel: undefined,
-        rate: undefined,
-        audience: undefined,
-        value: undefined,
-      });
-      return;
-    }
-
-    if (effectiveProgramValue && effectiveProgramValue !== selectedProgram) {
-      form.setFieldValue("program", effectiveProgramValue);
-    }
-
-    form.setFieldsValue({
-      audioLabel: composedAudioLabel,
-      rate:
-        selectedProgramSlot?.rate == null
-          ? undefined
-          : String(selectedProgramSlot.rate),
-      audience:
-        selectedProgramSlot?.audience == null
-          ? undefined
-          : String(selectedProgramSlot.audience),
-    });
-  }, [
-    isRadioOrTelevision,
-    selectedPlatform,
-    hasProgramContext,
-    selectedProgram,
-    effectiveProgramValue,
-    composedAudioLabel,
-    selectedProgramSlot,
-    form,
-  ]);
-
-  React.useEffect(() => {
-    if (!isRadioOrTelevision) {
-      return;
-    }
-
-    const rateNumber = toPositiveNumber(selectedRate);
-    const durationNumber = toPositiveNumber(selectedDuration);
-    if (rateNumber == null || durationNumber == null) {
-      form.setFieldValue("value", undefined);
-      return;
-    }
-
-    const computedValue = (rateNumber * durationNumber) / 30;
-    form.setFieldValue("value", String(computedValue));
-  }, [
-    isRadioOrTelevision,
-    selectedRate,
-    selectedDuration,
-    toPositiveNumber,
-    form,
-  ]);
-
-  React.useEffect(() => {
-    if (!isRadioOrTelevision) {
-      form.setFieldValue("index", undefined);
-      return;
-    }
-
-    if (!nextIndex) return;
-
-    const isEditing = !!note?.id;
-    if (isEditing && selectedIndex) {
-      return;
-    }
-
-    form.setFieldValue("index", nextIndex);
-  }, [isRadioOrTelevision, nextIndex, note?.id, selectedIndex, form]);
-
-  React.useEffect(() => {
-    if (!clients.length) {
-      return;
-    }
-
-    const currentClientName = form.getFieldValue("clientName") as
-      | string
-      | undefined;
-    if (!currentClientName) {
-      form.setFieldsValue({ clientName: clients[0]?.name });
-      return;
-    }
-
-    const exists = clients.some((client) => client.name === currentClientName);
-    if (!exists) {
-      form.setFieldsValue({
-        clientName: clients[0]?.name,
-        topic: undefined,
-        subtopic: undefined,
-        subsubtopic: undefined,
-      });
-    }
-  }, [clients, form]);
-
-  React.useEffect(() => {
-    if (!selectedClientName) {
-      form.setFieldsValue({
-        topic: undefined,
-        subtopic: undefined,
-        subsubtopic: undefined,
-      });
-      return;
-    }
-
-    const currentTopic = form.getFieldValue("topic") as string | undefined;
-    const validTopic = (selectedClient?.topics ?? []).some(
-      (topic) => topic.name === currentTopic,
-    );
-    if (!validTopic) {
-      form.setFieldsValue({
-        topic: undefined,
-        subtopic: undefined,
-        subsubtopic: undefined,
-      });
-    }
-  }, [selectedClientName, selectedClient, form]);
-
-  React.useEffect(() => {
-    const currentSubtopic = form.getFieldValue("subtopic") as
-      | string
-      | undefined;
-    const validSubtopic = (selectedTopic?.subtopics ?? []).some(
-      (subtopic) => subtopic.name === currentSubtopic,
-    );
-    if (!validSubtopic) {
-      form.setFieldsValue({ subtopic: undefined, subsubtopic: undefined });
-    }
-  }, [selectedTopic, form]);
-
-  React.useEffect(() => {
-    const currentSubsubtopic = form.getFieldValue("subsubtopic") as
-      | string
-      | undefined;
-    const validSubsubtopic = (selectedSubtopic?.subsubtopics ?? []).some(
-      (subsubtopic) => subsubtopic.name === currentSubsubtopic,
-    );
-    if (!validSubsubtopic) {
-      form.setFieldValue("subsubtopic", undefined);
-    }
-  }, [selectedSubtopic, form]);
 
   const handleOk = () => {
     form.validateFields().then((values) => {
@@ -1114,66 +512,81 @@ const NoteEditModal: React.FC<NoteEditModalProps> = ({
                           placeholder="Describe los puntos clave de la nota"
                         />
                       </Form.Item>
-                      <Form.Item
-                        label={renderFieldLabel(<UploadOutlined />, "Archivo")}
-                        extra={`Formato permitido para ${selectedMedia ?? "otros medios"}: .${getExpectedExtension(selectedMedia)}`}
-                        className={styles.fullSpan}
-                      >
-                        <Upload.Dragger
-                          className={styles.attachmentDragger}
-                          maxCount={1}
-                          accept={getAcceptByMedia(selectedMedia)}
-                          showUploadList={false}
-                          beforeUpload={async (file) => {
-                            if (
-                              !isAttachmentAllowed(file.name, selectedMedia)
-                            ) {
-                              message.error(
-                                `Para ${selectedMedia ?? "otros medios"} solo se permite .${getExpectedExtension(selectedMedia)}`,
-                              );
-                              return Upload.LIST_IGNORE;
-                            }
-
-                            if (isRadioOrTelevision) {
-                              const seconds = await getFileDurationInSeconds(
-                                file,
-                                selectedMedia,
-                              );
-                              form.setFieldValue("duration", seconds);
-                              if (!seconds) {
-                                message.warning(
-                                  "No se pudo calcular la duración del archivo.",
-                                );
-                              }
-                            }
-
-                            form.setFieldValue("attachment", file.name);
-                            return false;
-                          }}
-                          onRemove={() => {
-                            form.setFieldsValue({
-                              attachment: undefined,
-                              duration: undefined,
-                            });
-                          }}
+                      {hasGeneratedPdfLink ? (
+                        <Form.Item
+                          label={renderFieldLabel(<UploadOutlined />, "PDF archivado")}
+                          extra="Generado automáticamente al crear la nota; no se puede modificar."
+                          className={styles.fullSpan}
                         >
-                          <div className={styles.uploadInlineContent}>
-                            <span className={styles.uploadInlineIcon}>
-                              <InboxOutlined />
-                            </span>
-                            <span className={styles.uploadInlineTextGroup}>
-                              <span className={styles.uploadInlineText}>
-                                Arrastra el archivo aquí o haz click para cargar
+                          <Space.Compact style={{ width: "100%" }}>
+                            <Input value={selectedAttachment} disabled />
+                            <Button href={selectedAttachment} target="_blank">
+                              Abrir PDF
+                            </Button>
+                          </Space.Compact>
+                        </Form.Item>
+                      ) : (
+                        <Form.Item
+                          label={renderFieldLabel(<UploadOutlined />, "Archivo")}
+                          extra={`Formato permitido para ${selectedMedia ?? "otros medios"}: .${getExpectedExtension(selectedMedia)}`}
+                          className={styles.fullSpan}
+                        >
+                          <Upload.Dragger
+                            className={styles.attachmentDragger}
+                            maxCount={1}
+                            accept={getAcceptByMedia(selectedMedia)}
+                            showUploadList={false}
+                            beforeUpload={async (file) => {
+                              if (
+                                !isAttachmentAllowed(file.name, selectedMedia)
+                              ) {
+                                message.error(
+                                  `Para ${selectedMedia ?? "otros medios"} solo se permite .${getExpectedExtension(selectedMedia)}`,
+                                );
+                                return Upload.LIST_IGNORE;
+                              }
+
+                              if (isRadioOrTelevision) {
+                                const seconds = await getFileDurationInSeconds(
+                                  file,
+                                  selectedMedia,
+                                );
+                                form.setFieldValue("duration", seconds);
+                                if (!seconds) {
+                                  message.warning(
+                                    "No se pudo calcular la duración del archivo.",
+                                  );
+                                }
+                              }
+
+                              form.setFieldValue("attachment", file.name);
+                              return false;
+                            }}
+                            onRemove={() => {
+                              form.setFieldsValue({
+                                attachment: undefined,
+                                duration: undefined,
+                              });
+                            }}
+                          >
+                            <div className={styles.uploadInlineContent}>
+                              <span className={styles.uploadInlineIcon}>
+                                <InboxOutlined />
                               </span>
-                              <span className={styles.uploadInlineHint}>
-                                {selectedAttachment
-                                  ? `Archivo cargado: ${selectedAttachment}`
-                                  : "No hay archivo seleccionado"}
+                              <span className={styles.uploadInlineTextGroup}>
+                                <span className={styles.uploadInlineText}>
+                                  Arrastra el archivo aquí o haz click para cargar
+                                </span>
+                                <span className={styles.uploadInlineHint}>
+                                  {selectedAttachment
+                                    ? `Archivo cargado: ${selectedAttachment}`
+                                    : "No hay archivo seleccionado"}
+                                </span>
                               </span>
-                            </span>
-                          </div>
-                        </Upload.Dragger>
-                      </Form.Item>
+                            </div>
+                          </Upload.Dragger>
+                        </Form.Item>
+                      )}
                       {isRadioOrTelevision && (
                         <>
                           <Form.Item

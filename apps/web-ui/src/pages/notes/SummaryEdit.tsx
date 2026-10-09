@@ -8,30 +8,29 @@ import {
   Input,
   message,
   Row,
-  Select,
   Spin,
 } from "antd";
 import {
   GetSummaryDto,
   GetTranscriptionDto,
-  PlatformDto,
-  //Slot,
+  NoteOrigin,
+  NoteSentiment,
   SummaryDto,
   TranscriptionDto,
   transformText,
 } from "@repo/shared/index";
 import TextArea from "antd/es/input/TextArea";
 import { useAlert } from "../alerts/AlertsContext";
-import {
-  useMutation,
-  UseMutationResult,
-  useQuery,
-  UseQueryResult,
-} from "react-query";
+import { AxiosError } from "axios";
+import { useMutation, UseMutationResult } from "react-query";
 import api from "../../services/Agent";
 import Title from "antd/es/typography/Title";
 import { useNote } from "./NoteContext";
-//import moment from "moment";
+import dayjs from "dayjs";
+import AlertNoteContext from "./noteFields/AlertNoteContext";
+import ClassificationFields from "./noteFields/ClassificationFields";
+import ProgramAndRateFields from "./noteFields/ProgramAndRateFields";
+import { useNoteFields } from "./noteFields/useNoteFields";
 import WaveSurfer from "wavesurfer.js";
 import { withAuthToken } from "../../services/authToken";
 import {
@@ -39,8 +38,6 @@ import {
   PauseCircleOutlined,
   PlayCircleOutlined,
 } from "@ant-design/icons";
-
-const { Option } = Select;
 
 type TranscriptionMutationResult = UseMutationResult<
   TranscriptionDto,
@@ -55,6 +52,7 @@ type SummaryMutationResult = UseMutationResult<
   unknown
 >;
 
+// Every field of the note's form; the ones the alert already knows are filled in and read-only.
 type FieldType = {
   index?: string;
   program?: string;
@@ -73,10 +71,23 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
   const { selectedAlert } = useAlert();
   const { note, setNote } = useNote();
   const getSummaryDtoRef = useRef(new GetSummaryDto()); // Replace initialGetSummaryDtoValue with the initial value
-  const [programOptions] = useState<string[]>([]);
-  //const [programOptions, setProgramOptions] = useState<string[]>([]);
+  const noteFields = useNoteFields(form, { lockContext: true, indexForAllMedia: true });
 
-  //const slotsRef = useRef<Slot[]>([]);
+  // What the alert and its clip already say about the note. The date and time are the clip's own,
+  // shown at Colombia time like the alerts list.
+  useEffect(() => {
+    if (!selectedAlert) return;
+    const when = dayjs.utc(note?.startTime ?? selectedAlert.startTime).utcOffset(-300);
+    const media = (selectedAlert.media ?? "").toLowerCase();
+    form.setFieldsValue({
+      clientName: selectedAlert.clientName,
+      media: media === "television" ? "tv" : media,
+      mediaName: selectedAlert.platform,
+      date: when,
+      startTime: when,
+      duration: note?.duration,
+    } as never);
+  }, [selectedAlert?.id, note?.startTime, note?.duration, form]);
 
   const waveformUrl = useMemo(
     () =>
@@ -159,57 +170,6 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
       console.error("Download error:", error);
     }
   };
-  // data: platforms,
-  const {
-    isLoading: isLoadingPlatforms,
-    error: errorPlatforms,
-  }: UseQueryResult<PlatformDto[]> = useQuery({
-    queryKey: ["platforms"],
-    queryFn: async () =>
-      await api
-        .get(`/settings/get-platforms/${selectedAlert?.media}`)
-        .then((res) => res.data),
-  });
-
-  /* useEffect(() => {
-    slotsRef.current =
-      platforms?.filter(
-        (platform) => platform.name === selectedAlert?.platform
-      )[0]?.slots ?? [];
-    const startTime = moment(note?.startTime);
-    const dayOfWeek = startTime.day();
-
-    let dayType: string;
-    if (dayOfWeek === 0) {
-      dayType = "sunday";
-    } else if (dayOfWeek === 6) {
-      dayType = "saturday";
-    } else {
-      dayType = "weekday";
-    }
-
-    const defaultSlot = slotsRef.current
-      ?.filter((slot) => slot.day === dayType)
-      .find((slot) => {
-        const slotStartTime = moment(slot.start, "HH:mm");
-        const slotEndTime = moment(slot.end, "HH:mm");
-        // Check if startTime is between slot's start and end times, inclusive
-        return startTime.isBetween(slotStartTime, slotEndTime, null, "[]");
-      });
-
-    form.setFieldsValue({
-      program: defaultSlot?.label,
-      audioLabel: defaultSlot?.audioLabel,
-    });
-    setNote({
-      ...note,
-      audioLabel: defaultSlot?.audioLabel,
-    });
-
-    if (slotsRef.current.length === 0) return;
-    setProgramOptions(slotsRef.current.map((slot) => slot.label ?? ""));
-  }, [form, platforms, selectedAlert?.platform]); */
-
   const {
     mutateAsync: generateTranscription,
     data: transcriptionData,
@@ -278,15 +238,6 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
       });
     }
   }, [summaryData, form]);
-
-  /* const handleProgramChange = (value: string) => {
-    const slot = slotsRef.current.find((slot) => slot.label === value);
-    setNote({
-      ...note,
-      audioLabel: slot?.audioLabel,
-    });
-    form.setFieldsValue({ audioLabel: slot?.audioLabel });
-  }; */
 
   const onFinishFailed: FormProps<FieldType>["onFinishFailed"] = (
     errorInfo,
@@ -357,7 +308,10 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
         </Row>
 
         {errorTranscription ? (
-          <div>Error cargando la transcripción</div>
+          <div>
+            Error cargando la transcripción:{" "}
+            {(errorTranscription as AxiosError<{ error?: string }>)?.response?.data?.error ?? "no se pudo transcribir"}
+          </div>
         ) : (
           <div>
             <Spin spinning={isLoadingTranscription}>
@@ -394,70 +348,29 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
             initialValues={{
               title: summaryData?.title,
               summary: summaryData?.summary,
+              origin: NoteOrigin.DIRECTA,
+              sentiment: NoteSentiment.NEUTRO,
             }}
             onFinish={onFinish}
             onFinishFailed={onFinishFailed}
             autoComplete="off"
             form={form}
           >
-            <Form.Item<FieldType>
-              label="NOTA"
-              name="index"
-              rules={[
-                { required: true },
-                {
-                  validator: (_, value) =>
-                    /^\d*$/.test(value)
-                      ? Promise.resolve()
-                      : Promise.reject(new Error("Debe ser numérico")),
-                  message: "Debe ser numérico",
-                },
-                {
-                  validator: (_, value) =>
-                    value && value.length >= 2
-                      ? Promise.resolve()
-                      : Promise.reject(
-                          new Error("Debe tener al menos 2 números"),
-                        ),
-                  message: "Debe tener al menos 2 números",
-                },
-              ]}
-              validateTrigger="onChange"
-            >
-              <Input placeholder="XX" />
+            <AlertNoteContext />
+            <Form.Item name="duration" hidden>
+              <Input />
             </Form.Item>
-
-            {errorPlatforms ? (
-              <div>Error cargando plataformas</div>
-            ) : (
-              <Spin spinning={isLoadingPlatforms}>
-                <Form.Item<FieldType>
-                  label="Programa"
-                  name="program"
-                  rules={[{ required: true }]}
-                >
-                  <Select
-                    placeholder="Seleccione un programa..."
-                    showSearch
-                    filterOption={(input, option) =>
-                      String(option?.value)
-                        ?.toLowerCase()
-                        .includes(input.toLowerCase())
-                    }
-                    /* onChange={handleProgramChange} */
-                  >
-                    {programOptions.map((option) => (
-                      <Option key={option} value={option}>
-                        {option}
-                      </Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-              </Spin>
-            )}
-            <Form.Item<FieldType> label="Audio" name="audioLabel">
-              <Input placeholder="Enter audio label" disabled={true} />
-            </Form.Item>
+            <ProgramAndRateFields
+              isRadioOrTelevision={noteFields.isRadioOrTelevision}
+              programOptions={noteFields.programOptions}
+            />
+            <ClassificationFields
+              topicOptions={noteFields.topicOptions}
+              subtopicOptions={noteFields.subtopicOptions}
+              subsubtopicOptions={noteFields.subsubtopicOptions}
+              disableSubtopic={noteFields.disableSubtopic}
+              disableSubsubtopic={noteFields.disableSubsubtopic}
+            />
             <Spin spinning={isLoadingSummary || isLoadingTranscription}>
               <Form.Item<FieldType>
                 label="Titular"

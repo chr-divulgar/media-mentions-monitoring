@@ -45,6 +45,9 @@ export class Note {
   mediaName!: string;
 
   @Column()
+  clientName!: string;
+
+  @Column()
   topic!: string;
 
   @Column()
@@ -61,6 +64,9 @@ export class Note {
 
   @Column()
   zone!: string;
+
+  @Column()
+  city!: string;
 
   @Column()
   rate!: string;

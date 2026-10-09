@@ -20,6 +20,11 @@ namespace MediaOpsCore.Workers.Operations;
 ///     opus paths directly (see IClosedHourAudioReader).
 ///   GET  /video/segment    — cuts a window out of a TV channel's recorded MP4 (video/mp4), for the
 ///     alert editor's video flow; the clip's real start and length come back in headers.
+///   POST /notes/pdf/preview — prints a web note's article page to a scratch PDF and returns the
+///     public link it will have once saved ({outlet, title, url, date} → {previewId, link}).
+///   GET  /notes/pdf/preview?id= — the previewed PDF itself, for the editor's viewer.
+///   POST /notes/pdf/commit  — on save, archives the previewed PDF over FTP ({previewId} → {link});
+///     all three are consumed by NestJS's NotesService.
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
 ///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
 ///   GET  /whatsapp/qr      — relays the WhatsApp sidecar's own /qr (base64 PNG or null).
@@ -51,6 +56,8 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     private readonly ICaptureStatusSnapshotProvider captureStatusSnapshotProvider;
     private readonly IClosedHourAudioReader closedHourAudioReader;
     private readonly VideoSegmentService videoSegmentService;
+    // Null when the archive, its public URL or the headless browser is not configured.
+    private readonly NotePdfService? notePdfService;
     private readonly HttpClient httpClient;
     private readonly int whatsAppSidecarPort;
     private HttpListener? httpListener;
@@ -66,8 +73,10 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         ICaptureStatusSnapshotProvider captureStatusSnapshotProvider,
         IClosedHourAudioReader closedHourAudioReader,
         VideoSegmentService videoSegmentService,
-        HttpClient httpClient)
+        HttpClient httpClient,
+        NotePdfService? notePdfService = null)
     {
+        this.notePdfService = notePdfService;
         this.logger = logger;
         this.options = options;
         this.cookiesValidator = cookiesValidator;
@@ -149,6 +158,10 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         }
     }
 
+    // 64 = the network name is no longer available, 995 = the I/O was aborted: the caller hung up.
+    private static bool IsClientGone(Exception exception) =>
+        exception is HttpListenerException { ErrorCode: 64 or 995 } or IOException { InnerException: HttpListenerException { ErrorCode: 64 or 995 } };
+
     private async Task HandleRequest(HttpListenerContext context)
     {
         try
@@ -186,6 +199,24 @@ public sealed class YouTubeCookiesHttpService : IHostedService
                 return;
             }
 
+            if (method == "POST" && path == "/notes/pdf/preview")
+            {
+                await HandleNotePdfPreviewRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "GET" && path == "/notes/pdf/preview")
+            {
+                await HandleNotePdfPreviewFileRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "POST" && path == "/notes/pdf/commit")
+            {
+                await HandleNotePdfCommitRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
             if (method == "GET" && path == "/whatsapp/status")
             {
                 await RelayToSidecarAsync(context, "/status").ConfigureAwait(false);
@@ -219,9 +250,13 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             context.Response.StatusCode = 404;
             context.Response.Close();
         }
+        catch (Exception ex) when (IsClientGone(ex))
+        {
+            logger.LogDebug("[YouTubeCookiesHttpService] The client closed the connection before {Path} was answered.", context.Request.Url?.AbsolutePath);
+        }
         catch (Exception ex)
         {
-            logger.LogError(ex, "[YouTubeCookiesHttpService] Error handling YouTube cookies request");
+            logger.LogError(ex, "[YouTubeCookiesHttpService] Error handling {Method} {Path}", context.Request.HttpMethod, context.Request.Url?.AbsolutePath);
             try
             {
                 var errorResponse = new YouTubeCookiesResponse
@@ -416,6 +451,108 @@ public sealed class YouTubeCookiesHttpService : IHostedService
 
     // Windows longer than this are not an editor window (the longest is the 20-minute segment).
     private static readonly TimeSpan MaxVideoWindow = TimeSpan.FromHours(2);
+
+    private async Task<bool> EnsureNotePdfConfiguredAsync(HttpListenerContext context)
+    {
+        if (notePdfService is not null)
+        {
+            return true;
+        }
+
+        await SendJsonResponse(context, 503, new AudioSegmentErrorResponse
+        {
+            Message = "La generación de PDF no está configurada (requiere ARCHIVE_FTP_*, ARCHIVE_PUBLIC_BASE_URL y el navegador headless).",
+        }).ConfigureAwait(false);
+        return false;
+    }
+
+    private async Task<T?> ReadJsonBodyAsync<T>(HttpListenerContext context)
+    {
+        using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        return JsonSerializer.Deserialize<T>(body, JsonOptions);
+    }
+
+    private async Task HandleNotePdfPreviewRequestAsync(HttpListenerContext context)
+    {
+        if (!await EnsureNotePdfConfiguredAsync(context).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var request = await ReadJsonBodyAsync<NotePdfPreviewRequest>(context).ConfigureAwait(false);
+        if (request is null
+            || string.IsNullOrWhiteSpace(request.Title)
+            || !Uri.TryCreate(request.Url, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")
+            || request.Date == default)
+        {
+            await SendJsonResponse(context, 400, new AudioSegmentErrorResponse
+            {
+                Message = "Missing or invalid body (title, an http(s) url and date are required).",
+            }).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await notePdfService!.PreviewAsync(request.Outlet, request.Title, uri.ToString(), request.Date).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            await SendJsonResponse(context, 502, new AudioSegmentErrorResponse { Message = result.Error ?? "No se pudo generar el PDF." }).ConfigureAwait(false);
+            return;
+        }
+
+        await SendJsonResponse(context, 200, new NotePdfPreviewResponse { PreviewId = result.PreviewId!, Link = result.Link! }).ConfigureAwait(false);
+    }
+
+    private async Task HandleNotePdfPreviewFileRequestAsync(HttpListenerContext context)
+    {
+        if (!await EnsureNotePdfConfiguredAsync(context).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var path = notePdfService!.FindPreviewFile(context.Request.QueryString["id"] ?? string.Empty);
+        if (path is null)
+        {
+            await SendJsonResponse(context, 404, new AudioSegmentErrorResponse
+            {
+                Message = "La vista previa del PDF expiró. Cierra y vuelve a abrir la nota.",
+            }).ConfigureAwait(false);
+            return;
+        }
+
+        // Streamed from the scratch file, never buffered.
+        await using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+        context.Response.StatusCode = 200;
+        context.Response.ContentType = "application/pdf";
+        context.Response.ContentLength64 = file.Length;
+        await file.CopyToAsync(context.Response.OutputStream).ConfigureAwait(false);
+        context.Response.Close();
+    }
+
+    private async Task HandleNotePdfCommitRequestAsync(HttpListenerContext context)
+    {
+        if (!await EnsureNotePdfConfiguredAsync(context).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var request = await ReadJsonBodyAsync<NotePdfCommitRequest>(context).ConfigureAwait(false);
+        if (request is null || string.IsNullOrWhiteSpace(request.PreviewId))
+        {
+            await SendJsonResponse(context, 400, new AudioSegmentErrorResponse { Message = "Missing previewId." }).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await notePdfService!.CommitAsync(request.PreviewId).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            await SendJsonResponse(context, 502, new AudioSegmentErrorResponse { Message = result.Error ?? "No se pudo guardar el PDF." }).ConfigureAwait(false);
+            return;
+        }
+
+        await SendJsonResponse(context, 200, new NotePdfResponse { Link = result.Link! }).ConfigureAwait(false);
+    }
 
     private async Task HandleVideoSegmentRequestAsync(HttpListenerContext context)
     {

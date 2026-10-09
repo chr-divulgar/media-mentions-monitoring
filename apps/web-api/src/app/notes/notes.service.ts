@@ -3,6 +3,8 @@ import { DataSource, MongoRepository } from 'typeorm';
 import { ObjectId } from 'mongodb';
 import {
   NoteDto,
+  InternetNotePreviewDto,
+  SaveInternetNoteDto,
   DashboardDataDto,
   DashboardPeriod,
   NoteOrigin,
@@ -11,7 +13,7 @@ import {
   MediaGroupItem,
   MediaNameSentimentItem,
 } from '@repo/shared';
-import { Note } from '../entities';
+import { Note, WorkerAlert } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as moment from 'moment';
 import * as path from 'path';
@@ -22,7 +24,13 @@ import * as fs from 'fs';
 
 @Injectable()
 export class NotesService {
+  // Hours before the article's own PDF copy gives up: the worker prints, then uploads over FTPS.
+  private static readonly PDF_TIMEOUT_MS = 120_000;
+  // Same day boundary the alerts UI uses for worker alerts (see AlertsService.getAlerts).
+  private static readonly BOGOTA_OFFSET_MINUTES = -5 * 60;
+
   noteRepo: MongoRepository<Note>;
+  workerAlertRepo: MongoRepository<WorkerAlert>;
 
   constructor(
     @InjectDataSource('monitoring') private readonly dataSource: DataSource,
@@ -30,9 +38,204 @@ export class NotesService {
     private readonly whatsAppService: WhatsAppService,
   ) {
     this.noteRepo = this.dataSource.getMongoRepository(Note);
+    this.workerAlertRepo = this.dataSource.getMongoRepository(WorkerAlert);
   }
 
-  async setNote(noteDto: NoteDto): Promise<NoteDto> {
+  /**
+   * Opens an internet alert for editing (RQ-014): the worker prints the article's page to a scratch
+   * PDF and says which public link it will have. Nothing is archived and no note is written yet;
+   * that happens in saveInternetNote. The draft carries what the user already edited on an
+   * earlier pass, else what the alert knows.
+   */
+  async previewInternetNote(alertId: string): Promise<InternetNotePreviewDto> {
+    const alert = await this.loadInternetAlert(alertId);
+    const title = alert.title?.trim() || `nota-${alertId}`;
+    const published = this.publishedAt(alert);
+
+    const preview = await this.callWorker<{ previewId: string; link: string }>(
+      '/notes/pdf/preview',
+      {
+        outlet: alert.platform,
+        title,
+        url: alert.url,
+        date: published.format(),
+      },
+    );
+
+    const existing = await this.noteRepo.findOne({
+      where: { alert_id: alertId },
+    });
+    return {
+      previewId: preview.previewId,
+      pdfLink: preview.link,
+      note: {
+        id: existing?.id,
+        index: existing?.index,
+        program: existing?.program || alert.platform,
+        title: existing?.title || title,
+        summary: existing?.summary || alert.text,
+        link: alert.url,
+        topic: existing?.topic,
+        subtopic: existing?.subtopic,
+        subsubtopic: existing?.subsubtopic,
+        origin: existing?.origin,
+        sentiment: existing?.sentiment,
+        zone: existing?.zone,
+        city: existing?.city,
+        rate: existing?.rate,
+        audience: existing?.audience,
+        value: existing?.value,
+      },
+    };
+  }
+
+  /** The previewed PDF itself, for the editor's viewer. */
+  async getInternetPreviewPdf(previewId: string): Promise<Buffer> {
+    const workerUrl =
+      process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
+    const response = await fetch(
+      `${workerUrl}/notes/pdf/preview?id=${encodeURIComponent(previewId)}`,
+      { signal: AbortSignal.timeout(NotesService.PDF_TIMEOUT_MS) },
+    );
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      throw new Error(
+        body.message ?? `El servicio de PDF respondió ${response.status}`,
+      );
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  /**
+   * Saves the internet note: only now does the previewed PDF go to the archive, and its final link
+   * is stored in `attachment` (read-only in the UI). Saving again for the same alert updates the
+   * same note and overwrites the same PDF.
+   */
+  async saveInternetNote(dto: SaveInternetNoteDto): Promise<NoteDto> {
+    if (!dto.title?.trim()) {
+      throw new Error('Falta el titular de la nota.');
+    }
+    const alert = await this.loadInternetAlert(dto.alertId);
+    const published = this.publishedAt(alert);
+
+    const { link } = await this.callWorker<{ link: string }>(
+      '/notes/pdf/commit',
+      { previewId: dto.previewId },
+    );
+
+    let note = await this.noteRepo.findOne({
+      where: { alert_id: dto.alertId },
+    });
+    note ??= this.noteRepo.create({ alert_id: dto.alertId });
+
+    note.media = 'internet';
+    note.mediaName = alert.platform;
+    note.clientName = alert.clientName;
+    note.date = published.format('YYYY-MM-DD');
+    note.startTime = published.format();
+    note.link = alert.url;
+    note.attachment = link;
+    note.index = dto.index ?? note.index;
+    note.program = dto.program ?? note.program;
+    note.title = dto.title.trim();
+    note.summary = dto.summary ?? alert.text;
+    // The classification and pricing the user chose; whatever they left empty stays as it was.
+    note.topic = dto.topic ?? note.topic;
+    note.subtopic = dto.subtopic ?? note.subtopic;
+    note.subsubtopic = dto.subsubtopic ?? note.subsubtopic;
+    note.origin = dto.origin ?? note.origin;
+    note.sentiment = dto.sentiment ?? note.sentiment;
+    note.zone = dto.zone ?? note.zone;
+    note.city = dto.city ?? note.city;
+    note.rate = dto.rate ?? note.rate;
+    note.audience = dto.audience ?? note.audience;
+    note.value = dto.value ?? note.value;
+    note.text = note.text || alert.text;
+    note.message = this.generateMessage(note);
+
+    return await this.noteRepo.save(note);
+  }
+
+  private async loadInternetAlert(alertId: string): Promise<WorkerAlert> {
+    const alert = await this.workerAlertRepo.findOneBy({
+      _id: new ObjectId(alertId),
+    } as unknown as Partial<WorkerAlert>);
+    if (!alert || alert.media !== 'internet' || !alert.url) {
+      throw new Error('La alerta no existe o no es una nota de internet.');
+    }
+    return alert;
+  }
+
+  private publishedAt(alert: WorkerAlert): moment.Moment {
+    return moment(alert.startTime).utcOffset(NotesService.BOGOTA_OFFSET_MINUTES);
+  }
+
+  private async callWorker<T>(route: string, body: unknown): Promise<T> {
+    const workerUrl =
+      process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
+    const response = await fetch(`${workerUrl}${route}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(NotesService.PDF_TIMEOUT_MS),
+    });
+
+    const parsed = (await response.json().catch(() => ({}))) as T & {
+      message?: string;
+    };
+    if (!response.ok) {
+      throw new Error(
+        parsed.message ?? `El servicio de PDF respondió ${response.status}`,
+      );
+    }
+    return parsed;
+  }
+
+  /**
+   * Fills the date, medium, outlet and client a note is missing from the alert it came from, so an
+   * editor that only knows the clip (not the alert's own data) still saves a complete note. What
+   * the note already has is never overwritten. The date is the Bogotá day of the clip when there
+   * is one, else of the alert.
+   */
+  private async completeFromAlert(note: NoteDto, alertId?: string): Promise<NoteDto> {
+    const missing = !note.date || !note.media || !note.mediaName || !note.clientName;
+    if (!missing || !alertId || !ObjectId.isValid(alertId)) {
+      return note;
+    }
+
+    const alert = await this.workerAlertRepo.findOneBy({
+      _id: new ObjectId(alertId),
+    } as unknown as Partial<WorkerAlert>);
+    if (!alert) {
+      return note;
+    }
+
+    const when = moment(note.startTime ?? alert.startTime).utcOffset(
+      NotesService.BOGOTA_OFFSET_MINUTES,
+    );
+    return {
+      ...note,
+      date: note.date || when.format('YYYY-MM-DD'),
+      media: note.media || alert.media,
+      mediaName: note.mediaName || alert.platform,
+      clientName: note.clientName || alert.clientName,
+    };
+  }
+
+  async setNote(input: NoteDto): Promise<NoteDto> {
+    const existingNote = await this.noteRepo.findOneBy({
+      _id: new ObjectId(input.id),
+    });
+
+    if (!existingNote) {
+      throw new Error('Note not found');
+    }
+
+    // A note made from an alert already has its date, medium, outlet and client in that alert.
+    const noteDto = await this.completeFromAlert(input, existingNote.alert_id);
+
     // Validar campos obligatorios
     if (
       !noteDto.date ||
@@ -45,15 +248,12 @@ export class NotesService {
       );
     }
 
-    const existingNote = await this.noteRepo.findOneBy({
-      _id: new ObjectId(noteDto.id),
-    });
-
-    if (!existingNote) {
-      throw new Error('Note not found');
-    }
-    noteDto.message = this.generateMessage(noteDto);
-    Object.assign(existingNote, noteDto);
+    // A generated PDF link is read-only: it can only change by generating the PDF again.
+    const { attachment, ...editable } = noteDto;
+    const keepGeneratedLink = /^https?:\/\//i.test(existingNote.attachment ?? '');
+    const incoming = keepGeneratedLink ? editable : { ...editable, attachment };
+    incoming.message = this.generateMessage({ ...existingNote, ...incoming });
+    Object.assign(existingNote, incoming);
     // Save the updated note
     return await this.noteRepo.save(existingNote);
   }
@@ -83,7 +283,10 @@ export class NotesService {
       return text.replace(/[\n\r\t]/g, ' ').trim();
     }
 
-    return `NOTA ${note.index} ${note.program} **${note.title}** ${formatPlainText(note.summary)} ${formatDuration(note.duration)} (${moment(note.startTime).format('h:mm A')})`;
+    // Web notes have no clip, so no duration to show.
+    const duration =
+      typeof note.duration === 'number' ? ` ${formatDuration(note.duration)}` : '';
+    return `NOTA ${note.index} ${note.program} **${note.title}** ${formatPlainText(note.summary ?? '')}${duration} (${moment(note.startTime).format('h:mm A')})`;
   }
 
   /**

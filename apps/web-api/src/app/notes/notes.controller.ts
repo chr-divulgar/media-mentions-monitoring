@@ -2,11 +2,20 @@ import {
   Controller,
   Post,
   Body,
+  Get,
+  Param,
+  StreamableFile,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
 import { NotesService } from './notes.service';
-import { NoteDto, DashboardDataDto, DashboardPeriod } from '@repo/shared';
+import {
+  NoteDto,
+  DashboardDataDto,
+  DashboardPeriod,
+  CreateInternetPdfDto,
+  SaveInternetNoteDto,
+} from '@repo/shared';
 
 @Controller('notes')
 export class NotesController {
@@ -25,6 +34,48 @@ export class NotesController {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  // The three internet-note routes answer with user-facing messages (from the worker or from the
+  // checks in NotesService), so the error text is passed through as is.
+  @Post('internet-pdf/preview')
+  async previewInternetNote(@Body() dto: CreateInternetPdfDto) {
+    try {
+      return await this.notesService.previewInternetNote(dto.alertId);
+    } catch (error) {
+      throw this.internetNoteError(error);
+    }
+  }
+
+  @Get('internet-pdf/preview/:previewId')
+  async getInternetPreviewPdf(@Param('previewId') previewId: string) {
+    try {
+      return new StreamableFile(
+        await this.notesService.getInternetPreviewPdf(previewId),
+        { type: 'application/pdf' },
+      );
+    } catch (error) {
+      throw this.internetNoteError(error);
+    }
+  }
+
+  @Post('internet-pdf/save')
+  async saveInternetNote(@Body() dto: SaveInternetNoteDto) {
+    try {
+      return await this.notesService.saveInternetNote(dto);
+    } catch (error) {
+      throw this.internetNoteError(error);
+    }
+  }
+
+  private internetNoteError(error: unknown): HttpException {
+    return new HttpException(
+      {
+        status: HttpStatus.BAD_GATEWAY,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      HttpStatus.BAD_GATEWAY,
+    );
   }
 
   @Post('send-note')
