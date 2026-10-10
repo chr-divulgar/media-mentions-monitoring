@@ -462,6 +462,51 @@ public sealed class StageMirrorMonitoringArtifactRepositoryTests
         }
     }
 
+    [Fact]
+    public async Task UpsertAsync_should_not_lose_sources_when_a_late_source_closes_an_hour_whose_bucket_was_already_dropped()
+    {
+        // Sources close their hour one by one, each at its own pace. Once one of them crossed into the next
+        // hour the hour's bucket was dropped, so a source still closing it re-created the bucket holding only
+        // itself and overwrote the hour's file: every other source vanished from that hour's status.
+        var tempRoot = CreateTempDirectory();
+        try
+        {
+            var repository = new StageMirrorMonitoringArtifactRepository(
+                new InMemoryMonitoringArtifactRepository(),
+                new FileSystemEvidenceStore(new OperationsWorkerOptions { StageFilesystemRootPath = tempRoot }),
+                Array.Empty<IMonitoringArtifactDatabaseRepository>());
+            var bogota = TimeSpan.FromHours(-5);
+            var hour19 = new DateTimeOffset(2026, 10, 9, 19, 59, 59, bogota);
+            var hour20 = new DateTimeOffset(2026, 10, 9, 20, 59, 59, bogota);
+
+            await repository.UpsertAsync(ClosingArtifact("a", hour19));
+            await repository.UpsertAsync(ClosingArtifact("b", hour19));
+            await repository.UpsertAsync(ClosingArtifact("a", hour20)); // "a" moved on: hour 19's bucket is dropped
+            await repository.UpsertAsync(ClosingArtifact("c", hour19)); // "c" was still closing hour 19
+
+            var onDisk = System.Text.Json.JsonSerializer.Deserialize<CaptureSummarySnapshot>(
+                await File.ReadAllTextAsync(BuildSummaryPath(tempRoot, hour19)),
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            Assert.Equal(["a", "b", "c"], onDisk!.Sources.Select(source => source.SourceId).ToArray());
+
+            var peeked = repository.TryPeekHour("2026-10-09_19");
+            Assert.Equal(["a", "b", "c"], peeked!.Sources.Select(source => source.SourceId).ToArray());
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tempRoot);
+        }
+    }
+
+    private static MonitoringArtifact ClosingArtifact(string source, DateTimeOffset capturedAt) =>
+        new(
+            id: $"{source}-{capturedAt:HH}",
+            tenantId: "global-ingestion",
+            source: source,
+            kind: "capture",
+            payloadJson: "{\"succeeded\":true,\"opusFilePath\":\"" + source + ".opus\",\"capturedSeconds\":3500,\"silenceFilledSeconds\":0}",
+            capturedAtUtc: capturedAt);
+
     private static MonitoringArtifact CreateArtifact(
         string id,
         string source = "unit-test",

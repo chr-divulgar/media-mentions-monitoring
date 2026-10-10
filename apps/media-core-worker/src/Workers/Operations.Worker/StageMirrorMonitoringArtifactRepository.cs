@@ -77,7 +77,7 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
         var (succeeded, opusFilePath, capturedSeconds, silenceFilledSeconds, checkpoints) = ParseCapturePayload(artifact.PayloadJson);
 
         // Accumulate in the current hour's in-memory bucket
-        var currentSummary = hourlySummaries.GetOrAdd(currentHourKey, key => new HourlySummary(key));
+        var currentSummary = await GetOrCreateBucketAsync(currentHourKey, cancellationToken).ConfigureAwait(false);
         currentSummary.Upsert(sourceId, succeeded, opusFilePath, capturedSeconds, silenceFilledSeconds, checkpoints, artifact.CapturedAtUtc);
 
         // Persist as soon as the evidence exists rather than waiting for the source to cross into
@@ -100,6 +100,27 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
         }
 
         lastHourKeyBySource[sourceId] = currentHourKey;
+    }
+
+    // A bucket is dropped as soon as one source crosses into the next hour, but the sources that close an
+    // hour late (those running behind the clock) still emit into it afterwards. Re-creating it empty made
+    // the file — and TryPeekHour — hold only those late sources, erasing everyone else from that hour. So a
+    // re-created bucket starts from what the hour's file already holds.
+    private async Task<HourlySummary> GetOrCreateBucketAsync(string hourKey, CancellationToken cancellationToken)
+    {
+        if (hourlySummaries.TryGetValue(hourKey, out var existingBucket))
+        {
+            return existingBucket;
+        }
+
+        var bucket = new HourlySummary(hourKey);
+        var onDisk = await ReadSummaryFileAsync($"monitoringArtifacts/capture-summary-{hourKey}.json", cancellationToken).ConfigureAwait(false);
+        if (onDisk is not null)
+        {
+            bucket.Seed(onDisk);
+        }
+
+        return hourlySummaries.GetOrAdd(hourKey, bucket);
     }
 
     private static (bool Succeeded, string OpusFilePath, double CapturedSeconds, double SilenceFilledSeconds, IReadOnlyList<WindowCheckpoint> Checkpoints) ParseCapturePayload(string payloadJson)
@@ -223,6 +244,29 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
             }
         }
 
+        // Starts the bucket from an hour's persisted summary. A source's persisted status is re-derived from
+        // its checkpoints like any other, so only the raw counters are carried over.
+        public void Seed(CaptureSummarySnapshot persisted)
+        {
+            lock (syncRoot)
+            {
+                foreach (var source in persisted.Sources)
+                {
+                    entries.TryAdd(source.SourceId, new SourceEntry
+                    {
+                        SourceId = source.SourceId,
+                        OpusFilePath = source.OpusFile,
+                        CaptureCount = 1,
+                        SucceededCount = string.Equals(source.Status, "excluded", StringComparison.Ordinal) ? 0 : 1,
+                        CapturedSeconds = source.CapturedSeconds,
+                        SilenceFilledSeconds = source.SilenceSeconds,
+                        LastCaptureAtText = source.LastCaptureAt,
+                        Checkpoints = source.Checkpoints ?? Array.Empty<WindowCheckpoint>(),
+                    });
+                }
+            }
+        }
+
         private const double RotationWindowSeconds = 3600.0; // 1-hour rotation
 
         public CaptureSummarySnapshot ToSnapshot()
@@ -246,7 +290,7 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
                             silenceSec,
                             coveragePct,
                             ResolveStatus(e),
-                            e.LastCaptureAt?.ToString("HH:mm:ss zzz"),
+                            e.LastCaptureAt?.ToString("HH:mm:ss zzz") ?? e.LastCaptureAtText,
                             e.Checkpoints);
                     })
                     .ToArray();
@@ -293,6 +337,8 @@ public sealed class StageMirrorMonitoringArtifactRepository : IMonitoringArtifac
             public double CapturedSeconds { get; set; }
             public double SilenceFilledSeconds { get; set; }
             public DateTimeOffset? LastCaptureAt { get; set; }
+            // The persisted text of LastCaptureAt for a source seeded from disk, which has no timestamp to rebuild it from.
+            public string? LastCaptureAtText { get; init; }
             public IReadOnlyList<WindowCheckpoint> Checkpoints { get; set; } = Array.Empty<WindowCheckpoint>();
         }
     }
