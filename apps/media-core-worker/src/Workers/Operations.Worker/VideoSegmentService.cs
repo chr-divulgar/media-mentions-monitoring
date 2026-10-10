@@ -32,10 +32,7 @@ public sealed class VideoSegmentService
     private readonly ICaptureSourceProvider sourceProvider;
     private readonly ILogger<VideoSegmentService> logger;
     private readonly IArchiveStorage? archive;
-
-    // One download at a time: they are ~0.3 GB each, and two editors opening the same alert must not
-    // fetch the same file twice.
-    private static readonly SemaphoreSlim DownloadGate = new(1, 1);
+    private readonly ArchiveDownloadCache? cache;
 
     public VideoSegmentService(
         OperationsWorkerOptions options, ICaptureSourceProvider sourceProvider, ILogger<VideoSegmentService> logger, IArchiveStorage? archive = null)
@@ -44,6 +41,14 @@ public sealed class VideoSegmentService
         this.sourceProvider = sourceProvider;
         this.logger = logger;
         this.archive = archive;
+        cache = archive is null
+            ? null
+            : new ArchiveDownloadCache(
+                archive,
+                Path.Combine(options.StageFilesystemRootPath, "video-cache"),
+                TimeSpan.FromHours(options.VideoCacheHours),
+                options.VideoCacheMaxGb * 1024L * 1024 * 1024,
+                logger);
     }
 
     private string CacheRoot => Path.Combine(options.StageFilesystemRootPath, "video-cache");
@@ -76,7 +81,7 @@ public sealed class VideoSegmentService
             recording = Locate(archived, middle, windowStart, windowEnd);
             if (recording is not null)
             {
-                if (!await EnsureCachedAsync(recording.RelativePath, cancellationToken).ConfigureAwait(false))
+                if (!await cache!.EnsureAsync(recording.RelativePath, cancellationToken).ConfigureAwait(false))
                 {
                     return new VideoSegmentNotAvailable("No se pudo descargar el video del archivo. Intente de nuevo en unos minutos.");
                 }
@@ -184,74 +189,6 @@ public sealed class VideoSegmentService
         }
 
         return candidates;
-    }
-
-    // Makes sure the archived recording is in the cache folder, downloading it when it is not there
-    // or has outlived VideoCacheHours. Returns false when the download failed.
-    private async Task<bool> EnsureCachedAsync(string relativePath, CancellationToken cancellationToken)
-    {
-        var cached = Path.Combine(CacheRoot, relativePath);
-        var maxAge = TimeSpan.FromHours(options.VideoCacheHours);
-
-        await DownloadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (File.Exists(cached) && DateTime.UtcNow - File.GetLastWriteTimeUtc(cached) < maxAge)
-            {
-                return true;
-            }
-
-            // Into a .part file: a download cut short must never be mistaken for the recording.
-            var partial = cached + ".part";
-            bool downloaded;
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(cached))!);
-                downloaded = await archive!.DownloadAsync(relativePath, partial, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                logger.LogWarning(exception, "[VideoSegmentService] Could not download {Path} from the archive.", relativePath);
-                downloaded = false;
-            }
-
-            if (!downloaded)
-            {
-                TryDelete(partial);
-                return false;
-            }
-
-            File.Move(partial, cached, overwrite: true);
-            TrimCache(keep: cached);
-            return true;
-        }
-        finally
-        {
-            DownloadGate.Release();
-        }
-    }
-
-    // Drops cached recordings past their age, then the oldest ones while the folder is over its cap.
-    private void TrimCache(string keep)
-    {
-        var maxAge = TimeSpan.FromHours(options.VideoCacheHours);
-        var files = new DirectoryInfo(CacheRoot).EnumerateFiles("*.mp4", SearchOption.AllDirectories)
-            .Where(file => !string.Equals(file.FullName, Path.GetFullPath(keep), StringComparison.OrdinalIgnoreCase))
-            .OrderBy(file => file.LastWriteTimeUtc)
-            .ToList();
-        var capBytes = options.VideoCacheMaxGb * 1024L * 1024 * 1024;
-        var total = files.Sum(file => file.Length) + new FileInfo(keep).Length;
-
-        foreach (var file in files)
-        {
-            if (DateTime.UtcNow - file.LastWriteTimeUtc < maxAge && total <= capBytes)
-            {
-                break;
-            }
-
-            total -= file.Length;
-            TryDelete(file.FullName);
-        }
     }
 
     private static void TryDelete(string path)

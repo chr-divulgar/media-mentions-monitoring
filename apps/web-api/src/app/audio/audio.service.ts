@@ -181,8 +181,10 @@ export class AudioService {
       format,
     });
 
+    // 120 s: for an alert of an earlier day the worker first fetches the hour's archived mp3 from the FTP
+    // (a few MB to ~15 MB per hour file); later requests for the same hour come from its cache.
     const response = await fetch(`${workerUrl}/audio/segment?${query}`, {
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {

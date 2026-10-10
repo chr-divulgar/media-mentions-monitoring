@@ -242,5 +242,10 @@ public sealed class NotePdfServiceTests
 
         public Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default) =>
             Task.FromResult(false);
+
+        public Task<IReadOnlyList<string>> ListDirectoriesAsync(string relativeDirectory, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
+
+        public Task DeleteDirectoryAsync(string relativeDirectory, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

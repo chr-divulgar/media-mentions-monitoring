@@ -77,6 +77,41 @@ public sealed class FtpArchiveStorage : IArchiveStorage
         return items.Where(item => item.Type == FtpObjectType.File).Select(item => item.Name).ToList();
     }
 
+    public async Task<IReadOnlyList<string>> ListDirectoriesAsync(string relativeDirectory, CancellationToken cancellationToken = default)
+    {
+        var (client, basePath) = CreateClient();
+        await using var _ = client;
+        await client.Connect(cancellationToken).ConfigureAwait(false);
+
+        var remoteDirectory = relativeDirectory.Trim('/').Length == 0 ? basePath : $"{basePath}/{relativeDirectory.Trim('/')}";
+        if (!await client.DirectoryExists(remoteDirectory, cancellationToken).ConfigureAwait(false))
+        {
+            return [];
+        }
+
+        var items = await client.GetListing(remoteDirectory, cancellationToken).ConfigureAwait(false);
+        return items.Where(item => item.Type == FtpObjectType.Directory).Select(item => item.Name).ToList();
+    }
+
+    public async Task DeleteDirectoryAsync(string relativeDirectory, CancellationToken cancellationToken = default)
+    {
+        var clean = relativeDirectory.Trim('/');
+        if (clean.Length == 0 || relativeDirectory.Contains(':') || clean.Split('/').Any(segment => segment is "" or "." or ".."))
+        {
+            throw new ArgumentException($"Refusing to delete '{relativeDirectory}'.", nameof(relativeDirectory));
+        }
+
+        var (client, basePath) = CreateClient();
+        await using var _ = client;
+        await client.Connect(cancellationToken).ConfigureAwait(false);
+
+        var remoteDirectory = $"{basePath}/{clean}";
+        if (await client.DirectoryExists(remoteDirectory, cancellationToken).ConfigureAwait(false))
+        {
+            await client.DeleteDirectory(remoteDirectory, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default)
     {
         var (client, basePath) = CreateClient();

@@ -37,8 +37,13 @@ public static class OperationsWorkerOptionsLoader
         string? ArchiveFtpCertificateHost,
         int? ArchiveMaxParallelUploads,
         int? ArchiveMinIdleMinutes,
+        int? ArchiveRadioMp3Kbps,
+        int? ArchiveRemoteRetentionDays,
+        int? ArchiveRadioMp3SampleRateHz,
         int? VideoCacheHours,
         int? VideoCacheMaxGb,
+        int? AudioCacheHours,
+        int? AudioCacheMaxGb,
         bool? HeadlessBrowserEnabled,
         string? HeadlessBrowserPath,
         int? DefaultFlacWindowDurationSeconds,
@@ -231,6 +236,31 @@ public static class OperationsWorkerOptionsLoader
         if (model.VideoCacheMaxGb is > 0)
         {
             options.VideoCacheMaxGb = model.VideoCacheMaxGb.Value;
+        }
+
+        if (model.AudioCacheHours is > 0)
+        {
+            options.AudioCacheHours = model.AudioCacheHours.Value;
+        }
+
+        if (model.AudioCacheMaxGb is > 0)
+        {
+            options.AudioCacheMaxGb = model.AudioCacheMaxGb.Value;
+        }
+
+        if (model.ArchiveRemoteRetentionDays is >= 0)
+        {
+            options.ArchiveRemoteRetentionDays = model.ArchiveRemoteRetentionDays.Value;
+        }
+
+        if (model.ArchiveRadioMp3Kbps is > 0)
+        {
+            options.ArchiveRadioMp3Kbps = model.ArchiveRadioMp3Kbps.Value;
+        }
+
+        if (model.ArchiveRadioMp3SampleRateHz is > 0)
+        {
+            options.ArchiveRadioMp3SampleRateHz = model.ArchiveRadioMp3SampleRateHz.Value;
         }
 
         if (model.ArchiveMinIdleMinutes is > 0)

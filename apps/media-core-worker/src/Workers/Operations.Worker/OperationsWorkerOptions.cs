@@ -53,11 +53,28 @@ public sealed class OperationsWorkerOptions
 
     public int ArchiveMinIdleMinutes { get; set; } = 20;
 
+    // Radio is archived as an mp3 per hour. The defaults are what the alert editor itself works with
+    // (32 kbps, 16 kHz, mono), so an old alert opens without converting anything.
+    public int ArchiveRadioMp3Kbps { get; set; } = 32;
+
+    // How long the archive keeps a day of radio or TV before ArchiveRetentionWorker deletes it from the server.
+    // 0 never deletes. Anything between 1 and 6 is treated as 7 (see ArchiveRemoteRetention.EffectiveDays), so a
+    // typo cannot wipe last week's recordings.
+    public int ArchiveRemoteRetentionDays { get; set; } = 90;
+
+    public int ArchiveRadioMp3SampleRateHz { get; set; } = 16000;
+
     // Recordings of earlier days are fetched back from the archive for the alert editor into
     // <StageFilesystemRootPath>/video-cache; one is kept this long and the folder is capped in size.
     public int VideoCacheHours { get; set; } = 24;
 
     public int VideoCacheMaxGb { get; set; } = 10;
+
+    // The same for radio: an hour archived as mp3 (~14 MB) is fetched into <StageFilesystemRootPath>/audio-cache
+    // when an alert of an earlier day is edited.
+    public int AudioCacheHours { get; set; } = 24;
+
+    public int AudioCacheMaxGb { get; set; } = 2;
 
     // Headless Chromium (HeadlessBrowser) for outlets behind an anti-bot challenge, and later the
     // PDF copy of each note. Downloaded on first use into this folder (relative to the app root).

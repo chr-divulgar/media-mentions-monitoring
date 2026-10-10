@@ -47,6 +47,7 @@ if (options.IsArchiveActive)
 {
 	builder.Services.AddSingleton<IArchiveStorage, FtpArchiveStorage>();
 	builder.Services.AddHostedService<ArchiveUploadWorker>();
+	builder.Services.AddHostedService<ArchiveRetentionWorker>();
 }
 // One headless Chromium shared by the anti-bot fallback of HtmlArticleReader and the note PDFs.
 if (options.HeadlessBrowserEnabled)

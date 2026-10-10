@@ -31,21 +31,24 @@ public sealed class ArchiveUploadTests
     private static readonly DateTime Now = new(2026, 10, 5, 20, 0, 0, DateTimeKind.Utc);
 
     [Fact]
-    public void FindPendingFiles_returns_only_closed_mp4_files_from_today_and_earlier_days_oldest_first()
+    public void FindPendingFiles_returns_closed_tv_mp4_and_radio_opus_files_oldest_first()
     {
         var root = ArchiveFixture.NewRoot();
         try
         {
             var older = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 4), "rcn_tv", "rcn_tv_2026-10-04_17-00-00.mp4", Now.AddHours(-20));
             var newer = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "rcn_tv", "rcn_tv_2026-10-05_10-00-00.mp4", Now.AddHours(-2));
-            // Audio is not archived at all: not the opus, not its transcription, not a resume file.
-            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_17-00-00.opus", Now.AddHours(-2));
-            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_17-00-00.json", Now.AddHours(-2));
-            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_16-00-00.opus.resume", Now.AddHours(-2));
+            // Radio: the hourly opus goes up (as mp3, see ConvertToMp3); its transcription and resume file do not.
+            var radioOpus = ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_10-00-00.opus", Now.AddHours(-3));
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_10-00-00.json", Now.AddHours(-3));
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_09-00-00.opus.resume", Now.AddHours(-3));
+            // A TV channel's audio and transcription are still not archived: only its video is.
+            ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "rcn_tv", "rcn_tv_2026-10-05_10-00-00.opus", Now.AddHours(-3));
+            ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "rcn_tv", "rcn_tv_2026-10-05_10-00-00.json", Now.AddHours(-3));
 
             var pending = ArchiveUpload.FindPendingFiles(root, (_, _) => false, Now, TimeSpan.FromMinutes(20));
 
-            Assert.Equal([older, newer], pending.Select(p => p.LocalPath));
+            Assert.Equal([older, radioOpus, newer], pending.Select(p => p.LocalPath));
             Assert.Equal("television/2026/10/04/rcn_tv/rcn_tv_2026-10-04_17-00-00.mp4", pending[0].RelativePath);
         }
         finally
@@ -53,6 +56,63 @@ public sealed class ArchiveUploadTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public void FindPendingFiles_sends_a_radio_opus_as_mp3_to_a_remote_path_ending_in_mp3()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_10-00-00.opus", Now.AddHours(-3));
+            ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "rcn_tv", "rcn_tv_2026-10-05_10-00-04.mp4", Now.AddHours(-3));
+
+            var pending = ArchiveUpload.FindPendingFiles(root, (_, _) => false, Now, TimeSpan.FromMinutes(20));
+
+            var radio = pending.Single(p => p.RelativePath.StartsWith("radio/", StringComparison.Ordinal));
+            Assert.Equal("radio/2026/10/05/wradio/wradio_2026-10-05_10-00-00.opus", radio.RelativePath);
+            Assert.Equal("radio/2026/10/05/wradio/wradio_2026-10-05_10-00-00.mp3", radio.RemoteRelativePath);
+            Assert.True(radio.ConvertToMp3);
+
+            var video = pending.Single(p => p.RelativePath.StartsWith("television/", StringComparison.Ordinal));
+            Assert.Equal(video.RelativePath, video.RemoteRelativePath);
+            Assert.False(video.ConvertToMp3);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FindPendingFiles_waits_for_a_radio_hour_to_be_over_even_when_its_file_looks_idle()
+    {
+        // 14:55 Bogota. A station that dropped at 14:10 leaves its 14:00 file untouched for 45 minutes, but the hour is
+        // still open (the session may come back and append to it); the 13:00 file is finished.
+        var now = new DateTime(2026, 10, 5, 19, 55, 0, DateTimeKind.Utc);
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_14-00-00.opus", now.AddMinutes(-45));
+            var closed = ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_13-00-00.opus", now.AddMinutes(-105));
+
+            var pending = ArchiveUpload.FindPendingFiles(root, (_, _) => false, now, TimeSpan.FromMinutes(20));
+
+            Assert.Equal([closed], pending.Select(p => p.LocalPath));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("television/2026/10/05/rcn_tv/a.mp4", true)]
+    [InlineData("radio/2026/10/05/wradio/wradio_2026-10-05_10-00-00.opus", true)]
+    [InlineData("radio/2026/10/05/wradio/wradio_2026-10-05_10-00-00.json", false)]
+    [InlineData("radio/2026/10/05/wradio/wradio_2026-10-05_09-00-00.opus.resume", false)]
+    [InlineData("television/2026/10/05/rcn_tv/rcn_tv_2026-10-05_10-00-00.opus", false)]
+    public void RequiresArchive_is_true_only_for_what_is_archived(string relativePath, bool expected) =>
+        Assert.Equal(expected, ArchiveUpload.RequiresArchive(relativePath));
 
     [Fact]
     public void FindPendingFiles_skips_mp4_files_still_being_written_and_already_archived_ones()
@@ -176,6 +236,86 @@ public sealed class ArchiveUploadWorkerTests
 
         public Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default) =>
             Task.FromResult(false);
+
+        public Task<IReadOnlyList<string>> ListDirectoriesAsync(string relativeDirectory, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
+
+        public Task DeleteDirectoryAsync(string relativeDirectory, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private static ArchiveUploadWorker RadioWorker(
+        string root, FakeStorage storage, ArchiveLedger ledger, Func<string, string, CancellationToken, Task> convert) =>
+        new(
+            new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
+            storage, ledger, new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance,
+            convertToMp3: convert);
+
+    [Fact]
+    public async Task RunOnceAsync_uploads_a_radio_hour_as_mp3_and_ledgers_the_local_opus()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var opus = ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 4), "wradio", "wradio_2026-10-04_10-00-00.opus", DateTime.UtcNow.AddHours(-30));
+            var opusSize = new FileInfo(opus).Length;
+            var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
+            var storage = new FakeStorage();
+            string? uploadedFrom = null;
+            var worker = RadioWorker(root, storage, ledger, async (input, output, _) =>
+            {
+                Assert.Equal(opus, input);
+                await File.WriteAllTextAsync(output, "mp3-bytes");
+                uploadedFrom = output;
+            });
+
+            await worker.RunOnceAsync(CancellationToken.None);
+
+            Assert.Equal(["radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.mp3"], storage.Uploaded);
+            // The ledger keys the LOCAL file (path + size), which is what the purge asks about.
+            Assert.True(ledger.Contains("radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus", opusSize));
+            Assert.False(File.Exists(uploadedFrom!)); // the temporary mp3 is cleaned up
+            Assert.True(File.Exists(opus));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_does_not_ledger_a_radio_hour_whose_conversion_or_upload_failed()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var opus = ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 4), "wradio", "wradio_2026-10-04_10-00-00.opus", DateTime.UtcNow.AddHours(-30));
+            var size = new FileInfo(opus).Length;
+            var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
+            var storage = new FakeStorage();
+            var broken = true;
+            var worker = RadioWorker(root, storage, ledger, async (_, output, _) =>
+            {
+                if (broken) throw new InvalidOperationException("corrupt opus");
+                await File.WriteAllTextAsync(output, "mp3-bytes");
+            });
+
+            await worker.RunOnceAsync(CancellationToken.None); // conversion fails
+            Assert.Empty(storage.Uploaded);
+            Assert.False(ledger.Contains("radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus", size));
+
+            broken = false;
+            storage.Succeeds = false;
+            await worker.RunOnceAsync(CancellationToken.None); // upload fails
+            Assert.False(ledger.Contains("radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus", size));
+
+            storage.Succeeds = true;
+            await worker.RunOnceAsync(CancellationToken.None); // retried and archived
+            Assert.True(ledger.Contains("radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus", size));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -234,20 +374,47 @@ public sealed class RetentionPurgeWithArchiveTests
     private static string Relative(string root, string file) => ArchiveUpload.ToRelativePath(root, file);
 
     [Fact]
-    public void Tick_deletes_non_mp4_files_of_previous_days_without_needing_an_archive_copy()
+    public void Tick_deletes_files_that_are_not_archived_of_previous_days_without_needing_an_archive_copy()
     {
         var root = ArchiveFixture.NewRoot();
         try
         {
-            var opus = Audio(root, Yesterday, "a.opus", TimeSpan.FromHours(5));
             var json = Audio(root, Yesterday, "a.json", TimeSpan.FromHours(5));
             var resume = Audio(root, Yesterday, "b.opus.resume", TimeSpan.FromHours(5));
+            // A TV channel's audio is not archived either: it goes with its day.
+            var tvOpus = ArchiveFixture.MakeFile(root, "television", Yesterday, "rcn_tv", "rcn_tv_2026-10-04_10-00-00.opus", ClockNow.UtcDateTime - TimeSpan.FromHours(5));
 
             Worker(root, new ArchiveLedger(Path.Combine(root, "ledger.jsonl")), new ArchiveFixture.Incidents()).Tick();
 
-            Assert.False(File.Exists(opus));
             Assert.False(File.Exists(json));
             Assert.False(File.Exists(resume));
+            Assert.False(File.Exists(tvOpus));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Tick_keeps_a_previous_day_radio_opus_until_the_archive_has_it_and_then_deletes_it()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var opus = Audio(root, Yesterday, "wradio_2026-10-04_10-00-00.opus", TimeSpan.FromHours(1));
+            var size = new FileInfo(opus).Length;
+            var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
+            var worker = Worker(root, ledger, new ArchiveFixture.Incidents());
+
+            worker.Tick();
+            Assert.True(File.Exists(opus)); // not archived yet
+
+            ledger.Add(Relative(root, opus), size);
+            worker.Tick();
+
+            Assert.False(File.Exists(opus));
+            Assert.False(ledger.Contains(Relative(root, opus), size));
         }
         finally
         {
@@ -327,8 +494,8 @@ public sealed class RetentionPurgeWithArchiveTests
         var root = ArchiveFixture.NewRoot();
         try
         {
-            var stillWriting = Audio(root, Yesterday, "a.opus", TimeSpan.FromMinutes(5));
-            var finished = Audio(root, Yesterday, "b.opus", TimeSpan.FromHours(2));
+            var stillWriting = Audio(root, Yesterday, "a.json", TimeSpan.FromMinutes(5));
+            var finished = Audio(root, Yesterday, "b.json", TimeSpan.FromHours(2));
 
             Worker(root, new ArchiveLedger(Path.Combine(root, "ledger.jsonl")), new ArchiveFixture.Incidents()).Tick();
 
@@ -387,7 +554,7 @@ public sealed class RetentionPurgeWithArchiveTests
         try
         {
             var mp4 = Mp4(root, Yesterday, "a.mp4", TimeSpan.FromHours(3));
-            Audio(root, Yesterday, "a.opus", TimeSpan.FromHours(3));
+            Audio(root, Yesterday, "a.json", TimeSpan.FromHours(3));
             var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
             ledger.Add(Relative(root, mp4), new FileInfo(mp4).Length);
 
@@ -415,5 +582,33 @@ public sealed class FtpArchiveCredentialsTests
         var parsed = new FtpArchiveCredentials(url, "u", "p").Parse();
 
         Assert.Equal((host, port, basePath, isImplicit), parsed);
+    }
+}
+
+public sealed class OpusToMp3ArchiveTests
+{
+    private static string SampleOpus => Path.Combine(AppContext.BaseDirectory, "TestData", "sample-radio.opus");
+
+    [Fact]
+    public void TranscodeFileToMp3_writes_a_playable_mono_mp3_as_long_as_the_whole_source()
+    {
+        var output = Path.Combine(Path.GetTempPath(), $"archive-test-{Guid.NewGuid():N}.mp3");
+        try
+        {
+            OpusSegmentTranscoder.TranscodeFileToMp3(SampleOpus, output, bitrateKbps: 32, sampleRateHz: 16000);
+
+            var bytes = File.ReadAllBytes(output);
+            // 3 s of 32 kbps audio is ~12 KB; a header-only or silent-failure file would be far smaller.
+            Assert.InRange(bytes.Length, 8_000, 20_000);
+
+            // Read it back: mono 16-bit at 16 kHz is 32 000 bytes a second, after a 44-byte wav header.
+            var wav = OpusSegmentTranscoder.Transcode([output], 0, 60, 16000, 64, "wav");
+            var seconds = (wav.Length - 44) / 32000.0;
+            Assert.InRange(seconds, 2.8, 3.3);
+        }
+        finally
+        {
+            File.Delete(output);
+        }
     }
 }

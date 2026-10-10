@@ -22,6 +22,15 @@ internal static unsafe class OpusSegmentTranscoder
 {
     private const int OutputChannels = 1;
 
+    // A whole closed-hour file to an mp3 on disk, for the archive. Same encoder and mono layout as the alert
+    // editor's segments; the duration is only a ceiling (the loop ends at the end of the file), and writing
+    // straight to disk avoids holding an hour of audio in memory.
+    public static void TranscodeFileToMp3(string inputPath, string outputPath, int bitrateKbps, int sampleRateHz)
+    {
+        InProcessFfmpegAudioCapturePlugin.EnsureFfmpegInitialized();
+        WriteSegment([inputPath], 0, TimeSpan.FromHours(24).TotalSeconds, sampleRateHz, bitrateKbps, "mp3", outputPath);
+    }
+
     public static byte[] Transcode(
         IReadOnlyList<string> orderedFilePaths,
         double windowStartOffsetSeconds,

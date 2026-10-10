@@ -9,6 +9,9 @@ namespace MediaOpsCore.Workers.Operations;
 /// InProcessFfmpegAudioCapturePlugin.BuildMediaDirectoryName/AlignWindow, reused here rather than
 /// duplicated), and hands off to OpusSegmentTranscoder for the actual decode/cut/encode work.
 ///
+/// An hour that is no longer on this disk (the purge keeps only today's) is looked up in the archive, where
+/// it is kept as an mp3: ArchiveDownloadCache fetches it once and it is then cut like any other source.
+///
 /// A window that touches the still-recording current hour is served from a point-in-time copy of
 /// that hour's file rather than the live one — see TrySnapshotLiveFile — so extraction reads
 /// whatever the session has flushed so far without ever contending with FFmpeg's own writes to it.
@@ -20,14 +23,26 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
     private readonly ILiveCaptureProgressReader liveCaptureProgressReader;
     private readonly OperationsWorkerOptions options;
     private readonly ILogger<ClosedHourAudioSegmentReader> logger;
+    private readonly IArchiveStorage? archive;
+    private readonly ArchiveDownloadCache? cache;
 
     public ClosedHourAudioSegmentReader(
         ICaptureSourceRepository captureSourceRepository,
         IIngestionPluginResolver pluginResolver,
         ILiveCaptureProgressReader liveCaptureProgressReader,
         OperationsWorkerOptions options,
-        ILogger<ClosedHourAudioSegmentReader> logger)
+        ILogger<ClosedHourAudioSegmentReader> logger,
+        IArchiveStorage? archive = null)
     {
+        this.archive = archive;
+        cache = archive is null
+            ? null
+            : new ArchiveDownloadCache(
+                archive,
+                Path.Combine(options.StageFilesystemRootPath, "audio-cache"),
+                TimeSpan.FromHours(options.AudioCacheHours),
+                options.AudioCacheMaxGb * 1024L * 1024 * 1024,
+                logger);
         this.captureSourceRepository = captureSourceRepository;
         this.pluginResolver = pluginResolver;
         this.liveCaptureProgressReader = liveCaptureProgressReader;
@@ -75,8 +90,9 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
         var endLocal = endUtc.ToOffset(sourceOffset);
         var firstHourStart = InProcessFfmpegAudioCapturePlugin.AlignWindow(startLocal, rotationInterval);
 
-        var resolved = ResolveOrderedFiles(
-            sourceId, mediaDirectory, firstHourStart, endLocal, currentHourStart, rotationInterval, liveProgress);
+        var resolved = await ResolveOrderedFilesAsync(
+            sourceId, mediaDirectory, firstHourStart, endLocal, currentHourStart, rotationInterval, liveProgress, cancellationToken)
+            .ConfigureAwait(false);
         if (resolved.Rejection is not null)
         {
             return resolved.Rejection;
@@ -120,19 +136,20 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
     private readonly record struct ResolvedFiles(
         IReadOnlyList<string> Files, string? LiveSnapshotPath, ClosedHourAudioResult? Rejection);
 
-    // Walks the window hour by hour, collecting the closed-hour files that exist and — for the
-    // live hour, if the window reaches it — a point-in-time copy of the file the session still has
-    // open (see TrySnapshotLiveFile). Stops at the first hour that turns out to be unavailable,
-    // returning whatever was collected before it: a gap partway through a window is served as far
-    // as it goes rather than rejected outright.
-    private ResolvedFiles ResolveOrderedFiles(
+    // Walks the window hour by hour, collecting the closed-hour files that exist (on this disk, else the
+    // archived mp3) and — for the live hour, if the window reaches it — a point-in-time copy of the file
+    // the session still has open (see TrySnapshotLiveFile). Stops at the first hour that turns out to be
+    // unavailable, returning whatever was collected before it: a gap partway through a window is served
+    // as far as it goes rather than rejected outright.
+    private async Task<ResolvedFiles> ResolveOrderedFilesAsync(
         string sourceId,
         string mediaDirectory,
         DateTimeOffset firstHourStart,
         DateTimeOffset endLocal,
         DateTimeOffset currentHourStart,
         TimeSpan rotationInterval,
-        LiveCaptureProgress? liveProgress)
+        LiveCaptureProgress? liveProgress,
+        CancellationToken cancellationToken)
     {
         var files = new List<string>();
 
@@ -156,17 +173,63 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
 
             if (!File.Exists(candidate))
             {
+                var archived = await FindArchivedHourAsync(mediaDirectory, sourceId, hourStart, cancellationToken).ConfigureAwait(false);
+                if (archived.Path is not null)
+                {
+                    files.Add(archived.Path);
+                    continue;
+                }
+
                 return files.Count == 0
                     ? new ResolvedFiles(files, null, new ClosedHourAudioNotAvailable(
-                        $"No recording found for '{sourceId}' at {hourStart:yyyy-MM-dd HH:mm}."))
+                        archived.Reason ?? $"No recording found for '{sourceId}' at {hourStart:yyyy-MM-dd HH:mm}."))
                     : new ResolvedFiles(files, null, null); // a gap mid-window — serve what came before it
-
             }
 
             files.Add(candidate);
         }
 
         return new ResolvedFiles(files, null, null);
+    }
+
+    // The hour as the archive holds it: an mp3 next to where the opus was, fetched into the cache on first use.
+    // Without an archive this is "nothing" and the caller reports the plain "no recording" it always did. With
+    // one, a missing hour and an archive that cannot be reached get different messages, because only the
+    // second is worth retrying.
+    private async Task<(string? Path, string? Reason)> FindArchivedHourAsync(
+        string mediaDirectory, string sourceId, DateTimeOffset hourStart, CancellationToken cancellationToken)
+    {
+        if (archive is null || cache is null)
+        {
+            return (null, null);
+        }
+
+        var directory = $"{mediaDirectory}/{hourStart:yyyy}/{hourStart:MM}/{hourStart:dd}/{sourceId}";
+        var name = $"{sourceId}_{hourStart:yyyy-MM-dd_HH-mm-ss}.mp3";
+        var relativePath = $"{directory}/{name}";
+
+        if (cache.IsFresh(relativePath))
+        {
+            return (cache.PathFor(relativePath), null);
+        }
+
+        try
+        {
+            var names = await archive.ListAsync(directory, cancellationToken).ConfigureAwait(false);
+            if (!names.Contains(name, StringComparer.Ordinal))
+            {
+                return (null, $"No hay audio archivado de '{sourceId}' para {hourStart:yyyy-MM-dd HH:mm}.");
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "[ClosedHourAudioSegmentReader] Could not list the archive for {SourceId}.", sourceId);
+            return (null, "No se pudo consultar el archivo de audio. Intente de nuevo en unos minutos.");
+        }
+
+        return await cache.EnsureAsync(relativePath, cancellationToken).ConfigureAwait(false)
+            ? (cache.PathFor(relativePath), null)
+            : (null, "No se pudo descargar el audio del archivo. Intente de nuevo en unos minutos.");
     }
 
     // Copies the live hour's file to a temp path before reading it, so the actual extraction

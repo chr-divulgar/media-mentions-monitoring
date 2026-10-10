@@ -18,7 +18,7 @@ public sealed class RetentionPurgeWorker : BackgroundService
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan BogotaOffset = TimeSpan.FromHours(-5);
     private const double BytesPerGb = 1024.0 * 1024 * 1024;
-    // An .mp4 not archived this long after its last write means the upload is falling behind.
+    // A file that must be archived and is not this long after its last write means the upload is falling behind.
     private static readonly TimeSpan BacklogGrace = TimeSpan.FromHours(2);
 
     private readonly OperationsWorkerOptions options;
@@ -101,10 +101,11 @@ public sealed class RetentionPurgeWorker : BackgroundService
         }
     }
 
-    // Archive mode. Only TV video (.mp4) is archived, so it is the only thing whose deletion waits
-    // for the archive: an .mp4 from a previous day goes once the ledger has verified its remote copy,
-    // and stays (with a backlog incident if it lingers) when it is not there. Everything else —
-    // audio, transcription, resume files — is simply deleted once its day is over. Today's folder is
+    // Archive mode. What is archived (TV video and the radio's hourly audio, see ArchiveUpload.RequiresArchive)
+    // is the only thing whose deletion waits for the archive: such a file from a previous day goes once the
+    // ledger has verified its remote copy, and stays (with a backlog incident if it lingers) when it is not
+    // there. Everything else — transcriptions, resume files, a TV channel's audio — is simply deleted once
+    // its day is over. Today's folder is
     // never part of this (the cutoff is at most today), and a file written to recently is left for a
     // later pass: right after midnight the last hour of the day can still be flushing.
     private void PurgeArchivedFiles(DateOnly cutoff, ArchiveLedger ledger)
@@ -123,9 +124,9 @@ public sealed class RetentionPurgeWorker : BackgroundService
                     continue;
                 }
 
-                var isVideo = file.Name.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase);
                 var relative = ArchiveUpload.ToRelativePath(options.AudioOutputRootPath, file.FullName);
-                if (isVideo && !ledger.Contains(relative, file.Length))
+                var isArchived = ArchiveUpload.RequiresArchive(relative);
+                if (isArchived && !ledger.Contains(relative, file.Length))
                 {
                     // Closed but not archived yet: normal while it waits its turn to upload; only a
                     // file that stays that way for hours means the upload is not keeping up.
@@ -140,7 +141,7 @@ public sealed class RetentionPurgeWorker : BackgroundService
                 try
                 {
                     file.Delete();
-                    if (isVideo)
+                    if (isArchived)
                     {
                         ledger.Remove(relative);
                     }
@@ -159,7 +160,7 @@ public sealed class RetentionPurgeWorker : BackgroundService
             backlogReported = true;
             incidentRecorder.Record(
                 IncidentKinds.WorkerSourceId, IncidentKinds.ArchiveBacklog,
-                $"{backlog} video(s) MP4 de días anteriores llevan más de {BacklogGrace.TotalHours:0} h sin archivar en el servidor; no se borran localmente.");
+                $"{backlog} archivo(s) de días anteriores (video MP4 o audio de radio) llevan más de {BacklogGrace.TotalHours:0} h sin archivar en el servidor; no se borran localmente.");
         }
         else if (backlog == 0)
         {

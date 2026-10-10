@@ -20,6 +20,8 @@ public sealed class ArchiveUploadWorker : BackgroundService
     // Gives each source's UTC offset, which its file names are stamped in. Optional: without it every
     // source is read as Bogota time.
     private readonly ICaptureSourceRepository? sourceRepository;
+    // Converts a radio hour (opus) into the mp3 that is archived; injectable so a pass can be tested without FFmpeg.
+    private readonly Func<string, string, CancellationToken, Task> convertToMp3;
     private bool failingStreak;
 
     public ArchiveUploadWorker(
@@ -28,9 +30,12 @@ public sealed class ArchiveUploadWorker : BackgroundService
         ArchiveLedger ledger,
         ISourceIncidentRecorder incidentRecorder,
         ILogger<ArchiveUploadWorker> logger,
-        ICaptureSourceRepository? sourceRepository = null)
+        ICaptureSourceRepository? sourceRepository = null,
+        Func<string, string, CancellationToken, Task>? convertToMp3 = null)
     {
         this.sourceRepository = sourceRepository;
+        this.convertToMp3 = convertToMp3 ?? ((input, output, ct) => Task.Run(
+            () => OpusSegmentTranscoder.TranscodeFileToMp3(input, output, options.ArchiveRadioMp3Kbps, options.ArchiveRadioMp3SampleRateHz), ct));
         this.options = options;
         this.storage = storage;
         this.ledger = ledger;
@@ -79,6 +84,39 @@ public sealed class ArchiveUploadWorker : BackgroundService
         }
     }
 
+    // Uploads one file (converting a radio hour to mp3 first). False — never an exception — for an operational
+    // failure, so one corrupt file cannot stop the others and is simply retried on the next pass.
+    private async Task<bool> ArchiveOneAsync(PendingArchiveFile file, CancellationToken cancellationToken)
+    {
+        if (!file.ConvertToMp3)
+        {
+            return await storage.UploadAsync(file.LocalPath, file.RemoteRelativePath, cancellationToken).ConfigureAwait(false);
+        }
+
+        var temporaryMp3 = Path.Combine(Path.GetTempPath(), $"archive-{Guid.NewGuid():N}.mp3");
+        try
+        {
+            await convertToMp3(file.LocalPath, temporaryMp3, cancellationToken).ConfigureAwait(false);
+            return await storage.UploadAsync(temporaryMp3, file.RemoteRelativePath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "[ArchiveUploadWorker] Could not convert {Path} to mp3.", file.RelativePath);
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryMp3);
+            }
+            catch (IOException)
+            {
+                // A leftover temp file is cleaned with the temp folder.
+            }
+        }
+    }
+
     // Internal so a test can drive one pass without waiting on the timer.
     internal async Task RunOnceAsync(CancellationToken cancellationToken)
     {
@@ -100,7 +138,7 @@ public sealed class ArchiveUploadWorker : BackgroundService
             new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, options.ArchiveMaxParallelUploads), CancellationToken = cancellationToken },
             async (file, ct) =>
             {
-                if (await storage.UploadAsync(file.LocalPath, file.RelativePath, ct).ConfigureAwait(false))
+                if (await ArchiveOneAsync(file, ct).ConfigureAwait(false))
                 {
                     ledger.Add(file.RelativePath, file.Size);
                     Interlocked.Increment(ref uploaded);

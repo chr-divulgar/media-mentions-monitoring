@@ -31,6 +31,9 @@ scripts/*.json
 *.flac
 *.opus
 *.mp3
+# Tiny synthetic fixtures the worker's tests read (3 s tones), unlike the real recordings ignored above.
+!apps/media-core-worker/tests/Unit/MediaOpsCore.UnitTests/TestData/*.opus
+!apps/media-core-worker/tests/Unit/MediaOpsCore.UnitTests/TestData/*.mp3
 /apps/media-core-worker/stage-evidence/*
 /apps/media-core-worker/stage/*
 /apps/media-core-worker/graphify-out/*
