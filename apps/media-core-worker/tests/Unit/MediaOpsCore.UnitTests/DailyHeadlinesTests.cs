@@ -91,6 +91,27 @@ public sealed class DailyHeadlinesDigestUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_leaves_out_alerts_waiting_for_manual_review()
+    {
+        // Their date was never confirmed, so they may not even be from this day.
+        var at = new DateTimeOffset(2026, 10, 3, 9, 0, 0, Bogota);
+        var unreadable = new Alert(
+            string.Empty, at, at, "internet", "La Silla Vacía", string.Empty, ["petroleo"], "Ecopetrol", AlertType.New,
+            title: "Nota sin leer", url: "https://lasillavacia.com/x") { ReviewReason = "HTTP 403" };
+        var notifier = new RecordingMessageNotifier();
+        var sut = new DailyHeadlinesDigestUseCase(
+            new FakeClients(Client("Ecopetrol", phones: ["573001112233"])),
+            new FakeAlerts(WebAlert("Ecopetrol", "Nota leída", "El Tiempo", at), unreadable),
+            notifier);
+
+        await sut.ExecuteAsync(Day);
+
+        var sent = Assert.Single(notifier.Sent);
+        Assert.Contains("Nota leída", sent.Text);
+        Assert.DoesNotContain("Nota sin leer", sent.Text);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_asks_the_repository_for_exactly_the_bogota_day()
     {
         var alerts = new FakeAlerts();

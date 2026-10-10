@@ -200,8 +200,9 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             var linkResolution = await newsLinkResolver.ResolveAsync(item, cancellationToken).ConfigureAwait(false);
             if (!linkResolution.Succeeded)
             {
-                await SaveAsync(item, item.GoogleLink, WebArticleStatus.Failed, item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
-                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — no se pudo resolver el enlace: {linkResolution.ErrorMessage} — {linkForIncidents}");
+                var final = await SaveAsync(item, item.GoogleLink, WebArticleStatus.Failed, item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
+                var kept = final && await KeepForReviewAsync(item, item.GoogleLink, item.Title, $"No se pudo resolver el enlace: {linkResolution.ErrorMessage}", null, null, cancellationToken).ConfigureAwait(false);
+                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — no se pudo resolver el enlace: {linkResolution.ErrorMessage}{ReviewSuffix(kept)} — {linkForIncidents}");
                 return ArticleOutcome.Failed;
             }
 
@@ -211,16 +212,18 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             if (content.Blocked)
             {
                 await SaveAsync(item, url, WebArticleStatus.Blocked, content.Title ?? item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
+                var kept = await KeepForReviewAsync(item, url, content.Title ?? item.Title, content.ErrorMessage ?? "Bloqueado por el sitio", null, null, cancellationToken).ConfigureAwait(false);
                 incidentRecorder.Record(
                     SourceId, IncidentKinds.ArticleFailed,
-                    $"{item.Outlet} — {item.Title} — {content.ErrorMessage}; no se reintentará — {linkForIncidents}");
+                    $"{item.Outlet} — {item.Title} — {content.ErrorMessage}; no se reintentará{ReviewSuffix(kept)} — {linkForIncidents}");
                 return ArticleOutcome.Failed;
             }
 
             if (!content.Succeeded)
             {
-                await SaveAsync(item, url, WebArticleStatus.Failed, content.Title ?? item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
-                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — no se pudo extraer el contenido: {content.ErrorMessage} — {linkForIncidents}");
+                var final = await SaveAsync(item, url, WebArticleStatus.Failed, content.Title ?? item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
+                var kept = final && await KeepForReviewAsync(item, url, content.Title ?? item.Title, $"No se pudo extraer el contenido: {content.ErrorMessage}", null, null, cancellationToken).ConfigureAwait(false);
+                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — no se pudo extraer el contenido: {content.ErrorMessage}{ReviewSuffix(kept)} — {linkForIncidents}");
                 return ArticleOutcome.Failed;
             }
 
@@ -228,8 +231,10 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
 
             if (content.PublishedAt is null)
             {
+                // Not "confirmed not from today" — the date is simply unknown — so it is kept for a person to judge.
                 await SaveAsync(item, url, WebArticleStatus.NoDate, title, content.FirstParagraph, [], [], cancellationToken).ConfigureAwait(false);
-                incidentRecorder.Record(SourceId, IncidentKinds.ArticleRejected, $"{item.Outlet} — {title} — sin fecha en la página — {linkForIncidents}");
+                var kept = await KeepForReviewAsync(item, url, title, "Sin fecha en la página", content.FirstParagraph, content.FullText, cancellationToken).ConfigureAwait(false);
+                incidentRecorder.Record(SourceId, IncidentKinds.ArticleRejected, $"{item.Outlet} — {title} — sin fecha en la página{ReviewSuffix(kept)} — {linkForIncidents}");
                 return ArticleOutcome.Rejected;
             }
 
@@ -275,13 +280,35 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // One bad article must never take the whole cycle down with it.
-            incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — error inesperado: {exception.Message} — {linkForIncidents}");
+            // One bad article must never take the whole cycle down with it. It still counts as a failed
+            // attempt: without that it came back every cycle for good, and never got its review alert.
+            var kept = false;
+            try
+            {
+                var final = await SaveAsync(item, linkForIncidents, WebArticleStatus.Failed, item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
+                kept = final && await KeepForReviewAsync(item, linkForIncidents, item.Title, $"Error inesperado: {exception.Message}", null, null, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception saveException) when (saveException is not OperationCanceledException)
+            {
+                incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — no se pudo guardar el fallo: {saveException.Message} — {linkForIncidents}");
+            }
+
+            incidentRecorder.Record(SourceId, IncidentKinds.ArticleFailed, $"{item.Outlet} — {item.Title} — error inesperado: {exception.Message}{ReviewSuffix(kept)} — {linkForIncidents}");
             return ArticleOutcome.Failed;
         }
     }
 
-    private Task SaveAsync(
+    // Stores a title-and-link alert for the clients named in the headline so the mention shows up in the
+    // alerts list for a person to check. True when at least one was stored.
+    private async Task<bool> KeepForReviewAsync(
+        NewsSearchItem item, string url, string? title, string reason, string? firstParagraph, string? matchText, CancellationToken cancellationToken) =>
+        await detectAlertsUseCase
+            .ExecuteUnreadableWebArticleAsync(item.Outlet, url, title ?? item.Title, reason, firstParagraph, matchText, cancellationToken)
+            .ConfigureAwait(false) > 0;
+
+    private static string ReviewSuffix(bool kept) => kept ? " — guardada en Alertas para revisión manual" : string.Empty;
+
+    private Task<bool> SaveAsync(
         NewsSearchItem item,
         string url,
         string status,

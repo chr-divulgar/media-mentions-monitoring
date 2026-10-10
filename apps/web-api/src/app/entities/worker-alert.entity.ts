@@ -55,4 +55,9 @@ export class WorkerAlert {
   // For a repeat, the id (as a string) of the "Nueva" alert that started its story.
   @Column()
   repeatOfAlertId?: string;
+
+  // Only for a web mention the worker could not read (or that has no date): it holds just the
+  // headline and link, and this says what a person has to check.
+  @Column()
+  reviewReason?: string;
 }

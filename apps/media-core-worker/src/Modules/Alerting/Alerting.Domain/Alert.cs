@@ -35,6 +35,10 @@ public sealed class Alert
     // The stored alert's id: null until it is persisted (InsertAsync), set when it is read back.
     public string? Id { get; set; }
 
+    // Set only for a web mention the platform could not fully process (page unreadable, no date on it):
+    // it carries just the headline and link, nothing is sent, and this says what a person must check.
+    public string? ReviewReason { get; init; }
+
     // For a repeat, the id of the "Nueva" alert that started the story; null for everything else
     // (and for alerts stored before this field existed). Repeats of repeats point at the same root.
     public string? RepeatOfAlertId { get; init; }

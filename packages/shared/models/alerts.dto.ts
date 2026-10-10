@@ -24,6 +24,8 @@ export class AlertDto {
   readonly slaSeconds?: number;
   /** For a repeat, the id of the "Nueva" alert that started its story (worker alerts); absent on older alerts. */
   readonly repeatOfAlertId?: string;
+  /** Web mention the worker could not read or date: only title and link are stored, and this says what to check. */
+  readonly reviewReason?: string;
 }
 
 /** Target for "alert within 5 minutes of capture" (AMB-001); configurable per level later. */

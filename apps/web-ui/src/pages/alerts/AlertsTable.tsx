@@ -18,7 +18,7 @@ import type {
   TableColumnType,
   TableProps,
 } from "antd";
-import { Alert as AntAlert, Button, Input, Radio, Space, Table, Tag } from "antd";
+import { Alert as AntAlert, Button, Input, Radio, Space, Table, Tag, Tooltip } from "antd";
 import type { FilterDropdownProps } from "antd/es/table/interface";
 import Highlighter from "react-highlight-words";
 import AlertsModal from "./AlertsModal";
@@ -350,6 +350,11 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates, showSla = fals
                 </a>
               ) : (
                 <strong>{record.title}</strong>
+              )}
+              {record.reviewReason && (
+                <Tooltip title={record.reviewReason}>
+                  <Tag color="orange">Revisar manualmente</Tag>
+                </Tooltip>
               )}
               <div>{text}</div>
             </div>

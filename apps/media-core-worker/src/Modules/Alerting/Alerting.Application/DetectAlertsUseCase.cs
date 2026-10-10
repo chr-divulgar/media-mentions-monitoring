@@ -51,11 +51,7 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
 
         foreach (var client in clients)
         {
-            var matchedWords = client.Keywords
-                .Select(keyword => keyword.Value)
-                .Where(value => !string.IsNullOrEmpty(value) && text.Contains(value, StringComparison.OrdinalIgnoreCase))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            var matchedWords = MatchedKeywords(client, text);
 
             if (matchedWords.Length == 0)
             {
@@ -122,11 +118,7 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
 
         foreach (var client in clients)
         {
-            var clientMatchedWords = client.Keywords
-                .Select(keyword => keyword.Value)
-                .Where(value => !string.IsNullOrEmpty(value) && text.Contains(value, StringComparison.OrdinalIgnoreCase))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            var clientMatchedWords = MatchedKeywords(client, text);
 
             if (clientMatchedWords.Length == 0)
             {
@@ -158,6 +150,54 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
 
         return new WebArticleAlertOutcome(matchedClients, matchedKeywords.ToArray(), recipientCount, notifiedCount);
     }
+
+    public async Task<int> ExecuteUnreadableWebArticleAsync(
+        string outlet,
+        string url,
+        string title,
+        string reason,
+        string? firstParagraph = null,
+        string? matchText = null,
+        CancellationToken cancellationToken = default)
+    {
+        var text = $"{title}\n{matchText}";
+        var clients = await clientConfigRepository.GetClientsAsync(cancellationToken).ConfigureAwait(false);
+        // Its real publication time is unknown, so the alert is dated when it was found.
+        var detectedAt = DateTimeOffset.UtcNow;
+        var stored = 0;
+
+        foreach (var client in clients)
+        {
+            var matchedWords = MatchedKeywords(client, text);
+            if (matchedWords.Length == 0
+                || await alertRepository.ExistsForUrlAsync(url, client.Name, cancellationToken).ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            var alert = new Alert(
+                firstParagraph ?? string.Empty, detectedAt, detectedAt, "internet", outlet, string.Empty,
+                matchedWords, client.Name, AlertType.New, title, url,
+                level: HighestLevel(client, matchedWords),
+                capturedAt: detectedAt)
+            {
+                ReviewReason = reason,
+            };
+
+            // No recipients: nothing to send, so nothing is ever left "pending" for the retry worker.
+            await alertRepository.InsertAsync(alert, Array.Empty<string>(), cancellationToken).ConfigureAwait(false);
+            stored++;
+        }
+
+        return stored;
+    }
+
+    private static string[] MatchedKeywords(ClientKeywordConfig client, string text) =>
+        client.Keywords
+            .Select(keyword => keyword.Value)
+            .Where(value => !string.IsNullOrEmpty(value) && text.Contains(value, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     // A mention is as severe as the most severe keyword it matched ("derrame" alone makes the whole
     // alert N4 even when "petroleo", also matched, is N1).

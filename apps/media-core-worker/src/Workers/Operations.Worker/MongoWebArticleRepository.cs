@@ -46,7 +46,7 @@ public sealed class MongoWebArticleRepository : IWebArticleRepository
         return documents.Select(document => document["googleId"].AsString).ToHashSet(StringComparer.Ordinal);
     }
 
-    public async Task SaveAsync(WebArticleRecord record, CancellationToken cancellationToken = default)
+    public async Task<bool> SaveAsync(WebArticleRecord record, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(record);
         await EnsureIndexAsync(cancellationToken).ConfigureAwait(false);
@@ -70,9 +70,11 @@ public sealed class MongoWebArticleRepository : IWebArticleRepository
                 .Set("discoveredAt", record.DiscoveredAt.UtcDateTime)
                 .Inc("attemptCount", 1);
 
-            await collection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, cancellationToken)
-                .ConfigureAwait(false);
-            return;
+            var updated = await collection.FindOneAndUpdateAsync(
+                filter, update,
+                new FindOneAndUpdateOptions<BsonDocument> { IsUpsert = true, ReturnDocument = ReturnDocument.After },
+                cancellationToken).ConfigureAwait(false);
+            return updated["attemptCount"].ToInt32() >= maxFailedAttempts;
         }
 
         // A terminal outcome (alerted, or a content-based rejection like no-date/no-keyword)
@@ -95,6 +97,7 @@ public sealed class MongoWebArticleRepository : IWebArticleRepository
 
         await collection.ReplaceOneAsync(filter, document, new ReplaceOptions { IsUpsert = true }, cancellationToken)
             .ConfigureAwait(false);
+        return true;
     }
 
     // Lazy, not constructor-time: index creation is I/O the host shouldn't block startup on, and

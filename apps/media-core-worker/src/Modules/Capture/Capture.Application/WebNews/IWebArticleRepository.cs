@@ -30,5 +30,7 @@ public interface IWebArticleRepository
     // this set is skipped before any HTTP fetch happens.
     Task<IReadOnlySet<string>> GetSeenGoogleIdsAsync(TimeSpan lookback, CancellationToken cancellationToken = default);
 
-    Task SaveAsync(WebArticleRecord record, CancellationToken cancellationToken = default);
+    // True when the article will not be tried again: every status except Failed is final, and a Failed
+    // one becomes final once it has used up its attempts. Lets the caller act on the last failure.
+    Task<bool> SaveAsync(WebArticleRecord record, CancellationToken cancellationToken = default);
 }

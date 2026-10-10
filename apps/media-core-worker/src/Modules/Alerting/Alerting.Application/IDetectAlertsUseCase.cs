@@ -34,6 +34,20 @@ public interface IDetectAlertsUseCase
         // (e.g. when the page only yielded a meta description, there is nothing more to scan).
         string? matchText = null,
         CancellationToken cancellationToken = default);
+
+    // A web mention that could not be processed (the page was unreadable, or has no date) but whose
+    // headline names a client's keyword: stored with just title and link, flagged with `reason` for a
+    // person to review, and never sent. The article's date is unconfirmed, so it is kept out of the
+    // daily digest. Keywords are matched on the title plus whatever text was read. Returns how many
+    // alerts were stored (one per matching client that does not already have one for the url).
+    Task<int> ExecuteUnreadableWebArticleAsync(
+        string outlet,
+        string url,
+        string title,
+        string reason,
+        string? firstParagraph = null,
+        string? matchText = null,
+        CancellationToken cancellationToken = default);
 }
 
 // What WebNewsCaptureUseCase needs back to decide the article's final status and what to log:

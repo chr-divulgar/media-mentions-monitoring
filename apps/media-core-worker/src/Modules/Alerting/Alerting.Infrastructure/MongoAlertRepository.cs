@@ -41,6 +41,7 @@ public sealed class MongoAlertRepository : IAlertRepository, IDailyHeadlinesSour
             { "title", alert.Title is null ? BsonNull.Value : alert.Title },
             { "url", alert.Url is null ? BsonNull.Value : alert.Url },
             { "level", alert.Level.ToLabel() },
+            { "reviewReason", alert.ReviewReason is null ? BsonNull.Value : alert.ReviewReason },
             { "repeatOfAlertId", alert.RepeatOfAlertId is null ? BsonNull.Value : ObjectId.Parse(alert.RepeatOfAlertId) },
             { "recipients", new BsonArray(recipients) },
             { "notifiedRecipients", new BsonArray() },
@@ -225,6 +226,7 @@ public sealed class MongoAlertRepository : IAlertRepository, IDailyHeadlinesSour
         {
             Id = document["_id"].AsObjectId.ToString(),
             RepeatOfAlertId = document.TryGetValue("repeatOfAlertId", out var repeatOf) && repeatOf.IsObjectId ? repeatOf.AsObjectId.ToString() : null,
+            ReviewReason = document.TryGetValue("reviewReason", out var reviewReason) && reviewReason.IsString ? reviewReason.AsString : null,
         };
     }
 }

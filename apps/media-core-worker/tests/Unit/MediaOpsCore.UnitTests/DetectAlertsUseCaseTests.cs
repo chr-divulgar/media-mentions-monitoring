@@ -316,6 +316,75 @@ public sealed class DetectAlertsUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteUnreadableWebArticleAsync_saves_a_review_alert_with_title_and_link_for_the_client_named_in_the_title()
+    {
+        var repository = new InMemoryAlertRepository();
+        var notifier = new FakeAlertNotifier();
+        var client = new ClientKeywordConfig(
+            "Ecopetrol",
+            new[] { new KeywordConfig("ecopetrol", Array.Empty<KeywordAdContext>()) },
+            new Dictionary<string, IReadOnlyList<string>> { ["internet"] = new[] { "573000000000" } });
+        var useCase = CreateUseCase(repository, client, notifier: notifier);
+
+        var created = await useCase.ExecuteUnreadableWebArticleAsync(
+            "La Silla Vacía", "https://www.lasillavacia.com/nota", "La Silla responde a la solicitud de Enrique Gómez a Ecopetrol",
+            "No se pudo extraer el contenido: El sitio respondió HTTP 403");
+
+        Assert.Equal(1, created);
+        var alert = Assert.Single(repository.Inserted);
+        Assert.Equal("internet", alert.Media);
+        Assert.Equal("La Silla Vacía", alert.Platform);
+        Assert.Equal("La Silla responde a la solicitud de Enrique Gómez a Ecopetrol", alert.Title);
+        Assert.Equal("https://www.lasillavacia.com/nota", alert.Url);
+        Assert.Equal("Ecopetrol", alert.ClientName);
+        Assert.Equal(new[] { "ecopetrol" }, alert.Words);
+        Assert.Equal("No se pudo extraer el contenido: El sitio respondió HTTP 403", alert.ReviewReason);
+        // Nothing is sent: there is no text to send and the date is unconfirmed.
+        Assert.Empty(notifier.Calls);
+        Assert.Empty(repository.Recipients.Single().Value);
+    }
+
+    [Fact]
+    public async Task ExecuteUnreadableWebArticleAsync_ignores_a_title_that_names_no_client_keyword()
+    {
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "ecopetrol"));
+
+        var created = await useCase.ExecuteUnreadableWebArticleAsync("El Tiempo", "https://eltiempo.com/x", "Hoy llueve en Bogotá", "HTTP 403");
+
+        Assert.Equal(0, created);
+        Assert.Empty(repository.Inserted);
+    }
+
+    [Fact]
+    public async Task ExecuteUnreadableWebArticleAsync_does_not_repeat_an_alert_for_the_same_url_and_client()
+    {
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "ecopetrol"));
+
+        await useCase.ExecuteUnreadableWebArticleAsync("El Tiempo", "https://eltiempo.com/x", "Ecopetrol anuncia", "HTTP 403");
+        var second = await useCase.ExecuteUnreadableWebArticleAsync("El Tiempo", "https://eltiempo.com/x", "Ecopetrol anuncia", "HTTP 403");
+
+        Assert.Equal(0, second);
+        Assert.Single(repository.Inserted);
+    }
+
+    [Fact]
+    public async Task ExecuteUnreadableWebArticleAsync_also_matches_the_text_that_was_read_and_keeps_the_first_paragraph()
+    {
+        // A page that was read but has no date: the keyword may be in the body, and the lead paragraph is worth showing.
+        var repository = new InMemoryAlertRepository();
+        var useCase = CreateUseCase(repository, ClientConfig("Ecopetrol", "ecopetrol"));
+
+        await useCase.ExecuteUnreadableWebArticleAsync(
+            "El Tiempo", "https://eltiempo.com/x", "Nuevo gasoducto", "Sin fecha en la página",
+            firstParagraph: "Se firmó el contrato.", matchText: "Se firmó el contrato con Ecopetrol.");
+
+        var alert = Assert.Single(repository.Inserted);
+        Assert.Equal("Se firmó el contrato.", alert.Text);
+    }
+
+    [Fact]
     public async Task ExecuteWebArticleAsync_matches_a_keyword_that_only_appears_in_the_full_body_not_the_lead_paragraph()
     {
         // Regression: a keyword several paragraphs into the story (e.g. "Hocol, empresa del Grupo

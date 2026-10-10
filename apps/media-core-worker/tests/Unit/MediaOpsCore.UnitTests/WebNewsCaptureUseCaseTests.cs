@@ -322,6 +322,131 @@ public sealed class WebNewsCaptureUseCaseTests
         Assert.Equal(2, repository.Saved.Count);
     }
 
+    [Fact]
+    public async Task ExecuteCycleAsync_saves_a_review_alert_only_once_a_failing_article_runs_out_of_retries()
+    {
+        // The 403 of La Silla Vacía: a transient block may clear on a retry (and then it is a normal alert),
+        // so the title-and-link alert waits for the last attempt.
+        var alerts = new FakeDetectAlertsUseCase();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "Ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1", "La Silla responde a Ecopetrol", "La Silla Vacía")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://www.lasillavacia.com/nota" },
+            reader: new FakeArticleReader { Content = new ArticleContent(null, null, null, "El sitio respondió HTTP 403") },
+            detectAlertsUseCase: alerts);
+
+        await sut.ExecuteCycleAsync();
+        await sut.ExecuteCycleAsync();
+        Assert.Empty(alerts.Unreadable);
+
+        await sut.ExecuteCycleAsync();
+
+        var saved = Assert.Single(alerts.Unreadable);
+        Assert.Equal("La Silla Vacía", saved.Outlet);
+        Assert.Equal("https://www.lasillavacia.com/nota", saved.Url);
+        Assert.Equal("La Silla responde a Ecopetrol", saved.Title);
+        Assert.Contains("HTTP 403", saved.Reason);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_saves_a_review_alert_at_once_for_a_blocked_article()
+    {
+        var alerts = new FakeDetectAlertsUseCase();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "Ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1", "Ecopetrol anuncia")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://cambiocolombia.com/nota" },
+            reader: new FakeArticleReader { Content = new ArticleContent(null, null, null, "Bloqueado por Cloudflare (anti-bot)", Blocked: true) },
+            detectAlertsUseCase: alerts);
+
+        await sut.ExecuteCycleAsync();
+
+        var saved = Assert.Single(alerts.Unreadable);
+        Assert.Equal("https://cambiocolombia.com/nota", saved.Url);
+        Assert.Contains("Cloudflare", saved.Reason);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_saves_a_review_alert_at_once_for_a_page_without_a_date_keeping_what_was_read()
+    {
+        var alerts = new FakeDetectAlertsUseCase();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "Ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1", "Nuevo gasoducto")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/x" },
+            reader: new FakeArticleReader
+            {
+                Content = new ArticleContent("Nuevo gasoducto", "Se firmó el contrato.", null, null, FullText: "Se firmó el contrato con Ecopetrol."),
+            },
+            detectAlertsUseCase: alerts);
+
+        await sut.ExecuteCycleAsync();
+
+        var saved = Assert.Single(alerts.Unreadable);
+        Assert.Contains("fecha", saved.Reason);
+        Assert.Equal("Se firmó el contrato.", saved.FirstParagraph);
+        Assert.Equal("Se firmó el contrato con Ecopetrol.", saved.MatchText);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_saves_no_review_alert_for_an_article_confirmed_not_to_be_from_today()
+    {
+        var alerts = new FakeDetectAlertsUseCase();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "Ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1", "Ecopetrol anuncia")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/x" },
+            reader: new FakeArticleReader { Content = new ArticleContent("Ecopetrol anuncia", "Parrafo", PublishedYesterday, null) },
+            detectAlertsUseCase: alerts);
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Empty(alerts.Unreadable);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_saves_a_review_alert_with_googles_link_when_the_real_one_never_resolves()
+    {
+        var alerts = new FakeDetectAlertsUseCase();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "Ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1", "Ecopetrol anuncia")] },
+            resolver: new FakeNewsLinkResolver { ErrorMessage = "Google no devolvió la nota" },
+            detectAlertsUseCase: alerts);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await sut.ExecuteCycleAsync();
+        }
+
+        var saved = Assert.Single(alerts.Unreadable);
+        Assert.Equal("https://news.google.com/rss/articles/a1", saved.Url);
+        Assert.Contains("enlace", saved.Reason);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_counts_an_unexpected_error_as_a_failed_attempt_instead_of_retrying_forever()
+    {
+        // Before: an exception only left an incident, nothing was stored, so the article came back every cycle.
+        var repository = new FakeWebArticleRepository();
+        var alerts = new FakeDetectAlertsUseCase();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "Ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1", "Ecopetrol anuncia")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/boom" },
+            reader: new FakeArticleReader { ThrowOn = "boom" },
+            repository: repository,
+            detectAlertsUseCase: alerts);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await sut.ExecuteCycleAsync();
+        }
+
+        Assert.Equal(3, repository.Saved.Count(record => record.Status == WebArticleStatus.Failed));
+        Assert.Single(alerts.Unreadable);
+    }
+
     private static ClientKeywordConfig ClientWithKeyword(string name, string keyword) =>
         new(name, [new KeywordConfig(keyword, [])], new Dictionary<string, IReadOnlyList<string>>());
 
@@ -396,14 +521,23 @@ public sealed class WebNewsCaptureUseCaseTests
     {
         public HashSet<string> SeenIds { get; } = new(StringComparer.Ordinal);
         public List<WebArticleRecord> Saved { get; } = [];
+        // The real repository counts failed attempts per article and gives up at this many.
+        public int MaxFailedAttempts { get; set; } = 3;
+        private readonly Dictionary<string, int> failedAttempts = new(StringComparer.Ordinal);
 
         public Task<IReadOnlySet<string>> GetSeenGoogleIdsAsync(TimeSpan lookback, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlySet<string>>(SeenIds);
 
-        public Task SaveAsync(WebArticleRecord record, CancellationToken cancellationToken = default)
+        public Task<bool> SaveAsync(WebArticleRecord record, CancellationToken cancellationToken = default)
         {
             Saved.Add(record);
-            return Task.CompletedTask;
+            if (record.Status != WebArticleStatus.Failed)
+            {
+                return Task.FromResult(true);
+            }
+
+            failedAttempts[record.GoogleId] = failedAttempts.GetValueOrDefault(record.GoogleId) + 1;
+            return Task.FromResult(failedAttempts[record.GoogleId] >= MaxFailedAttempts);
         }
     }
 
@@ -411,6 +545,7 @@ public sealed class WebNewsCaptureUseCaseTests
     {
         public WebArticleAlertOutcome Outcome { get; set; } = new([], [], 0, 0);
         public string? LastMatchText { get; private set; }
+        public List<(string Outlet, string Url, string Title, string Reason, string? FirstParagraph, string? MatchText)> Unreadable { get; } = [];
 
         public Task ExecuteAsync(string platform, string media, string filePath, string text, DateTimeOffset startTime, DateTimeOffset endTime, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
@@ -421,6 +556,12 @@ public sealed class WebNewsCaptureUseCaseTests
         {
             LastMatchText = matchText;
             return Task.FromResult(Outcome);
+        }
+
+        public Task<int> ExecuteUnreadableWebArticleAsync(string outlet, string url, string title, string reason, string? firstParagraph = null, string? matchText = null, CancellationToken cancellationToken = default)
+        {
+            Unreadable.Add((outlet, url, title, reason, firstParagraph, matchText));
+            return Task.FromResult(1);
         }
     }
 

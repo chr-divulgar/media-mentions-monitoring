@@ -70,7 +70,10 @@ public sealed class DailyHeadlinesDigestUseCase : IDailyHeadlinesDigestUseCase
     public async Task<int> ExecuteAsync(DateOnly bogotaDay, CancellationToken cancellationToken = default)
     {
         var from = new DateTimeOffset(bogotaDay.ToDateTime(TimeOnly.MinValue), BogotaOffset);
-        var alerts = await source.GetAlertsAsync(from, from.AddDays(1), Media, cancellationToken).ConfigureAwait(false);
+        // An alert waiting for manual review never had its date confirmed: it may not be from this day.
+        var alerts = (await source.GetAlertsAsync(from, from.AddDays(1), Media, cancellationToken).ConfigureAwait(false))
+            .Where(alert => alert.ReviewReason is null)
+            .ToArray();
         var clients = await clientConfigRepository.GetClientsAsync(cancellationToken).ConfigureAwait(false);
 
         var notified = 0;
