@@ -412,6 +412,123 @@ public sealed class ArchiveUploadWorkerTests
         }
     }
 
+    private static string FragmentedRecording(string root, string sourceId, string name, DateTime lastWriteUtc)
+    {
+        var path = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 4), sourceId, name, lastWriteUtc);
+        InProcessMp4Recorder.Record(
+            [Path.Combine(AppContext.BaseDirectory, "TestData", "sample-tv-stereo.mp4")], TimeSpan.FromHours(1), path, CancellationToken.None);
+        File.SetLastWriteTimeUtc(path, lastWriteUtc);
+        return path;
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_turns_a_closed_fragmented_recording_into_a_regular_mp4_and_uploads_it_again()
+    {
+        // The recorder writes fragmented MP4, which players cannot seek. Closed ones are rewritten, and as the size
+        // changes the copy already in the archive is replaced by the repaired one.
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var relative = "television/2026/10/04/rcn_tv/rcn_tv_2026-10-04_10-00-04.mp4";
+            var file = FragmentedRecording(root, "rcn_tv", "rcn_tv_2026-10-04_10-00-04.mp4", DateTime.UtcNow.AddHours(-30));
+            var oldSize = new FileInfo(file).Length;
+            var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
+            ledger.Add(relative, oldSize); // archived before, as it was
+            var storage = new FakeStorage();
+            var worker = new ArchiveUploadWorker(
+                new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
+                ArchiveFixture.Storages.All(storage), ledger, new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance);
+
+            await worker.RunOnceAsync(CancellationToken.None);
+
+            Assert.False(Mp4Finalizer.IsFragmented(file));
+            Assert.Equal(["backup/colombia/2026/10/04/rcn_tv/rcn_tv_2026-10-04_10-00-04.mp4"], storage.Uploaded);
+            Assert.True(ledger.Contains(relative, new FileInfo(file).Length));
+            Assert.False(ledger.Contains(relative, oldSize));
+
+            await worker.RunOnceAsync(CancellationToken.None);
+            Assert.Single(storage.Uploaded); // and once repaired and archived, it stays put
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_does_not_touch_a_recording_that_is_still_being_written()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var file = FragmentedRecording(root, "rcn_tv", "rcn_tv_2026-10-04_10-00-04.mp4", DateTime.UtcNow.AddMinutes(-1));
+            var worker = new ArchiveUploadWorker(
+                new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
+                ArchiveFixture.Storages.All(new FakeStorage()), new ArchiveLedger(Path.Combine(root, "ledger.jsonl")),
+                new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance);
+
+            await worker.RunOnceAsync(CancellationToken.None);
+
+            Assert.True(Mp4Finalizer.IsFragmented(file));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_converts_a_limited_number_of_recordings_per_pass()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            for (var i = 0; i < ArchiveUploadWorker.MaxFinalizedPerPass + 5; i++)
+            {
+                FragmentedRecording(root, "rcn_tv", $"rcn_tv_2026-10-04_{i / 60:D2}-{i % 60:D2}-04.mp4", DateTime.UtcNow.AddHours(-30));
+            }
+
+            var converted = 0;
+            var worker = new ArchiveUploadWorker(
+                new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
+                ArchiveFixture.Storages.All(new FakeStorage()), new ArchiveLedger(Path.Combine(root, "ledger.jsonl")),
+                new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance,
+                finalize: (_, _) => { converted++; return true; });
+
+            await worker.RunOnceAsync(CancellationToken.None);
+
+            Assert.Equal(ArchiveUploadWorker.MaxFinalizedPerPass, converted);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_still_uploads_a_recording_that_could_not_be_converted()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            FragmentedRecording(root, "rcn_tv", "rcn_tv_2026-10-04_10-00-04.mp4", DateTime.UtcNow.AddHours(-30));
+            var storage = new FakeStorage();
+            var worker = new ArchiveUploadWorker(
+                new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
+                ArchiveFixture.Storages.All(storage), new ArchiveLedger(Path.Combine(root, "ledger.jsonl")),
+                new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance,
+                finalize: (_, _) => throw new IOException("disk full"));
+
+            await worker.RunOnceAsync(CancellationToken.None);
+
+            Assert.Single(storage.Uploaded); // better the seek-less copy in the archive than none
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task RunOnceAsync_records_only_verified_uploads_and_reports_a_failure_streak_once()
     {

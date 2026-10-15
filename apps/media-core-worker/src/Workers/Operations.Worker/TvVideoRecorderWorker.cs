@@ -48,7 +48,8 @@ public sealed class TvVideoRecorderWorker : BackgroundService
             (source, ct) => ResolveAsync(resolver, options, source, ct),
             (urls, duration, path, ct) => Task.Run(
                 () => InProcessMp4Recorder.Record(
-                    urls, duration, path, ct, options.TvAudioKbps > 0 ? new TvAudioSettings(options.TvAudioKbps, options.TvAudioSampleRateHz) : null),
+                    urls, duration, path, ct, options.TvAudioKbps > 0 ? new TvAudioSettings(options.TvAudioKbps, options.TvAudioSampleRateHz) : null,
+                    message => logger.LogWarning("[TvVideoRecorderWorker] {Message}: {Path}", message, path)),
                 ct),
             isAudioCapturing: sourceId => audioProgress.TryGetLiveProgress(sourceId) is not null)
     {

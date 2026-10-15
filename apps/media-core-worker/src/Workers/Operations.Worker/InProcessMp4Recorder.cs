@@ -10,18 +10,27 @@ namespace MediaOpsCore.Workers.Operations;
 /// it as a small mono AAC track instead of YouTube's 128 kbps stereo.
 ///
 /// YouTube live serves video and audio as two separate HLS streams, so there can be two inputs:
-/// the best video stream is taken from the first and the best audio stream from the last. Each
-/// input is rebased by its own start time (what the ffmpeg CLI does with -c copy).
+/// the best video stream is taken from the first and the best audio stream from the last. They are opened
+/// together, and all share one origin (the earliest start): HLS starts each list at its own latest 5 s segment, so
+/// the audio can begin one segment after the video, and rebasing each input by its own start would erase that real
+/// delay and leave the sound ahead of the picture for the whole hour.
 /// </summary>
 internal static unsafe class InProcessMp4Recorder
 {
+    // Starts further apart than this are not one stream's segments but unrelated clocks: each is rebased on its own.
+    private const long MaxSharedOriginGapMicroseconds = 30_000_000;
+
+    // A start gap above this is worth a log line: it is a real delay between picture and sound at the start.
+    private const long ReportedGapMicroseconds = 500_000;
+
     private const string ReadTimeoutMicroseconds = "30000000";
     private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Safari/537.36";
 
     // Returns null when the recording reached its planned duration (or was cancelled), otherwise
     // why it stopped early. Throws only for setup failures (bad input, no stream, cannot write).
     public static string? Record(
-        IReadOnlyList<string> inputUrls, TimeSpan duration, string outputPath, CancellationToken cancellationToken, TvAudioSettings? audio = null)
+        IReadOnlyList<string> inputUrls, TimeSpan duration, string outputPath, CancellationToken cancellationToken,
+        TvAudioSettings? audio = null, Action<string>? log = null)
     {
         if (inputUrls.Count == 0)
         {
@@ -41,12 +50,30 @@ internal static unsafe class InProcessMp4Recorder
 
         try
         {
+            // Opened together so they usually land in the same segment; a failure closes whatever did open.
+            var opened = new nint[inputUrls.Count];
+            try
+            {
+                Parallel.For(0, inputUrls.Count, i => opened[i] = (nint)OpenInput(inputUrls[i]));
+            }
+            catch
+            {
+                foreach (var handle in opened.Where(h => h != 0))
+                {
+                    var open = (AVFormatContext*)handle;
+                    ffmpeg.avformat_close_input(&open);
+                }
+
+                throw;
+            }
+
             for (var i = 0; i < inputUrls.Count; i++)
             {
-                inputs[i] = OpenInput(inputUrls[i]);
-                offsets[i] = inputs[i]->start_time == ffmpeg.AV_NOPTS_VALUE ? 0 : -inputs[i]->start_time;
+                inputs[i] = (AVFormatContext*)opened[i];
                 streamMaps[i] = Enumerable.Repeat(-1, (int)inputs[i]->nb_streams).ToArray();
             }
+
+            SetOffsets(inputs, offsets, inputUrls.Count > 1 ? log : null);
 
             ffmpeg.avformat_alloc_output_context2(&output, null, "mp4", outputPath).ThrowIfError("avformat_alloc_output_context2");
 
@@ -111,6 +138,28 @@ internal static unsafe class InProcessMp4Recorder
 
                 ffmpeg.avformat_free_context(output);
             }
+        }
+    }
+
+    // One origin for every input: the earliest start. The one that began later keeps its real delay.
+    private static void SetOffsets(AVFormatContext*[] inputs, long[] offsets, Action<string>? log)
+    {
+        var starts = new long[inputs.Length];
+        for (var i = 0; i < inputs.Length; i++)
+        {
+            starts[i] = inputs[i]->start_time == ffmpeg.AV_NOPTS_VALUE ? 0 : inputs[i]->start_time;
+        }
+
+        var gap = starts.Max() - starts.Min();
+        var shared = gap <= MaxSharedOriginGapMicroseconds;
+        for (var i = 0; i < inputs.Length; i++)
+        {
+            offsets[i] = -(shared ? starts.Min() : starts[i]);
+        }
+
+        if (shared && gap > ReportedGapMicroseconds)
+        {
+            log?.Invoke($"video and audio started {gap / 1_000_000.0:0.00} s apart; the later one keeps its delay");
         }
     }
 

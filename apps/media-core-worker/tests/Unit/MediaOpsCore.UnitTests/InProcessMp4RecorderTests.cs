@@ -119,4 +119,47 @@ public sealed class InProcessMp4RecorderTests
             File.Delete(output);
         }
     }
+
+    // Video and audio as YouTube's two HLS lists give them: separate inputs, each with its own clock. The "late" audio
+    // starts 4.98 s after the "aligned" one (the next 5 s segment, as happens when a segment boundary falls between
+    // the two opens); "far" starts 60 s after it (unrelated clocks).
+    private static string TestData(string name) => Path.Combine(AppContext.BaseDirectory, "TestData", name);
+
+    private static double AudioEndSeconds(string audioInput, TvAudioSettings? settings)
+    {
+        var output = NewOutput();
+        try
+        {
+            InProcessMp4Recorder.Record([TestData("sample-video-only.ts"), TestData(audioInput)], TimeSpan.FromHours(1), output, CancellationToken.None, settings);
+            var info = Mp4Info.Read(output, scanStreams: true);
+            return info.AudioStartSeconds + info.AudioDurationSeconds;
+        }
+        finally
+        {
+            File.Delete(output);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Record_keeps_the_real_delay_of_an_input_that_started_later_than_the_other(bool reencodeAudio)
+    {
+        var settings = reencodeAudio ? new TvAudioSettings(32, 16000) : null;
+
+        var late = AudioEndSeconds("sample-audio-late.ts", settings);
+        var aligned = AudioEndSeconds("sample-audio-aligned.ts", settings);
+
+        // The sound that began 4.98 s later ends 4.98 s later. Each input used to be rebased by its own start, which
+        // erased that and left the audio that much ahead of the picture for the whole hour.
+        Assert.InRange(late - aligned, 4.98 - 0.15, 4.98 + 0.15);
+    }
+
+    [Fact]
+    public void Record_rebases_each_input_on_its_own_when_their_clocks_are_unrelated()
+    {
+        // 60 s apart is not a segment boundary: the two streams count time from different origins, so the far one
+        // is placed like the aligned one rather than a minute late.
+        Assert.InRange(AudioEndSeconds("sample-audio-far.ts", null) - AudioEndSeconds("sample-audio-aligned.ts", null), -0.3, 0.3);
+    }
 }

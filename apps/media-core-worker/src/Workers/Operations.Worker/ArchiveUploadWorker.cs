@@ -13,6 +13,10 @@ public sealed class ArchiveUploadWorker : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
 
+    // How many closed recordings are rewritten as regular MP4 in one pass: each is read and written whole, so the
+    // backlog (every hour recorded before this existed) is worked off over several passes instead of one long stall.
+    internal const int MaxFinalizedPerPass = 40;
+
     private readonly OperationsWorkerOptions options;
     private readonly IArchiveStorageProvider storages;
     private readonly ArchiveLedger ledger;
@@ -24,6 +28,8 @@ public sealed class ArchiveUploadWorker : BackgroundService
     // Rewrites a radio hour (opus) into the small mono opus that is archived; injectable so a pass can be tested
     // without FFmpeg.
     private readonly Func<string, string, CancellationToken, Task> reencode;
+    // Rewrites a closed fragmented MP4 as a regular one (see Mp4Finalizer); false when there was nothing to do.
+    private readonly Func<string, CancellationToken, bool> finalize;
     private bool failingStreak;
 
     public ArchiveUploadWorker(
@@ -33,8 +39,10 @@ public sealed class ArchiveUploadWorker : BackgroundService
         ISourceIncidentRecorder incidentRecorder,
         ILogger<ArchiveUploadWorker> logger,
         ICaptureSourceRepository? sourceRepository = null,
-        Func<string, string, CancellationToken, Task>? reencode = null)
+        Func<string, string, CancellationToken, Task>? reencode = null,
+        Func<string, CancellationToken, bool>? finalize = null)
     {
+        this.finalize = finalize ?? Mp4Finalizer.Finalize;
         this.sourceRepository = sourceRepository;
         this.reencode = reencode ?? ((input, output, ct) => Task.Run(
             () => OpusSegmentTranscoder.TranscodeFileToOpus(input, output, options.ArchiveRadioKbps, options.ArchiveRadioSampleRateHz), ct));
@@ -125,6 +133,38 @@ public sealed class ArchiveUploadWorker : BackgroundService
         }
     }
 
+    // Closed TV recordings (the same "closed" the upload uses) that are still fragmented, oldest first.
+    private Task FinalizeClosedRecordingsAsync(
+        IReadOnlyDictionary<string, TimeSpan>? offsets, Func<string, string?> countryOf, TimeSpan minIdle, CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var closed = ArchiveUpload.FindPendingFiles(options.AudioOutputRootPath, (_, _) => false, DateTime.UtcNow, minIdle, offsets, countryOf)
+                .Where(file => file.LocalPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase));
+
+            var converted = 0;
+            foreach (var file in closed)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    if (finalize(file.LocalPath, cancellationToken) && ++converted >= MaxFinalizedPerPass)
+                    {
+                        break;
+                    }
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    // It is archived as it is; the next pass tries again.
+                    logger.LogWarning(exception, "[ArchiveUploadWorker] Could not rewrite {Path} as a regular MP4.", file.RelativePath);
+                }
+            }
+
+            if (converted > 0)
+            {
+                logger.LogInformation("[ArchiveUploadWorker] Rewrote {Count} closed recording(s) as regular MP4 so they can be sought.", converted);
+            }
+        }, cancellationToken);
+
     // Internal so a test can drive one pass without waiting on the timer.
     internal async Task RunOnceAsync(CancellationToken cancellationToken)
     {
@@ -133,9 +173,15 @@ public sealed class ArchiveUploadWorker : BackgroundService
         var sources = await LoadSourcesAsync(cancellationToken).ConfigureAwait(false);
         var offsets = sources?.ToDictionary(source => source.SourceId, source => TimeSpan.FromMinutes(source.UtcOffsetMinutes), StringComparer.OrdinalIgnoreCase);
         var countries = sources?.ToDictionary(source => source.SourceId, source => source.Country, StringComparer.OrdinalIgnoreCase);
+        var minIdle = TimeSpan.FromMinutes(options.ArchiveMinIdleMinutes);
+        Func<string, string?> countryOf = sourceId => countries is not null && countries.TryGetValue(sourceId, out var country) ? country : null;
+
+        // Before looking at what is pending: a rewritten file has a new size, so the ledger no longer knows it and it is
+        // archived again — the copy already in the archive, which cannot be sought either, is replaced.
+        await FinalizeClosedRecordingsAsync(offsets, countryOf, minIdle, cancellationToken).ConfigureAwait(false);
+
         var pending = ArchiveUpload.FindPendingFiles(
-            options.AudioOutputRootPath, ledger.Contains, DateTime.UtcNow, TimeSpan.FromMinutes(options.ArchiveMinIdleMinutes),
-            offsets, sourceId => countries is not null && countries.TryGetValue(sourceId, out var country) ? country : null)
+            options.AudioOutputRootPath, ledger.Contains, DateTime.UtcNow, minIdle, offsets, countryOf)
             .Where(file => StorageFor(file) is not null)
             .ToList();
         if (pending.Count == 0)
