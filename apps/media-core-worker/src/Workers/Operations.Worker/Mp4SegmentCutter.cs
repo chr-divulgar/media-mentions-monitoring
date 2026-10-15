@@ -11,7 +11,26 @@ internal sealed record Mp4ClipResult(double StartSeconds, double DurationSeconds
 /// <summary>What a finished MP4 contains; used to verify clips and report their real length.</summary>
 internal sealed record Mp4Info(double DurationSeconds, bool HasVideo, bool HasAudio, bool FirstVideoPacketIsKeyframe)
 {
-    public static unsafe Mp4Info Read(string path)
+    public int VideoWidth { get; init; }
+
+    public int VideoHeight { get; init; }
+
+    public string? AudioCodec { get; init; }
+
+    public int AudioChannels { get; init; }
+
+    public int AudioSampleRate { get; init; }
+
+    // Only filled in when the whole file is scanned (scanStreams): where each stream starts and how long it lasts.
+    public double VideoStartSeconds { get; init; }
+
+    public double VideoDurationSeconds { get; init; }
+
+    public double AudioStartSeconds { get; init; }
+
+    public double AudioDurationSeconds { get; init; }
+
+    public static unsafe Mp4Info Read(string path, bool scanStreams = false)
     {
         InProcessFfmpegAudioCapturePlugin.EnsureFfmpegInitialized();
 
@@ -27,19 +46,58 @@ internal sealed record Mp4Info(double DurationSeconds, bool HasVideo, bool HasAu
             var duration = input->duration == ffmpeg.AV_NOPTS_VALUE ? 0 : input->duration / (double)ffmpeg.AV_TIME_BASE;
 
             var firstIsKey = false;
-            while (videoIndex >= 0 && ffmpeg.av_read_frame(input, packet) >= 0)
+            var seenVideo = false;
+            double videoStart = double.MaxValue, videoEnd = 0, audioStart = double.MaxValue, audioEnd = 0;
+            while ((videoIndex >= 0 || scanStreams) && ffmpeg.av_read_frame(input, packet) >= 0)
             {
-                var isVideo = packet->stream_index == videoIndex;
+                var index = packet->stream_index;
+                var isVideo = index == videoIndex;
                 var isKey = (packet->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0;
-                ffmpeg.av_packet_unref(packet);
-                if (isVideo)
+
+                if (scanStreams && (isVideo || index == audioIndex) && packet->pts != ffmpeg.AV_NOPTS_VALUE)
                 {
+                    var stream = input->streams[index];
+                    var start = packet->pts * ffmpeg.av_q2d(stream->time_base);
+                    var end = start + Math.Max(0, packet->duration) * ffmpeg.av_q2d(stream->time_base);
+                    if (isVideo)
+                    {
+                        videoStart = Math.Min(videoStart, start);
+                        videoEnd = Math.Max(videoEnd, end);
+                    }
+                    else
+                    {
+                        audioStart = Math.Min(audioStart, start);
+                        audioEnd = Math.Max(audioEnd, end);
+                    }
+                }
+
+                ffmpeg.av_packet_unref(packet);
+                if (isVideo && !seenVideo)
+                {
+                    seenVideo = true;
                     firstIsKey = isKey;
+                }
+
+                if (seenVideo && !scanStreams)
+                {
                     break;
                 }
             }
 
-            return new Mp4Info(duration, videoIndex >= 0, audioIndex >= 0, firstIsKey);
+            var video = videoIndex >= 0 ? input->streams[videoIndex]->codecpar : null;
+            var audio = audioIndex >= 0 ? input->streams[audioIndex]->codecpar : null;
+            return new Mp4Info(duration, videoIndex >= 0, audioIndex >= 0, firstIsKey)
+            {
+                VideoWidth = video is null ? 0 : video->width,
+                VideoHeight = video is null ? 0 : video->height,
+                AudioCodec = audio is null ? null : ffmpeg.avcodec_get_name(audio->codec_id),
+                AudioChannels = audio is null ? 0 : audio->ch_layout.nb_channels,
+                AudioSampleRate = audio is null ? 0 : audio->sample_rate,
+                VideoStartSeconds = videoStart == double.MaxValue ? 0 : videoStart,
+                VideoDurationSeconds = videoEnd - (videoStart == double.MaxValue ? 0 : videoStart),
+                AudioStartSeconds = audioStart == double.MaxValue ? 0 : audioStart,
+                AudioDurationSeconds = audioEnd - (audioStart == double.MaxValue ? 0 : audioStart),
+            };
         }
         finally
         {

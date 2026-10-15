@@ -38,8 +38,9 @@ internal static class TvVideoRecording
         return new TvVideoRecordingPlan(Path.Combine(directory, $"{sourceId}_{now:yyyy-MM-dd_HH-mm-ss}.mp4"), duration);
     }
 
-    // Separate best video (height-capped to bound disk use, ~0.25 GB/h measured at 480p) + best
-    // audio, which is what YouTube live actually offers; a muxed single stream as fallback.
+    // Separate best video (height-capped to bound disk use: ~0.35 GB/h measured at 480p, ~0.12 GB/h of video at
+    // 240p) + best audio, which is what YouTube live actually offers; a muxed single stream as fallback. The
+    // audio is only the source: the recorder re-encodes it to mono (TvAudioSettings).
     public static string YtdlpVideoFormat(int maxHeight) =>
         $"bestvideo[height<={maxHeight}]+bestaudio/best[height<={maxHeight}]/best";
 }

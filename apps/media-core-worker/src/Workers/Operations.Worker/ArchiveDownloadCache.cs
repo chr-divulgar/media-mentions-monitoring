@@ -74,6 +74,8 @@ public sealed class ArchiveDownloadCache
             }
 
             File.Move(partial, cached, overwrite: true);
+            // A file's age is when it was fetched, whatever modification time the download carried over.
+            File.SetLastWriteTimeUtc(cached, DateTime.UtcNow);
             TrimCache(keep: cached);
             return true;
         }

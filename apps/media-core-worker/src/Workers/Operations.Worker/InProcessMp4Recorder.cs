@@ -5,7 +5,9 @@ namespace MediaOpsCore.Workers.Operations;
 /// <summary>
 /// Copies a live stream into an MP4 for a fixed duration, in-process, with the FFmpeg libraries the
 /// worker already ships (runtimes/win-x64/native) — the same ones the audio capture uses, so there
-/// is no ffmpeg.exe to install on the host. Stream copy only: no decoding or encoding.
+/// is no ffmpeg.exe to install on the host. The video is always stream-copied (no decoding or encoding, so
+/// no CPU); the audio is copied too unless TvAudioSettings is given, in which case TvAudioReencoder stores
+/// it as a small mono AAC track instead of YouTube's 128 kbps stereo.
 ///
 /// YouTube live serves video and audio as two separate HLS streams, so there can be two inputs:
 /// the best video stream is taken from the first and the best audio stream from the last. Each
@@ -18,7 +20,8 @@ internal static unsafe class InProcessMp4Recorder
 
     // Returns null when the recording reached its planned duration (or was cancelled), otherwise
     // why it stopped early. Throws only for setup failures (bad input, no stream, cannot write).
-    public static string? Record(IReadOnlyList<string> inputUrls, TimeSpan duration, string outputPath, CancellationToken cancellationToken)
+    public static string? Record(
+        IReadOnlyList<string> inputUrls, TimeSpan duration, string outputPath, CancellationToken cancellationToken, TvAudioSettings? audio = null)
     {
         if (inputUrls.Count == 0)
         {
@@ -33,6 +36,8 @@ internal static unsafe class InProcessMp4Recorder
         var streamMaps = new int[inputUrls.Count][];
         AVFormatContext* output = null;
         var packet = ffmpeg.av_packet_alloc();
+        TvAudioReencoder? reencoder = null;
+        var reencoderInput = -1;
 
         try
         {
@@ -47,7 +52,21 @@ internal static unsafe class InProcessMp4Recorder
 
             var nextOutputIndex = 0;
             MapBestStream(inputs, streamMaps, output, AVMediaType.AVMEDIA_TYPE_VIDEO, preferInput: 0, ref nextOutputIndex);
-            MapBestStream(inputs, streamMaps, output, AVMediaType.AVMEDIA_TYPE_AUDIO, preferInput: inputs.Length - 1, ref nextOutputIndex);
+            if (audio is not null)
+            {
+                reencoder = TvAudioReencoder.TryCreate(inputs, offsets, output, audio, preferInput: inputs.Length - 1, out reencoderInput);
+                if (reencoder is not null)
+                {
+                    nextOutputIndex++;
+                }
+            }
+
+            // No re-encoding asked for, or the audio cannot be decoded here: copy it as it comes.
+            if (reencoder is null)
+            {
+                MapBestStream(inputs, streamMaps, output, AVMediaType.AVMEDIA_TYPE_AUDIO, preferInput: inputs.Length - 1, ref nextOutputIndex);
+            }
+
             if (nextOutputIndex == 0)
             {
                 throw new InvalidOperationException("The stream has neither video nor audio.");
@@ -65,12 +84,14 @@ internal static unsafe class InProcessMp4Recorder
             ffmpeg.av_dict_free(&muxOptions);
             headerResult.ThrowIfError("avformat_write_header");
 
-            var stopReason = CopyPackets(inputs, offsets, streamMaps, output, packet, duration, cancellationToken);
+            var stopReason = CopyPackets(inputs, offsets, streamMaps, output, packet, duration, cancellationToken, reencoder, reencoderInput);
+            reencoder?.Finish();
             ffmpeg.av_write_trailer(output);
             return stopReason;
         }
         finally
         {
+            reencoder?.Dispose();
             ffmpeg.av_packet_free(&packet);
             for (var i = 0; i < inputs.Length; i++)
             {
@@ -149,7 +170,7 @@ internal static unsafe class InProcessMp4Recorder
 
     private static string? CopyPackets(
         AVFormatContext*[] inputs, long[] offsets, int[][] streamMaps, AVFormatContext* output, AVPacket* packet,
-        TimeSpan duration, CancellationToken cancellationToken)
+        TimeSpan duration, CancellationToken cancellationToken, TvAudioReencoder? reencoder, int reencoderInput)
     {
         var limitSeconds = duration.TotalSeconds;
         var wallClockLimit = DateTime.UtcNow + duration + TimeSpan.FromMinutes(2);
@@ -188,6 +209,23 @@ internal static unsafe class InProcessMp4Recorder
                     return $"lectura interrumpida (FFmpeg {readResult})";
                 }
 
+                continue;
+            }
+
+            if (reencoder is not null && next == reencoderInput && packet->stream_index == reencoder.InputStreamIndex)
+            {
+                // The audio is decoded and re-encoded rather than copied; its position still drives which input
+                // is read next, so it stays interleaved with the video.
+                var audioStream = inputs[next]->streams[packet->stream_index];
+                var audioStamp = packet->dts != ffmpeg.AV_NOPTS_VALUE ? packet->dts : packet->pts;
+                if (audioStamp != ffmpeg.AV_NOPTS_VALUE)
+                {
+                    var audioOffset = ffmpeg.av_rescale_q(offsets[next], ffmpeg.av_get_time_base_q(), audioStream->time_base);
+                    position[next] = (audioStamp + audioOffset) * ffmpeg.av_q2d(audioStream->time_base);
+                }
+
+                reencoder.Write(packet);
+                ffmpeg.av_packet_unref(packet);
                 continue;
             }
 

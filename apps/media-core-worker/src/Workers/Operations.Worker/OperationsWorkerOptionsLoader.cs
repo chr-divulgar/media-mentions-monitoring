@@ -31,6 +31,8 @@ public static class OperationsWorkerOptionsLoader
         int? MinFreeDiskGb,
         bool? TvVideoEnabled,
         int? TvVideoMaxHeight,
+        int? TvAudioKbps,
+        int? TvAudioSampleRateHz,
         bool? ArchiveEnabled,
         bool? ArchiveFtpRequireTls,
         bool? ArchiveFtpAllowInvalidCertificate,
@@ -201,6 +203,16 @@ public static class OperationsWorkerOptionsLoader
         if (model.TvVideoMaxHeight is > 0)
         {
             options.TvVideoMaxHeight = model.TvVideoMaxHeight.Value;
+        }
+
+        if (model.TvAudioKbps is >= 0)
+        {
+            options.TvAudioKbps = model.TvAudioKbps.Value;
+        }
+
+        if (model.TvAudioSampleRateHz is > 0)
+        {
+            options.TvAudioSampleRateHz = model.TvAudioSampleRateHz.Value;
         }
 
         if (model.ArchiveEnabled.HasValue)

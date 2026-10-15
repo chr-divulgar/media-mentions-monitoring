@@ -33,7 +33,15 @@ public sealed class OperationsWorkerOptions
     // 0.25–0.45 GB per channel-hour at 480p, on top of the audio's disk use.
     public bool TvVideoEnabled { get; set; } = false;
 
-    public int TvVideoMaxHeight { get; set; } = 480;
+    // 240 is YouTube's 426x240 rendition: copied as it is served (no CPU) at about a third of the size of 480p.
+    public int TvVideoMaxHeight { get; set; } = 240;
+
+    // The audio of a TV recording is re-encoded to mono AAC at this bitrate and sample rate (YouTube's own is 128 kbps
+    // stereo, a third of the file); 0 keeps the audio as it comes. 32 kbps at 16 kHz was transcribed as well as the
+    // original (99 % word match on real channels).
+    public int TvAudioKbps { get; set; } = 32;
+
+    public int TvAudioSampleRateHz { get; set; } = 16000;
 
 
     // Archive of closed capture files (ArchiveUploadWorker). Only active when ArchiveEnabled AND the
