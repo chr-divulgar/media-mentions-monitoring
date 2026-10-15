@@ -41,6 +41,9 @@ internal static class ArchiveLayout
         $"{BackupRoot}/{CountrySlug(country)}/{day.Year:D4}/{day.Month:D2}/{day.Day:D2}/{sourceId}";
 
     // The folder of the notes of one client on one day.
+    public static string NoteDirectory(string? country, string? client, DateOnly day) =>
+        $"{CountrySlug(country)}/{ClientSlug(client)}/{day.Year:D4}/{day.Month:D2}/{day.Day:D2}";
+
     public static string NoteDirectory(string? country, string? client, DateTimeOffset date) =>
-        $"{CountrySlug(country)}/{ClientSlug(client)}/{date.Year:D4}/{date.Month:D2}/{date.Day:D2}";
+        NoteDirectory(country, client, new DateOnly(date.Year, date.Month, date.Day));
 }

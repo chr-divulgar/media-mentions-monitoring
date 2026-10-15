@@ -8,7 +8,7 @@ namespace MediaOpsCore.UnitTests;
 public sealed class NotePdfServiceTests
 {
     private static readonly DateTimeOffset Date = new(2026, 10, 6, 11, 41, 0, TimeSpan.FromHours(-5));
-    private const string Folder = "notes/internet/2026/10/06";
+    private const string Folder = "colombia/ecopetrol/2026/10/06";
 
     [Theory]
     [InlineData("Ecopetrol culmina su campaña exploratoria", "ecopetrol-culmina-su-campana-exploratoria")]
@@ -37,6 +37,18 @@ public sealed class NotePdfServiceTests
     public void ToFileSlug_of_an_outlet_falls_back_when_empty(string outlet, string expected)
     {
         Assert.Equal(expected, NotePdfService.ToFileSlug(outlet, 40, "sin-fuente"));
+    }
+
+    [Fact]
+    public async Task CommitAsync_files_the_pdf_under_the_notes_country_and_client()
+    {
+        var storage = new FakeStorage();
+        var sut = Build(new FakePrinter(), storage);
+
+        var preview = await sut.PreviewAsync("Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol S.A.", "México");
+        await sut.CommitAsync(preview.PreviewId!);
+
+        Assert.Equal("mexico/ecopetrol-s-a/2026/10/06/forbes-01-titular.pdf", storage.UploadedTo);
     }
 
     [Fact]
@@ -69,8 +81,8 @@ public sealed class NotePdfServiceTests
     public void BuildPublicLink_joins_the_base_url_and_escapes_each_segment()
     {
         Assert.Equal(
-            "https://server2.chrdivulgar.org/notas/notes/internet/2026/10/06/forbes-01-ecopetrol-culmina.pdf",
-            NotePdfService.BuildPublicLink("https://server2.chrdivulgar.org/notas/", $"{NotePdfService.BuildDirectory(Date)}/forbes-01-ecopetrol-culmina.pdf"));
+            "https://server2.chrdivulgar.org/notas/colombia/ecopetrol/2026/10/06/forbes-01-ecopetrol-culmina.pdf",
+            NotePdfService.BuildPublicLink("https://server2.chrdivulgar.org/notas/", $"{NotePdfService.BuildDirectory(null, "Ecopetrol", Date)}/forbes-01-ecopetrol-culmina.pdf"));
     }
 
     [Fact]
@@ -79,10 +91,10 @@ public sealed class NotePdfServiceTests
         var printer = new FakePrinter();
         var storage = new FakeStorage { Existing = ["forbes-01-otra-nota.pdf"] };
 
-        var preview = await Build(printer, storage).PreviewAsync("Forbes", "Ecopetrol culmina su campaña", "https://site.co/a", Date);
+        var preview = await Build(printer, storage).PreviewAsync("Forbes", "Ecopetrol culmina su campaña", "https://site.co/a", Date, "Ecopetrol");
 
         Assert.True(preview.Succeeded);
-        Assert.Equal("https://files.test/notes/internet/2026/10/06/forbes-02-ecopetrol-culmina-su-campana.pdf", preview.Link);
+        Assert.Equal("https://files.test/colombia/ecopetrol/2026/10/06/forbes-02-ecopetrol-culmina-su-campana.pdf", preview.Link);
         Assert.Equal("https://site.co/a", printer.PrintedUrl);
         Assert.Null(storage.UploadedTo);
     }
@@ -92,7 +104,7 @@ public sealed class NotePdfServiceTests
     {
         var sut = Build(new FakePrinter(), new FakeStorage());
 
-        var preview = await sut.PreviewAsync("Forbes", "Titular", "https://site.co/a", Date);
+        var preview = await sut.PreviewAsync("Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol");
 
         var path = sut.FindPreviewFile(preview.PreviewId!);
         Assert.NotNull(path);
@@ -105,7 +117,7 @@ public sealed class NotePdfServiceTests
     {
         var storage = new FakeStorage();
         var sut = Build(new FakePrinter(), storage);
-        var preview = await sut.PreviewAsync("Forbes", "Ecopetrol culmina", "https://site.co/a", Date);
+        var preview = await sut.PreviewAsync("Forbes", "Ecopetrol culmina", "https://site.co/a", Date, "Ecopetrol");
         var scratch = sut.FindPreviewFile(preview.PreviewId!)!;
 
         var result = await sut.CommitAsync(preview.PreviewId!);
@@ -122,8 +134,8 @@ public sealed class NotePdfServiceTests
     {
         var storage = new FakeStorage();
         var sut = Build(new FakePrinter(), storage);
-        var first = await sut.PreviewAsync("Forbes", "Primera", "https://site.co/a", Date);
-        var second = await sut.PreviewAsync("Forbes", "Segunda", "https://site.co/b", Date);
+        var first = await sut.PreviewAsync("Forbes", "Primera", "https://site.co/a", Date, "Ecopetrol");
+        var second = await sut.PreviewAsync("Forbes", "Segunda", "https://site.co/b", Date, "Ecopetrol");
         Assert.Contains("forbes-01-", first.Link);
         Assert.Contains("forbes-01-", second.Link);
 
@@ -140,8 +152,8 @@ public sealed class NotePdfServiceTests
         var storage = new FakeStorage();
         var sut = Build(new FakePrinter(), storage);
 
-        var first = await sut.CommitAsync((await sut.PreviewAsync("Forbes", "Mismo titular", "https://site.co/a", Date)).PreviewId!);
-        var again = await sut.CommitAsync((await sut.PreviewAsync("Forbes", "Mismo titular", "https://site.co/a", Date)).PreviewId!);
+        var first = await sut.CommitAsync((await sut.PreviewAsync("Forbes", "Mismo titular", "https://site.co/a", Date, "Ecopetrol")).PreviewId!);
+        var again = await sut.CommitAsync((await sut.PreviewAsync("Forbes", "Mismo titular", "https://site.co/a", Date, "Ecopetrol")).PreviewId!);
 
         Assert.Equal(first.Link, again.Link);
     }
@@ -151,7 +163,7 @@ public sealed class NotePdfServiceTests
     {
         var storage = new FakeStorage { Succeeds = false };
         var sut = Build(new FakePrinter(), storage);
-        var preview = await sut.PreviewAsync("Forbes", "T", "https://site.co/a", Date);
+        var preview = await sut.PreviewAsync("Forbes", "T", "https://site.co/a", Date, "Ecopetrol");
 
         var result = await sut.CommitAsync(preview.PreviewId!);
 
@@ -174,7 +186,7 @@ public sealed class NotePdfServiceTests
     {
         var sut = Build(new FakePrinter { Succeeds = false }, new FakeStorage());
 
-        var preview = await sut.PreviewAsync("Forbes", "T", "https://site.co/a", Date);
+        var preview = await sut.PreviewAsync("Forbes", "T", "https://site.co/a", Date, "Ecopetrol");
 
         Assert.False(preview.Succeeded);
         Assert.Contains("PDF", preview.Error);
@@ -185,7 +197,7 @@ public sealed class NotePdfServiceTests
     {
         var sut = Build(new FakePrinter(), new FakeStorage { ListFails = true });
 
-        var preview = await sut.PreviewAsync("Forbes", "T", "https://site.co/a", Date);
+        var preview = await sut.PreviewAsync("Forbes", "T", "https://site.co/a", Date, "Ecopetrol");
 
         Assert.False(preview.Succeeded);
         Assert.Contains("numerar", preview.Error);

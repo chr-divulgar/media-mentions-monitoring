@@ -59,6 +59,8 @@ export class NotesService {
         title,
         url: alert.url,
         date: published.format(),
+        // The PDF is filed under the client's folder: {country}/{client}/{year}/{month}/{day}.
+        client: alert.clientName,
       },
     );
 
@@ -255,7 +257,57 @@ export class NotesService {
     incoming.message = this.generateMessage({ ...existingNote, ...incoming });
     Object.assign(existingNote, incoming);
     // Save the updated note
-    return await this.noteRepo.save(existingNote);
+    const saved = await this.noteRepo.save(existingNote);
+
+    // The clip of a radio or TV note is filed in the archive too. It is a copy, so saving the note never waits for
+    // it (a TV clip is tens of MB) and never fails because of it.
+    void this.archiveNoteClip(noteDto, existingNote.alert_id);
+    return saved;
+  }
+
+  /**
+   * Files the clip of a radio or TV note (the mp3, or the mp4 of a TV note edited on its video) in the archive
+   * account of its medium, under {country}/{client}/{year}/{month}/{day}, through the worker. These are the notes,
+   * so they are kept for the whole contract. Returns whether it was filed; a failure is logged, never thrown.
+   */
+  async archiveNoteClip(note: NoteDto, alertId?: string): Promise<boolean> {
+    const media = (note.media ?? '').trim().toLowerCase();
+    if (
+      !alertId ||
+      !['radio', 'tv', 'television'].includes(media) ||
+      !note.clientName ||
+      !note.mediaName ||
+      !note.date
+    ) {
+      return false;
+    }
+
+    const clip = (extension: string) =>
+      path.resolve(`./audioFiles/fragment_${alertId}.${extension}`);
+    const filePath =
+      noteMediaKind(media, fs.existsSync(clip('mp4'))) === 'video' ? clip('mp4') : clip('mp3');
+    if (!fs.existsSync(filePath)) {
+      return false;
+    }
+
+    const moment_ = moment(note.startTime ?? note.date).utcOffset(
+      NotesService.BOGOTA_OFFSET_MINUTES,
+    );
+    try {
+      await this.callWorker('/notes/clip', {
+        medium: media,
+        client: note.clientName,
+        platform: note.mediaName,
+        date: note.date,
+        stamp: moment_.format('YYYY-MM-DD_HH-mm-ss'),
+        alertId,
+        filePath,
+      });
+      return true;
+    } catch (error) {
+      console.error(`Could not file the clip of note ${alertId} in the archive:`, error);
+      return false;
+    }
   }
 
   generateMessage(note: NoteDto): string {

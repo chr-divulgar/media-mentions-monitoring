@@ -41,5 +41,6 @@ public sealed class ArchiveLayoutTests
         Assert.Equal("colombia/ecopetrol/2026/10/14", ArchiveLayout.NoteDirectory("Colombia", "Ecopetrol", day));
         Assert.Equal("colombia/ecopetrol-s-a/2026/10/14", ArchiveLayout.NoteDirectory(null, "Ecopetrol S.A.", day));
         Assert.Equal("colombia/sin-cliente/2026/10/14", ArchiveLayout.NoteDirectory("colombia", "  ", day));
+        Assert.Equal("colombia/ecopetrol/2026/10/14", ArchiveLayout.NoteDirectory("colombia", "Ecopetrol", new DateOnly(2026, 10, 14)));
     }
 }

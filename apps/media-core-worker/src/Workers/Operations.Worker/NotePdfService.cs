@@ -19,6 +19,12 @@ public sealed class NotePdfPreviewRequest
 
     // The article's publish date: decides the archive's year/month/day folder.
     public DateTimeOffset Date { get; set; }
+
+    // The client the note is for: its folder ({country}/{client}/{yyyy}/{MM}/{dd}). Left out, "sin-cliente".
+    public string? Client { get; set; }
+
+    // Left out, Colombia: an outlet found through the news search has no country of its own.
+    public string? Country { get; set; }
 }
 
 /// <summary>200 body of POST /notes/pdf/preview.</summary>
@@ -93,9 +99,12 @@ public sealed partial class NotePdfService
         this.logger = logger;
     }
 
-    private sealed record PendingPreview(string LocalPath, string OutletSlug, string TitleSlug, DateTimeOffset Date, DateTimeOffset CreatedAt);
+    private sealed record PendingPreview(
+        string LocalPath, string OutletSlug, string TitleSlug, DateTimeOffset Date, string? Client, string? Country, DateTimeOffset CreatedAt);
 
-    public async Task<NotePdfPreviewResult> PreviewAsync(string outlet, string title, string url, DateTimeOffset date, CancellationToken cancellationToken = default)
+    public async Task<NotePdfPreviewResult> PreviewAsync(
+        string outlet, string title, string url, DateTimeOffset date, string? client = null, string? country = null,
+        CancellationToken cancellationToken = default)
     {
         PurgeExpired();
 
@@ -110,14 +119,14 @@ public sealed partial class NotePdfService
             return new NotePdfPreviewResult(null, null, "No se pudo generar el PDF de la página (no cargó o está bloqueada).");
         }
 
-        var target = await ChooseTargetAsync(outletSlug, titleSlug, date, cancellationToken).ConfigureAwait(false);
+        var target = await ChooseTargetAsync(outletSlug, titleSlug, date, client, country, cancellationToken).ConfigureAwait(false);
         if (target.Error is not null)
         {
             TryDelete(localPath);
             return new NotePdfPreviewResult(null, null, target.Error);
         }
 
-        previews[previewId] = new PendingPreview(localPath, outletSlug, titleSlug, date, DateTimeOffset.UtcNow);
+        previews[previewId] = new PendingPreview(localPath, outletSlug, titleSlug, date, client, country, DateTimeOffset.UtcNow);
         return new NotePdfPreviewResult(previewId, BuildPublicLink(publicBaseUrl, target.RelativePath!), null);
     }
 
@@ -137,7 +146,8 @@ public sealed partial class NotePdfService
         await numberingGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var target = await ChooseTargetCoreAsync(preview.OutletSlug, preview.TitleSlug, preview.Date, cancellationToken).ConfigureAwait(false);
+            var target = await ChooseTargetCoreAsync(
+                preview.OutletSlug, preview.TitleSlug, preview.Date, preview.Client, preview.Country, cancellationToken).ConfigureAwait(false);
             if (target.Error is not null)
             {
                 return new NotePdfResult(null, target.Error);
@@ -159,12 +169,13 @@ public sealed partial class NotePdfService
         }
     }
 
-    private async Task<(string? RelativePath, string? Error)> ChooseTargetAsync(string outletSlug, string titleSlug, DateTimeOffset date, CancellationToken cancellationToken)
+    private async Task<(string? RelativePath, string? Error)> ChooseTargetAsync(
+        string outletSlug, string titleSlug, DateTimeOffset date, string? client, string? country, CancellationToken cancellationToken)
     {
         await numberingGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await ChooseTargetCoreAsync(outletSlug, titleSlug, date, cancellationToken).ConfigureAwait(false);
+            return await ChooseTargetCoreAsync(outletSlug, titleSlug, date, client, country, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -173,9 +184,10 @@ public sealed partial class NotePdfService
     }
 
     // Caller holds numberingGate.
-    private async Task<(string? RelativePath, string? Error)> ChooseTargetCoreAsync(string outletSlug, string titleSlug, DateTimeOffset date, CancellationToken cancellationToken)
+    private async Task<(string? RelativePath, string? Error)> ChooseTargetCoreAsync(
+        string outletSlug, string titleSlug, DateTimeOffset date, string? client, string? country, CancellationToken cancellationToken)
     {
-        var directory = BuildDirectory(date);
+        var directory = BuildDirectory(country, client, date);
         try
         {
             var existing = await storage.ListAsync(directory, cancellationToken).ConfigureAwait(false);
@@ -264,8 +276,9 @@ public sealed partial class NotePdfService
         return slug.Length == 0 ? fallback : slug;
     }
 
-    internal static string BuildDirectory(DateTimeOffset date) =>
-        $"notes/internet/{date:yyyy}/{date:MM}/{date:dd}";
+    // The notes' folder: {country}/{client}/{yyyy}/{MM}/{dd}, the same shape as the clips of radio and TV notes.
+    internal static string BuildDirectory(string? country, string? client, DateTimeOffset date) =>
+        ArchiveLayout.NoteDirectory(country, client, date);
 
     internal static string BuildPublicLink(string baseUrl, string relativePath) =>
         $"{baseUrl.TrimEnd('/')}/{string.Join('/', relativePath.Split('/').Select(Uri.EscapeDataString))}";

@@ -23,6 +23,8 @@ namespace MediaOpsCore.Workers.Operations;
 ///   POST /notes/pdf/preview — prints a web note's article page to a scratch PDF and returns the
 ///     public link it will have once saved ({outlet, title, url, date} → {previewId, link}).
 ///   GET  /notes/pdf/preview?id= — the previewed PDF itself, for the editor's viewer.
+///   POST /notes/clip — files the clip of a radio or TV note in the archive account of its medium, under
+///     {country}/{client}/{yyyy}/{MM}/{dd}/ (see NoteClipService);
 ///   POST /notes/pdf/commit  — on save, archives the previewed PDF over FTP ({previewId} → {link});
 ///     all three are consumed by NestJS's NotesService.
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
@@ -58,6 +60,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     private readonly VideoSegmentService videoSegmentService;
     // Null when the archive, its public URL or the headless browser is not configured.
     private readonly NotePdfService? notePdfService;
+    private readonly NoteClipService? noteClipService;
     private readonly HttpClient httpClient;
     private readonly int whatsAppSidecarPort;
     private HttpListener? httpListener;
@@ -74,9 +77,11 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         IClosedHourAudioReader closedHourAudioReader,
         VideoSegmentService videoSegmentService,
         HttpClient httpClient,
-        NotePdfService? notePdfService = null)
+        NotePdfService? notePdfService = null,
+        NoteClipService? noteClipService = null)
     {
         this.notePdfService = notePdfService;
+        this.noteClipService = noteClipService;
         this.logger = logger;
         this.options = options;
         this.cookiesValidator = cookiesValidator;
@@ -208,6 +213,12 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "GET" && path == "/notes/pdf/preview")
             {
                 await HandleNotePdfPreviewFileRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "POST" && path == "/notes/clip")
+            {
+                await HandleNoteClipRequestAsync(context).ConfigureAwait(false);
                 return;
             }
 
@@ -473,6 +484,31 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         return JsonSerializer.Deserialize<T>(body, JsonOptions);
     }
 
+    private async Task HandleNoteClipRequestAsync(HttpListenerContext context)
+    {
+        if (noteClipService is null)
+        {
+            await SendJsonResponse(context, 503, new AudioSegmentErrorResponse { Message = "El archivo de notas no está disponible." }).ConfigureAwait(false);
+            return;
+        }
+
+        var request = await ReadJsonBodyAsync<NoteClipRequest>(context).ConfigureAwait(false);
+        if (request is null)
+        {
+            await SendJsonResponse(context, 400, new AudioSegmentErrorResponse { Message = "Missing or invalid body." }).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await noteClipService.ArchiveAsync(request).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            await SendJsonResponse(context, 502, new AudioSegmentErrorResponse { Message = result.Error ?? "No se pudo archivar el clip." }).ConfigureAwait(false);
+            return;
+        }
+
+        await SendJsonResponse(context, 200, new NoteClipResponse { Path = result.Path! }).ConfigureAwait(false);
+    }
+
     private async Task HandleNotePdfPreviewRequestAsync(HttpListenerContext context)
     {
         if (!await EnsureNotePdfConfiguredAsync(context).ConfigureAwait(false))
@@ -494,7 +530,8 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             return;
         }
 
-        var result = await notePdfService!.PreviewAsync(request.Outlet, request.Title, uri.ToString(), request.Date).ConfigureAwait(false);
+        var result = await notePdfService!.PreviewAsync(
+            request.Outlet, request.Title, uri.ToString(), request.Date, request.Client, request.Country).ConfigureAwait(false);
         if (!result.Succeeded)
         {
             await SendJsonResponse(context, 502, new AudioSegmentErrorResponse { Message = result.Error ?? "No se pudo generar el PDF." }).ConfigureAwait(false);

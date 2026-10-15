@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import { NotesService } from './notes.service';
 
 // Minimal in-memory stand-ins for the two Mongo repositories the service reads and writes.
@@ -58,6 +59,8 @@ describe('internet notes', () => {
         title: alert.title,
         url: alert.url,
         date: '2026-10-05T19:26:28-05:00',
+        // The PDF is filed under the client's folder.
+        client: 'Ecopetrol',
       });
       expect(preview).toMatchObject({
         previewId: 'p1',
@@ -208,5 +211,88 @@ describe('NotesService.setNote', () => {
     const { service } = build(null, { title: 'T' });
 
     await expect(service.setNote({ id: ALERT_ID, title: 'T' })).rejects.toThrow('Faltan campos obligatorios');
+  });
+});
+
+describe('NotesService.archiveNoteClip', () => {
+  const fetchMock = jest.fn();
+  let existsSync: jest.SpyInstance;
+  const present = (...names: string[]) =>
+    existsSync.mockImplementation((p: unknown) => names.some((n) => String(p).replace(/\\/g, '/').endsWith(n)));
+
+  const radioNote = {
+    media: 'radio', mediaName: 'Blu Radio', clientName: 'Ecopetrol', date: '2026-10-14', startTime: '2026-10-14T15:30:48.000Z',
+  };
+
+  beforeEach(() => {
+    fetchMock.mockReset().mockResolvedValue(workerReply({ path: 'colombia/ecopetrol/2026/10/14/x.mp3' }));
+    global.fetch = fetchMock as never;
+    existsSync = jest.spyOn(fs, 'existsSync');
+  });
+  afterEach(() => existsSync.mockRestore());
+
+  it('files the mp3 of a radio note under its client, with the Bogotá moment of the clip', async () => {
+    present('audioFiles/fragment_AL1.mp3');
+    const { service } = build(null);
+
+    expect(await service.archiveNoteClip(radioNote, 'AL1')).toBe(true);
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/notes\/clip$/);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      medium: 'radio', client: 'Ecopetrol', platform: 'Blu Radio', date: '2026-10-14', stamp: '2026-10-14_10-30-48', alertId: 'AL1',
+    });
+    expect(body.filePath.replace(/\\/g, '/')).toMatch(/audioFiles\/fragment_AL1\.mp3$/);
+  });
+
+  it('files the mp4 of a TV note edited on its video, and the mp3 of one that fell back to audio', async () => {
+    const { service } = build(null);
+
+    present('audioFiles/fragment_AL1.mp4', 'audioFiles/fragment_AL1.mp3');
+    await service.archiveNoteClip({ ...radioNote, media: 'tv' }, 'AL1');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).filePath).toMatch(/fragment_AL1\.mp4$/);
+
+    present('audioFiles/fragment_AL2.mp3');
+    await service.archiveNoteClip({ ...radioNote, media: 'tv' }, 'AL2');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).filePath).toMatch(/fragment_AL2\.mp3$/);
+  });
+
+  it('leaves alone a note with no clip: internet, no file on disk, or too little to place it', async () => {
+    const { service } = build(null);
+    present('audioFiles/fragment_AL1.mp3');
+
+    expect(await service.archiveNoteClip({ ...radioNote, media: 'internet' }, 'AL1')).toBe(false);
+    expect(await service.archiveNoteClip({ ...radioNote, clientName: undefined }, 'AL1')).toBe(false);
+    expect(await service.archiveNoteClip(radioNote, undefined)).toBe(false);
+    present();
+    expect(await service.archiveNoteClip(radioNote, 'AL1')).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('never lets an archive failure break saving the note', async () => {
+    present('audioFiles/fragment_AL1.mp3');
+    fetchMock.mockResolvedValue(workerReply({ message: 'No se pudo subir el clip' }, false, 502));
+    const { service } = build(null);
+    const log = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(service.archiveNoteClip(radioNote, 'AL1')).resolves.toBe(false);
+
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
+  });
+});
+
+describe('NotesService.setNote and the clip', () => {
+  it('starts filing the clip of a radio note once the note is saved, without waiting for it', async () => {
+    const existing = { alert_id: 'AL1', title: 'T' };
+    const { service } = build(null, existing);
+    const archive = jest.spyOn(service, 'archiveNoteClip').mockResolvedValue(true);
+
+    await service.setNote({
+      id: ALERT_ID, title: 'Nuevo', date: '2026-10-14', media: 'radio', mediaName: 'Blu Radio', clientName: 'Ecopetrol',
+      startTime: '2026-10-14T15:30:48.000Z', summary: 's', index: '10', program: 'p',
+    });
+
+    expect(archive).toHaveBeenCalledWith(expect.objectContaining({ media: 'radio', clientName: 'Ecopetrol' }), 'AL1');
   });
 });

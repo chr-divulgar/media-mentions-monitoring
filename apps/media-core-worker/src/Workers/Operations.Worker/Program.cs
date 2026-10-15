@@ -30,6 +30,12 @@ builder.Services.AddSingleton(options);
 // no account). Registered before the services that read old recordings back from it.
 builder.Services.AddSingleton<IArchiveStorageProvider>(sp => new ArchiveStorageProvider(options, sp.GetRequiredService<ILoggerFactory>()));
 
+// The clip of a radio or TV note, filed in the archive account of its medium (POST /notes/clip).
+builder.Services.AddSingleton(sp => new NoteClipService(
+	sp.GetRequiredService<IArchiveStorageProvider>(),
+	sp.GetRequiredService<ICaptureSourceRepository>(),
+	sp.GetRequiredService<ILogger<NoteClipService>>()));
+
 // Add hosted service for YouTube cookies HTTP endpoint
 builder.Services.AddSingleton(sp => new VideoSegmentService(
 	options,
