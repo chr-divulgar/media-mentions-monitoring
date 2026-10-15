@@ -13,7 +13,7 @@ public sealed class ArchiveUploadWorker : BackgroundService
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
 
     private readonly OperationsWorkerOptions options;
-    private readonly IArchiveStorage storage;
+    private readonly IArchiveStorageProvider storages;
     private readonly ArchiveLedger ledger;
     private readonly ISourceIncidentRecorder incidentRecorder;
     private readonly ILogger<ArchiveUploadWorker> logger;
@@ -27,7 +27,7 @@ public sealed class ArchiveUploadWorker : BackgroundService
 
     public ArchiveUploadWorker(
         OperationsWorkerOptions options,
-        IArchiveStorage storage,
+        IArchiveStorageProvider storages,
         ArchiveLedger ledger,
         ISourceIncidentRecorder incidentRecorder,
         ILogger<ArchiveUploadWorker> logger,
@@ -38,7 +38,7 @@ public sealed class ArchiveUploadWorker : BackgroundService
         this.reencode = reencode ?? ((input, output, ct) => Task.Run(
             () => OpusSegmentTranscoder.TranscodeFileToOpus(input, output, options.ArchiveRadioKbps, options.ArchiveRadioSampleRateHz), ct));
         this.options = options;
-        this.storage = storage;
+        this.storages = storages;
         this.ledger = ledger;
         this.incidentRecorder = incidentRecorder;
         this.logger = logger;
@@ -85,10 +85,16 @@ public sealed class ArchiveUploadWorker : BackgroundService
         }
     }
 
+    // The account of the file's medium. Video outside the radio and notes folders is TV: that is all the
+    // archive ever takes besides radio.
+    private IArchiveStorage? StorageFor(PendingArchiveFile file) =>
+        storages.For(ArchiveMedia.MediumOf(file.RelativePath) ?? ArchiveMedia.Television);
+
     // Uploads one file (re-encoding a radio hour smaller first). False — never an exception — for an operational
     // failure, so one corrupt file cannot stop the others and is simply retried on the next pass.
     private async Task<bool> ArchiveOneAsync(PendingArchiveFile file, CancellationToken cancellationToken)
     {
+        var storage = StorageFor(file)!;
         if (!file.Reencode)
         {
             return await storage.UploadAsync(file.LocalPath, file.RemoteRelativePath, cancellationToken).ConfigureAwait(false);
@@ -121,9 +127,13 @@ public sealed class ArchiveUploadWorker : BackgroundService
     // Internal so a test can drive one pass without waiting on the timer.
     internal async Task RunOnceAsync(CancellationToken cancellationToken)
     {
+        // A medium with no account is left alone here: nothing is uploaded or ledgered for it, so the purge keeps its
+        // files, and its backlog incident is what says they are waiting for an account.
         var pending = ArchiveUpload.FindPendingFiles(
             options.AudioOutputRootPath, ledger.Contains, DateTime.UtcNow, TimeSpan.FromMinutes(options.ArchiveMinIdleMinutes),
-            await LoadOffsetsAsync(cancellationToken).ConfigureAwait(false));
+            await LoadOffsetsAsync(cancellationToken).ConfigureAwait(false))
+            .Where(file => StorageFor(file) is not null)
+            .ToList();
         if (pending.Count == 0)
         {
             return;

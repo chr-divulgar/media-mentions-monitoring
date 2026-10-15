@@ -19,6 +19,20 @@ internal static class ArchiveFixture
         return path;
     }
 
+    // The archive account of each medium; a null one means that medium has no account.
+    public sealed class Storages(IArchiveStorage? radio = null, IArchiveStorage? television = null, IArchiveStorage? press = null) : IArchiveStorageProvider
+    {
+        public static Storages All(IArchiveStorage storage) => new(storage, storage, storage);
+
+        public IArchiveStorage? For(string medium) => medium switch
+        {
+            ArchiveMedia.Radio => radio,
+            ArchiveMedia.Television => television,
+            ArchiveMedia.Press => press,
+            _ => null,
+        };
+    }
+
     public sealed class Incidents : ISourceIncidentRecorder
     {
         public List<(string SourceId, string Kind, string? Reason)> Records { get; } = [];
@@ -248,7 +262,7 @@ public sealed class ArchiveUploadWorkerTests
         string root, FakeStorage storage, ArchiveLedger ledger, Func<string, string, CancellationToken, Task> reencode) =>
         new(
             new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
-            storage, ledger, new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance,
+            ArchiveFixture.Storages.All(storage), ledger, new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance,
             reencode: reencode);
 
     [Fact]
@@ -276,6 +290,64 @@ public sealed class ArchiveUploadWorkerTests
             Assert.True(ledger.Contains("radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus", opusSize));
             Assert.False(File.Exists(uploadedFrom!)); // the temporary re-encoded file is cleaned up
             Assert.True(File.Exists(opus));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_sends_each_medium_to_its_own_account()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 4), "wradio", "wradio_2026-10-04_10-00-00.opus", DateTime.UtcNow.AddHours(-30));
+            ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 4), "rcn_tv", "rcn_tv_2026-10-04_10-00-04.mp4", DateTime.UtcNow.AddHours(-30));
+            var radio = new FakeStorage();
+            var television = new FakeStorage();
+            var worker = new ArchiveUploadWorker(
+                new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
+                new ArchiveFixture.Storages(radio, television), new ArchiveLedger(Path.Combine(root, "ledger.jsonl")),
+                new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance,
+                reencode: (_, output, _) => File.WriteAllTextAsync(output, "opus-bytes"));
+
+            await worker.RunOnceAsync(CancellationToken.None);
+
+            Assert.Equal(["radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus"], radio.Uploaded);
+            Assert.Equal(["television/2026/10/04/rcn_tv/rcn_tv_2026-10-04_10-00-04.mp4"], television.Uploaded);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_leaves_alone_a_medium_that_has_no_account_without_counting_it_as_a_failure()
+    {
+        // Nothing is uploaded, nothing is ledgered (so the purge keeps the file) and no failure streak is reported:
+        // the purge's own backlog incident is what says a file is waiting for an account.
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            var opus = ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 4), "wradio", "wradio_2026-10-04_10-00-00.opus", DateTime.UtcNow.AddHours(-30));
+            var tv = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 4), "rcn_tv", "rcn_tv_2026-10-04_10-00-04.mp4", DateTime.UtcNow.AddHours(-30));
+            var television = new FakeStorage();
+            var ledger = new ArchiveLedger(Path.Combine(root, "ledger.jsonl"));
+            var incidents = new ArchiveFixture.Incidents();
+            var worker = new ArchiveUploadWorker(
+                new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
+                new ArchiveFixture.Storages(radio: null, television), ledger, incidents, NullLogger<ArchiveUploadWorker>.Instance,
+                reencode: (_, output, _) => File.WriteAllTextAsync(output, "opus-bytes"));
+
+            await worker.RunOnceAsync(CancellationToken.None);
+
+            Assert.Single(television.Uploaded);
+            Assert.False(ledger.Contains("radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus", new FileInfo(opus).Length));
+            Assert.True(ledger.Contains("television/2026/10/04/rcn_tv/rcn_tv_2026-10-04_10-00-04.mp4", new FileInfo(tv).Length));
+            Assert.DoesNotContain(incidents.Records, r => r.Kind == IncidentKinds.ArchiveFailed);
         }
         finally
         {
@@ -331,7 +403,7 @@ public sealed class ArchiveUploadWorkerTests
             var storage = new FakeStorage { Succeeds = false };
             var incidents = new ArchiveFixture.Incidents();
             var options = new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 };
-            var worker = new ArchiveUploadWorker(options, storage, ledger, incidents, NullLogger<ArchiveUploadWorker>.Instance);
+            var worker = new ArchiveUploadWorker(options, ArchiveFixture.Storages.All(storage), ledger, incidents, NullLogger<ArchiveUploadWorker>.Instance);
 
             await worker.RunOnceAsync(CancellationToken.None);
             await worker.RunOnceAsync(CancellationToken.None);

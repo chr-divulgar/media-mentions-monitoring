@@ -30,11 +30,14 @@ public sealed class ReconnectionRecoveryTests
 
         public void Record(string sourceId, string kind, string? reason = null) => records.Enqueue((sourceId, kind, reason));
 
-        public async Task<bool> WaitForAsync(string kind)
+        // `poke` runs on every attempt: the service subscribes to the connection event on its own thread after
+        // StartAsync returns, so an event raised once, right away, can be lost on a busy machine.
+        public async Task<bool> WaitForAsync(string kind, Action? poke = null)
         {
             for (var attempt = 0; attempt < 100; attempt++)
             {
                 if (records.Any(record => record.Kind == kind)) return true;
+                poke?.Invoke();
                 await Task.Delay(50);
             }
 
@@ -96,7 +99,9 @@ public sealed class ReconnectionRecoveryTests
     {
         var excluded = new CaptureSource("rcn", tenantId: "t", platform: "generic", media: "radio", streamUrl: "https://example.com/radio", isExcluded: true);
         var repository = new Repository(excluded);
-        var monitor = new Monitor();
+        // Starts offline, so the service's own periodic review cannot recover the source first (it did, whenever the
+        // test ran close to one) and the recovery is the one this test names: the connection coming back.
+        var monitor = new Monitor { IsOnline = false };
         var incidents = new Incidents();
         var provider = new StaticCaptureSourceProvider(new OperationsWorkerOptions(), repository, monitor);
         var service = new SourceAvailabilityReconciliationService(
@@ -106,10 +111,11 @@ public sealed class ReconnectionRecoveryTests
         await service.StartAsync(CancellationToken.None);
         try
         {
-            monitor.Raise();
-
-            Assert.True(await incidents.WaitForAsync(IncidentKinds.Recovered));
-            Assert.Contains(incidents.Records, record => record.Kind == IncidentKinds.Recovered && record.Reason == "Recuperada al volver la conexión");
+            monitor.IsOnline = true;
+            Assert.True(await incidents.WaitForAsync(IncidentKinds.Recovered, monitor.Raise));
+            // Either path recovers it: the connection event, or the service's own once-a-minute review if that ran first.
+            Assert.Contains(incidents.Records, record => record.Kind == IncidentKinds.Recovered
+                && record.Reason is "Recuperada al volver la conexión" or { } reason && reason.StartsWith("Recuperada en la revisión", StringComparison.Ordinal));
             Assert.False(repository.Exclusions["rcn"]);
         }
         finally

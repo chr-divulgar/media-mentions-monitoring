@@ -32,9 +32,9 @@ public sealed class FtpArchiveStorage : IArchiveStorage
     private readonly string? certificateHost;
     private readonly ILogger<FtpArchiveStorage> logger;
 
-    public FtpArchiveStorage(OperationsWorkerOptions options, ILogger<FtpArchiveStorage> logger)
+    public FtpArchiveStorage(FtpArchiveCredentials credentials, OperationsWorkerOptions options, ILogger<FtpArchiveStorage> logger)
     {
-        credentials = options.ArchiveFtp ?? throw new InvalidOperationException("ARCHIVE_FTP_* is not configured.");
+        this.credentials = credentials;
         requireTls = options.ArchiveFtpRequireTls;
         allowInvalidCertificate = options.ArchiveFtpAllowInvalidCertificate;
         certificateHost = options.ArchiveFtpCertificateHost;

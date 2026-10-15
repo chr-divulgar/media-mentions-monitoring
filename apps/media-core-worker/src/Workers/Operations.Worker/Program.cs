@@ -26,8 +26,16 @@ var options = OperationsWorkerOptionsLoader.Load();
 
 builder.Services.AddSingleton(options);
 
+// The archive: one storage per medium, each with its own account (none when the archive is off or the medium has
+// no account). Registered before the services that read old recordings back from it.
+builder.Services.AddSingleton<IArchiveStorageProvider>(sp => new ArchiveStorageProvider(options, sp.GetRequiredService<ILoggerFactory>()));
+
 // Add hosted service for YouTube cookies HTTP endpoint
-builder.Services.AddSingleton<VideoSegmentService>();
+builder.Services.AddSingleton(sp => new VideoSegmentService(
+	options,
+	sp.GetRequiredService<ICaptureSourceProvider>(),
+	sp.GetRequiredService<ILogger<VideoSegmentService>>(),
+	sp.GetRequiredService<IArchiveStorageProvider>().For(ArchiveMedia.Television)));
 // Internet access comes first: registered before every other hosted service so it is the first one
 // started, and Program waits on it (below) before touching any source. See ConnectivityMonitor.
 builder.Services.AddSingleton<ConnectivityMonitor>();
@@ -45,7 +53,6 @@ if (options.ArchiveEnabled)
 }
 if (options.IsArchiveActive)
 {
-	builder.Services.AddSingleton<IArchiveStorage, FtpArchiveStorage>();
 	builder.Services.AddHostedService<ArchiveUploadWorker>();
 	builder.Services.AddHostedService<ArchiveRetentionWorker>();
 }
@@ -57,11 +64,12 @@ if (options.HeadlessBrowserEnabled)
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HeadlessBrowser>>()));
 }
 // PDF copy of a web note (RQ-014): needs the archive, its public https base URL and the browser.
-if (options.IsArchiveActive && options.ArchivePublicBaseUrl is not null && options.HeadlessBrowserEnabled)
+if (options.IsArchiveActive && options.CredentialsFor(ArchiveMedia.Press) is not null
+	&& options.ArchivePublicBaseUrl is not null && options.HeadlessBrowserEnabled)
 {
 	builder.Services.AddSingleton(sp => new NotePdfService(
 		sp.GetRequiredService<HeadlessBrowser>(),
-		sp.GetRequiredService<IArchiveStorage>(),
+		sp.GetRequiredService<IArchiveStorageProvider>().For(ArchiveMedia.Press)!,
 		options.ArchivePublicBaseUrl,
 		Path.Combine(options.StageFilesystemRootPath, "note-pdf"),
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<NotePdfService>>()));
@@ -194,7 +202,13 @@ builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudi
 	sp.GetRequiredService<IDetectAlertsUseCase>()));
 builder.Services.AddSingleton<ILiveCaptureProgressReader>(
 	sp => (ILiveCaptureProgressReader)sp.GetRequiredService<IAudioCapturePlugin>());
-builder.Services.AddSingleton<IClosedHourAudioReader, ClosedHourAudioSegmentReader>();
+builder.Services.AddSingleton<IClosedHourAudioReader>(sp => new ClosedHourAudioSegmentReader(
+	sp.GetRequiredService<ICaptureSourceRepository>(),
+	sp.GetRequiredService<IIngestionPluginResolver>(),
+	sp.GetRequiredService<ILiveCaptureProgressReader>(),
+	options,
+	sp.GetRequiredService<ILogger<ClosedHourAudioSegmentReader>>(),
+	sp.GetRequiredService<IArchiveStorageProvider>().For(ArchiveMedia.Radio)));
 builder.Services.AddSingleton<IContinuousCaptureUseCase>(sp => new ContinuousCaptureUseCase(
 	sp.GetRequiredService<ICaptureSourceProvider>(),
 	sp.GetRequiredService<IIngestionPluginResolver>(),

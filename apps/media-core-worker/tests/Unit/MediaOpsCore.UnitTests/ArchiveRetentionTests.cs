@@ -52,26 +52,28 @@ public sealed class ArchiveRetentionTests
         public bool Has(string prefix) => paths.Any(path => path.StartsWith(prefix, StringComparison.Ordinal));
     }
 
+    // One shared account (as before the media had their own) and the same days for both media, unless told otherwise.
     private static ArchiveRetentionWorker Worker(FakeTree storage, ArchiveFixture.Incidents? incidents = null, int retentionDays = 90) =>
+        Worker(ArchiveFixture.Storages.All(storage), incidents, retentionDays, retentionDays);
+
+    private static ArchiveRetentionWorker Worker(IArchiveStorageProvider storages, ArchiveFixture.Incidents? incidents, int radioDays, int televisionDays) =>
         new(
-            new OperationsWorkerOptions { ArchiveRemoteRetentionDays = retentionDays },
-            storage, incidents ?? new ArchiveFixture.Incidents(), NullLogger<ArchiveRetentionWorker>.Instance, () => Now);
+            new OperationsWorkerOptions { ArchiveRetentionDaysRadio = radioDays, ArchiveRetentionDaysTelevision = televisionDays },
+            storages, incidents ?? new ArchiveFixture.Incidents(), NullLogger<ArchiveRetentionWorker>.Instance, () => Now);
 
     [Fact]
-    public async Task FindExpiredDayFoldersAsync_returns_only_radio_and_television_days_older_than_the_retention()
+    public async Task FindExpiredDayFoldersAsync_returns_the_days_of_that_medium_older_than_the_retention_oldest_first()
     {
         var tree = new FakeTree(
             "radio/2026/07/11/wradio/a.mp3",       // 91 days old: expired
             "radio/2026/07/12/wradio/a.mp3",       // exactly 90 days: kept
             "radio/2026/10/09/wradio/a.mp3",       // yesterday
-            "television/2026/04/01/rcn_tv/a.mp4",  // expired
-            "television/2026/10/10/rcn_tv/a.mp4",  // today
+            "television/2026/04/01/rcn_tv/a.mp4",  // another medium's, even if expired
             "radio/2025/12/31/wradio/a.mp3");      // expired, previous year
 
-        var expired = await ArchiveRemoteRetention.FindExpiredDayFoldersAsync(tree, Today, 90, CancellationToken.None);
+        var expired = await ArchiveRemoteRetention.FindExpiredDayFoldersAsync(tree, ArchiveMedia.Radio, Today, 90, CancellationToken.None);
 
-        // Oldest first, whatever the medium.
-        Assert.Equal(["radio/2025/12/31", "television/2026/04/01", "radio/2026/07/11"], expired);
+        Assert.Equal(["radio/2025/12/31", "radio/2026/07/11"], expired);
     }
 
     [Fact]
@@ -87,9 +89,10 @@ public sealed class ArchiveRetentionTests
             "radio/2020/13/45/a.txt",             // not a real date
             "radio/2020/01/a-file-not-a-folder");
 
-        var expired = await ArchiveRemoteRetention.FindExpiredDayFoldersAsync(tree, Today, 90, CancellationToken.None);
-
-        Assert.Empty(expired);
+        foreach (var medium in new[] { ArchiveMedia.Radio, ArchiveMedia.Television })
+        {
+            Assert.Empty(await ArchiveRemoteRetention.FindExpiredDayFoldersAsync(tree, medium, Today, 90, CancellationToken.None));
+        }
     }
 
     [Fact]
@@ -111,6 +114,32 @@ public sealed class ArchiveRetentionTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_applies_each_media_own_days_and_only_touches_its_own_account()
+    {
+        // Radio keeps 10 days, TV only 7: an 8-day-old day is gone from TV and kept in radio. Each medium has its own
+        // account, so the radio account is never asked to delete TV's folders (or the other way round).
+        var radio = new FakeTree("radio/2026/10/02/wradio/a.opus", "radio/2026/09/20/wradio/a.opus");
+        var television = new FakeTree("television/2026/10/02/rcn_tv/a.mp4", "television/2026/10/09/rcn_tv/a.mp4");
+        var press = new FakeTree("notes/internet/2020/01/01/x.pdf");
+
+        await Worker(new ArchiveFixture.Storages(radio, television, press), incidents: null, radioDays: 10, televisionDays: 7).RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(["radio/2026/09/20"], radio.Deleted);
+        Assert.Equal(["television/2026/10/02"], television.Deleted);
+        Assert.Empty(press.Deleted); // the notes are never purged
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_skips_a_medium_without_an_account_and_one_whose_days_are_zero()
+    {
+        var television = new FakeTree("television/2020/01/01/rcn_tv/a.mp4");
+
+        await Worker(new ArchiveFixture.Storages(radio: null, television), incidents: null, radioDays: 10, televisionDays: 0).RunOnceAsync(CancellationToken.None);
+
+        Assert.Empty(television.Deleted); // television keeps everything; radio has no account to delete from
+    }
+
+    [Fact]
     public async Task RunOnceAsync_deletes_at_most_five_day_folders_per_pass()
     {
         var tree = new FakeTree(Enumerable.Range(1, 8).Select(day => $"radio/2026/03/{day:00}/wradio/a.mp3").ToArray());
@@ -124,7 +153,7 @@ public sealed class ArchiveRetentionTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_does_nothing_when_retention_is_zero()
+    public async Task RunOnceAsync_does_nothing_when_retention_is_zero_for_both()
     {
         var tree = new FakeTree("radio/2020/01/01/wradio/a.mp3");
 

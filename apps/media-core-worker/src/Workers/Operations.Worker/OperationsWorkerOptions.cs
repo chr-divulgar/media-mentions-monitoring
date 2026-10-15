@@ -1,4 +1,6 @@
-﻿namespace MediaOpsCore.Workers.Operations;
+﻿using MediaOpsCore.Modules.Capture.Application;
+
+namespace MediaOpsCore.Workers.Operations;
 
 public sealed class OperationsWorkerOptions
 {
@@ -67,10 +69,21 @@ public sealed class OperationsWorkerOptions
 
     public int ArchiveRadioSampleRateHz { get; set; } = 16000;
 
-    // How long the archive keeps a day of radio or TV before ArchiveRetentionWorker deletes it from the server.
+    // How long the archive keeps a day of radio and of TV before ArchiveRetentionWorker deletes it from the
+    // server; each medium has its own account and space, so each has its own days. This is the company's backup of
+    // the raw recordings (the notes and their supports are what the contract requires keeping: AMB-026).
     // 0 never deletes. Anything between 1 and 6 is treated as 7 (see ArchiveRemoteRetention.EffectiveDays), so a
     // typo cannot wipe last week's recordings.
-    public int ArchiveRemoteRetentionDays { get; set; } = 90;
+    public int ArchiveRetentionDaysRadio { get; set; } = 10;
+
+    public int ArchiveRetentionDaysTelevision { get; set; } = 10;
+
+    public int RetentionDaysFor(string medium) => medium switch
+    {
+        ArchiveMedia.Radio => ArchiveRetentionDaysRadio,
+        ArchiveMedia.Television => ArchiveRetentionDaysTelevision,
+        _ => 0,
+    };
 
     // Recordings of earlier days are fetched back from the archive for the alert editor into
     // <StageFilesystemRootPath>/video-cache; one is kept this long and the folder is capped in size.
@@ -91,13 +104,20 @@ public sealed class OperationsWorkerOptions
     public string HeadlessBrowserPath { get; set; } = "bin/ms-playwright";
 
     // From ARCHIVE_FTP_URL / _USER / _PASSWORD only — never from worker-options.json.
+    // The account every medium used before they had their own; still the fallback for a medium without one.
     public FtpArchiveCredentials? ArchiveFtp { get; set; }
+
+    // The account of each medium (ArchiveMedia.Radio, Television, Press), from ARCHIVE_<MEDIUM>_FTP_*.
+    public Dictionary<string, FtpArchiveCredentials> ArchiveFtpByMedium { get; } = new(StringComparer.Ordinal);
+
+    public FtpArchiveCredentials? CredentialsFor(string medium) =>
+        ArchiveFtpByMedium.TryGetValue(medium, out var own) ? own : ArchiveFtp;
 
     // From ARCHIVE_PUBLIC_BASE_URL only: the https address under which the archive's FTP folder is
     // published, so a note's PDF gets a link anyone with access can open. Null disables note PDFs.
     public string? ArchivePublicBaseUrl { get; set; }
 
-    public bool IsArchiveActive => ArchiveEnabled && ArchiveFtp is not null;
+    public bool IsArchiveActive => ArchiveEnabled && (ArchiveFtp is not null || ArchiveFtpByMedium.Count > 0);
 
     public int DefaultFlacWindowDurationSeconds { get; set; } = 30;
 

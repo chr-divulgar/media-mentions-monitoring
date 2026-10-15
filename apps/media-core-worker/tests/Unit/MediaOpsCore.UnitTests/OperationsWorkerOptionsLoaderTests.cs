@@ -238,7 +238,9 @@ public sealed class OperationsWorkerOptionsLoaderTests
         {
             File.WriteAllText(tempPath, """{ "archiveEnabled": true, "archiveMaxParallelUploads": 4, "archiveFtpAllowInvalidCertificate": true }""");
 
-            using (new EnvironmentVariableScope(("ARCHIVE_FTP_URL", null), ("ARCHIVE_FTP_USER", null), ("ARCHIVE_FTP_PASSWORD", null)))
+            using (new EnvironmentVariableScope(
+                ("ARCHIVE_FTP_URL", null), ("ARCHIVE_FTP_USER", null), ("ARCHIVE_FTP_PASSWORD", null),
+                ("ARCHIVE_RADIO_FTP_URL", null), ("ARCHIVE_TELEVISION_FTP_URL", null), ("ARCHIVE_PRESS_FTP_URL", null)))
             {
                 var withoutCredentials = OperationsWorkerOptionsLoader.Load(tempPath);
                 Assert.False(withoutCredentials.IsArchiveActive);
@@ -254,6 +256,42 @@ public sealed class OperationsWorkerOptionsLoaderTests
                 var options = OperationsWorkerOptionsLoader.Load(tempPath);
                 Assert.True(options.IsArchiveActive);
                 Assert.Equal("juan", options.ArchiveFtp!.User);
+                Assert.Empty(options.ArchiveFtpByMedium);
+            }
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
+    public void Load_should_read_an_archive_account_per_medium_and_the_days_each_one_keeps()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-media-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(tempPath, """{ "archiveEnabled": true, "archiveRetentionDaysRadio": 10, "archiveRetentionDaysTelevision": 5 }""");
+
+            using (new EnvironmentVariableScope(
+                ("ARCHIVE_FTP_URL", null), ("ARCHIVE_FTP_USER", null), ("ARCHIVE_FTP_PASSWORD", null),
+                ("ARCHIVE_RADIO_FTP_URL", "ftp://archivo.example.com:21/radio"),
+                ("ARCHIVE_RADIO_FTP_USER", "radio-user"),
+                ("ARCHIVE_RADIO_FTP_PASSWORD", "radio-secret"),
+                ("ARCHIVE_TELEVISION_FTP_URL", null), ("ARCHIVE_TELEVISION_FTP_USER", null), ("ARCHIVE_TELEVISION_FTP_PASSWORD", null),
+                ("ARCHIVE_PRESS_FTP_URL", "ftp://archivo.example.com:21/prensa"),
+                ("ARCHIVE_PRESS_FTP_USER", "press-user"),
+                ("ARCHIVE_PRESS_FTP_PASSWORD", "press-secret")))
+            {
+                var options = OperationsWorkerOptionsLoader.Load(tempPath);
+
+                Assert.True(options.IsArchiveActive);
+                Assert.Null(options.ArchiveFtp);
+                Assert.Equal("radio-user", options.CredentialsFor("radio")!.User);
+                Assert.Equal("press-user", options.CredentialsFor("press")!.User);
+                Assert.Null(options.CredentialsFor("television")); // no account of its own and no single one to fall back to
+                Assert.Equal(10, options.ArchiveRetentionDaysRadio);
+                Assert.Equal(5, options.ArchiveRetentionDaysTelevision);
             }
         }
         finally

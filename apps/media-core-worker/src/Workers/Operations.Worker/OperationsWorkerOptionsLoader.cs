@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using MediaOpsCore.Modules.Capture.Application;
 
 namespace MediaOpsCore.Workers.Operations;
 
@@ -6,6 +7,18 @@ public static class OperationsWorkerOptionsLoader
 {
     private const string DefaultConfigPath = "stage/worker-options.json";
     private const string StageDirectoryName = "stage";
+
+    // <prefix>_URL / _USER / _PASSWORD from the environment, or null unless all three are there and the URL is valid.
+    private static FtpArchiveCredentials? ReadArchiveCredentials(string prefix)
+    {
+        var url = Environment.GetEnvironmentVariable(prefix + "_URL");
+        var user = Environment.GetEnvironmentVariable(prefix + "_USER");
+        var password = Environment.GetEnvironmentVariable(prefix + "_PASSWORD");
+        return !string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.Trim(), UriKind.Absolute, out _)
+            && !string.IsNullOrWhiteSpace(user) && password is not null
+            ? new FtpArchiveCredentials(url.Trim(), user.Trim(), password)
+            : null;
+    }
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -40,7 +53,8 @@ public static class OperationsWorkerOptionsLoader
         int? ArchiveMaxParallelUploads,
         int? ArchiveMinIdleMinutes,
         int? ArchiveRadioKbps,
-        int? ArchiveRemoteRetentionDays,
+        int? ArchiveRetentionDaysRadio,
+        int? ArchiveRetentionDaysTelevision,
         int? ArchiveRadioSampleRateHz,
         int? VideoCacheHours,
         int? VideoCacheMaxGb,
@@ -260,9 +274,14 @@ public static class OperationsWorkerOptionsLoader
             options.AudioCacheMaxGb = model.AudioCacheMaxGb.Value;
         }
 
-        if (model.ArchiveRemoteRetentionDays is >= 0)
+        if (model.ArchiveRetentionDaysRadio is >= 0)
         {
-            options.ArchiveRemoteRetentionDays = model.ArchiveRemoteRetentionDays.Value;
+            options.ArchiveRetentionDaysRadio = model.ArchiveRetentionDaysRadio.Value;
+        }
+
+        if (model.ArchiveRetentionDaysTelevision is >= 0)
+        {
+            options.ArchiveRetentionDaysTelevision = model.ArchiveRetentionDaysTelevision.Value;
         }
 
         if (model.ArchiveRadioKbps is > 0)
@@ -442,14 +461,21 @@ public static class OperationsWorkerOptionsLoader
             options.YoutubeCookiesAlertFilePath = model.YoutubeCookiesAlertFilePath;
         }
 
-        // Archive server credentials, like the SMTP ones, only ever come from the environment.
-        var archiveUrl = Environment.GetEnvironmentVariable("ARCHIVE_FTP_URL");
-        var archiveUser = Environment.GetEnvironmentVariable("ARCHIVE_FTP_USER");
-        var archivePassword = Environment.GetEnvironmentVariable("ARCHIVE_FTP_PASSWORD");
-        if (!string.IsNullOrWhiteSpace(archiveUrl) && Uri.TryCreate(archiveUrl.Trim(), UriKind.Absolute, out _)
-            && !string.IsNullOrWhiteSpace(archiveUser) && archivePassword is not null)
+        // Archive server credentials, like the SMTP ones, only ever come from the environment: one account per
+        // medium (ARCHIVE_RADIO_FTP_*, ARCHIVE_TELEVISION_FTP_*, ARCHIVE_PRESS_FTP_*), plus the single account used
+        // before (ARCHIVE_FTP_*) that any medium without its own keeps falling back to.
+        options.ArchiveFtp = ReadArchiveCredentials("ARCHIVE_FTP");
+        foreach (var (medium, prefix) in new[]
         {
-            options.ArchiveFtp = new FtpArchiveCredentials(archiveUrl.Trim(), archiveUser.Trim(), archivePassword);
+            (ArchiveMedia.Radio, "ARCHIVE_RADIO_FTP"),
+            (ArchiveMedia.Television, "ARCHIVE_TELEVISION_FTP"),
+            (ArchiveMedia.Press, "ARCHIVE_PRESS_FTP"),
+        })
+        {
+            if (ReadArchiveCredentials(prefix) is { } own)
+            {
+                options.ArchiveFtpByMedium[medium] = own;
+            }
         }
 
         var archivePublicBaseUrl = Environment.GetEnvironmentVariable("ARCHIVE_PUBLIC_BASE_URL");

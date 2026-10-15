@@ -12,10 +12,6 @@ namespace MediaOpsCore.Workers.Operations;
 /// </summary>
 internal static partial class ArchiveRemoteRetention
 {
-    // Matches the folders InProcessFfmpegAudioCapturePlugin.BuildMediaDirectoryName writes locally and
-    // ArchiveUpload mirrors in the archive.
-    public static readonly string[] MediaRoots = ["radio", "television"];
-
     // A day folder is expired when it is dated before today minus this many days; and a retention of 1 to 6
     // days is a typo, not a policy, so it counts as 7. 0 (or less) means never delete.
     public static int EffectiveDays(int configured) => configured <= 0 ? 0 : Math.Max(7, configured);
@@ -24,11 +20,14 @@ internal static partial class ArchiveRemoteRetention
     // allowed to delete, checked once more right before each deletion.
     public static bool IsDayFolder(string relativePath) => DayFolderPattern().IsMatch(relativePath);
 
+    // The day folders of one medium (the folder radio/ or television/ in its account) dated before today minus the
+    // retention, oldest first. The medium is the folder name: ArchiveMedia.Radio and ArchiveMedia.Television are the
+    // folders InProcessFfmpegAudioCapturePlugin.BuildMediaDirectoryName writes locally and ArchiveUpload mirrors here.
     public static async Task<IReadOnlyList<string>> FindExpiredDayFoldersAsync(
-        IArchiveStorage storage, DateOnly today, int retentionDays, CancellationToken cancellationToken)
+        IArchiveStorage storage, string medium, DateOnly today, int retentionDays, CancellationToken cancellationToken)
     {
         var days = EffectiveDays(retentionDays);
-        if (days == 0)
+        if (days == 0 || medium is not (ArchiveMedia.Radio or ArchiveMedia.Television))
         {
             return [];
         }
@@ -36,23 +35,20 @@ internal static partial class ArchiveRemoteRetention
         var cutoff = today.AddDays(-days);
         var expired = new List<(DateOnly Date, string Path)>();
 
-        foreach (var media in MediaRoots)
+        foreach (var year in await NumericChildrenAsync(storage, medium, 4, cancellationToken).ConfigureAwait(false))
         {
-            foreach (var year in await NumericChildrenAsync(storage, media, 4, cancellationToken).ConfigureAwait(false))
+            if (int.Parse(year) > cutoff.Year)
             {
-                if (int.Parse(year) > cutoff.Year)
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                foreach (var month in await NumericChildrenAsync(storage, $"{media}/{year}", 2, cancellationToken).ConfigureAwait(false))
+            foreach (var month in await NumericChildrenAsync(storage, $"{medium}/{year}", 2, cancellationToken).ConfigureAwait(false))
+            {
+                foreach (var day in await NumericChildrenAsync(storage, $"{medium}/{year}/{month}", 2, cancellationToken).ConfigureAwait(false))
                 {
-                    foreach (var day in await NumericChildrenAsync(storage, $"{media}/{year}/{month}", 2, cancellationToken).ConfigureAwait(false))
+                    if (DateOnly.TryParseExact($"{year}-{month}-{day}", "yyyy-MM-dd", out var date) && date < cutoff)
                     {
-                        if (DateOnly.TryParseExact($"{year}-{month}-{day}", "yyyy-MM-dd", out var date) && date < cutoff)
-                        {
-                            expired.Add((date, $"{media}/{year}/{month}/{day}"));
-                        }
+                        expired.Add((date, $"{medium}/{year}/{month}/{day}"));
                     }
                 }
             }
@@ -73,9 +69,11 @@ internal static partial class ArchiveRemoteRetention
 }
 
 /// <summary>
-/// Deletes from the archive the radio and TV days older than ArchiveRemoteRetentionDays (90 by default) so the
-/// server does not fill up. Runs when the worker starts and then every few hours; a few day folders per pass at
-/// most, so a wrong clock or setting can never empty the archive in one go. Everything it deletes is logged.
+/// Deletes from the archive the radio and TV days older than each medium's retention (10 days by default, see
+/// OperationsWorkerOptions.ArchiveRetentionDaysRadio) so the server does not fill up. Each medium is cleaned in its
+/// own account; the press (the notes) is never purged. Runs when the worker starts and then every few hours; a few
+/// day folders per pass at most, so a wrong clock or setting can never empty the archive in one go. Everything it
+/// deletes is logged.
 /// </summary>
 public sealed class ArchiveRetentionWorker : BackgroundService
 {
@@ -85,20 +83,20 @@ public sealed class ArchiveRetentionWorker : BackgroundService
     private const int MaxDayFoldersPerPass = 5;
 
     private readonly OperationsWorkerOptions options;
-    private readonly IArchiveStorage storage;
+    private readonly IArchiveStorageProvider storages;
     private readonly ISourceIncidentRecorder incidentRecorder;
     private readonly ILogger<ArchiveRetentionWorker> logger;
     private readonly Func<DateTimeOffset> clock;
 
     public ArchiveRetentionWorker(
         OperationsWorkerOptions options,
-        IArchiveStorage storage,
+        IArchiveStorageProvider storages,
         ISourceIncidentRecorder incidentRecorder,
         ILogger<ArchiveRetentionWorker> logger,
         Func<DateTimeOffset>? clock = null)
     {
         this.options = options;
-        this.storage = storage;
+        this.storages = storages;
         this.incidentRecorder = incidentRecorder;
         this.logger = logger;
         this.clock = clock ?? (() => DateTimeOffset.UtcNow);
@@ -128,8 +126,17 @@ public sealed class ArchiveRetentionWorker : BackgroundService
     // Internal so a test can drive one pass without waiting on the timer.
     internal async Task RunOnceAsync(CancellationToken cancellationToken)
     {
-        var days = ArchiveRemoteRetention.EffectiveDays(options.ArchiveRemoteRetentionDays);
-        if (days == 0)
+        foreach (var medium in new[] { ArchiveMedia.Radio, ArchiveMedia.Television })
+        {
+            await PurgeMediumAsync(medium, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task PurgeMediumAsync(string medium, CancellationToken cancellationToken)
+    {
+        var days = ArchiveRemoteRetention.EffectiveDays(options.RetentionDaysFor(medium));
+        var storage = storages.For(medium);
+        if (days == 0 || storage is null)
         {
             return;
         }
@@ -139,12 +146,12 @@ public sealed class ArchiveRetentionWorker : BackgroundService
         IReadOnlyList<string> expired;
         try
         {
-            expired = await ArchiveRemoteRetention.FindExpiredDayFoldersAsync(storage, today, days, cancellationToken).ConfigureAwait(false);
+            expired = await ArchiveRemoteRetention.FindExpiredDayFoldersAsync(storage, medium, today, days, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Without a trustworthy listing nothing is deleted.
-            logger.LogWarning(exception, "[ArchiveRetentionWorker] Could not list the archive; nothing deleted.");
+            logger.LogWarning(exception, "[ArchiveRetentionWorker] Could not list the {Medium} archive; nothing deleted.", medium);
             return;
         }
 
@@ -170,7 +177,8 @@ public sealed class ArchiveRetentionWorker : BackgroundService
 
         if (expired.Count > MaxDayFoldersPerPass)
         {
-            logger.LogInformation("[ArchiveRetentionWorker] {Remaining} more expired day folder(s) wait for the next pass.", expired.Count - MaxDayFoldersPerPass);
+            logger.LogInformation(
+                "[ArchiveRetentionWorker] {Remaining} more expired {Medium} day folder(s) wait for the next pass.", expired.Count - MaxDayFoldersPerPass, medium);
         }
     }
 }

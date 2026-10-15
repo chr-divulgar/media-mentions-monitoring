@@ -5,6 +5,34 @@ namespace MediaOpsCore.Modules.Capture.Application;
 /// buffer; whatever is behind this port is the archive. FTP today, a cloud bucket later — the
 /// "what to upload, when it is safe to delete locally" logic never knows which.
 /// </summary>
+/// <summary>The media the archive keeps apart, each with its own account on the server.</summary>
+public static class ArchiveMedia
+{
+    public const string Radio = "radio";
+    public const string Television = "television";
+    // The press: the PDF copies of the notes of internet.
+    public const string Press = "press";
+
+    // The medium a file of the archive belongs to, from the first folder of its path (radio/…, television/…,
+    // notes/…); null for anything else.
+    public static string? MediumOf(string relativePath) => relativePath.Split('/', 2)[0] switch
+    {
+        "radio" => Radio,
+        "television" => Television,
+        "notes" => Press,
+        _ => null,
+    };
+}
+
+/// <summary>
+/// The archive storage of each medium. Radio, television and press each have their own account, so a fault or a
+/// deletion in one never reaches the others; a medium with no account gets null.
+/// </summary>
+public interface IArchiveStorageProvider
+{
+    IArchiveStorage? For(string medium);
+}
+
 public interface IArchiveStorage
 {
     // Uploads localPath to relativePath ('/'-separated, mirroring the local layout) and returns
