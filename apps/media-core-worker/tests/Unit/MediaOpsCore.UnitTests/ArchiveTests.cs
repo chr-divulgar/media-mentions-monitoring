@@ -38,7 +38,7 @@ public sealed class ArchiveUploadTests
         {
             var older = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 4), "rcn_tv", "rcn_tv_2026-10-04_17-00-00.mp4", Now.AddHours(-20));
             var newer = ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "rcn_tv", "rcn_tv_2026-10-05_10-00-00.mp4", Now.AddHours(-2));
-            // Radio: the hourly opus goes up (as mp3, see ConvertToMp3); its transcription and resume file do not.
+            // Radio: the hourly opus goes up (re-encoded smaller, see Reencode); its transcription and resume file do not.
             var radioOpus = ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_10-00-00.opus", Now.AddHours(-3));
             ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_10-00-00.json", Now.AddHours(-3));
             ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_09-00-00.opus.resume", Now.AddHours(-3));
@@ -58,7 +58,7 @@ public sealed class ArchiveUploadTests
     }
 
     [Fact]
-    public void FindPendingFiles_sends_a_radio_opus_as_mp3_to_a_remote_path_ending_in_mp3()
+    public void FindPendingFiles_sends_a_radio_opus_re_encoded_to_the_same_remote_path()
     {
         var root = ArchiveFixture.NewRoot();
         try
@@ -70,12 +70,13 @@ public sealed class ArchiveUploadTests
 
             var radio = pending.Single(p => p.RelativePath.StartsWith("radio/", StringComparison.Ordinal));
             Assert.Equal("radio/2026/10/05/wradio/wradio_2026-10-05_10-00-00.opus", radio.RelativePath);
-            Assert.Equal("radio/2026/10/05/wradio/wradio_2026-10-05_10-00-00.mp3", radio.RemoteRelativePath);
-            Assert.True(radio.ConvertToMp3);
+            // Same name in the archive as on disk: only the bytes are smaller.
+            Assert.Equal(radio.RelativePath, radio.RemoteRelativePath);
+            Assert.True(radio.Reencode);
 
             var video = pending.Single(p => p.RelativePath.StartsWith("television/", StringComparison.Ordinal));
             Assert.Equal(video.RelativePath, video.RemoteRelativePath);
-            Assert.False(video.ConvertToMp3);
+            Assert.False(video.Reencode);
         }
         finally
         {
@@ -244,14 +245,14 @@ public sealed class ArchiveUploadWorkerTests
     }
 
     private static ArchiveUploadWorker RadioWorker(
-        string root, FakeStorage storage, ArchiveLedger ledger, Func<string, string, CancellationToken, Task> convert) =>
+        string root, FakeStorage storage, ArchiveLedger ledger, Func<string, string, CancellationToken, Task> reencode) =>
         new(
             new OperationsWorkerOptions { AudioOutputRootPath = root, ArchiveMinIdleMinutes = 20, ArchiveMaxParallelUploads = 2 },
             storage, ledger, new ArchiveFixture.Incidents(), NullLogger<ArchiveUploadWorker>.Instance,
-            convertToMp3: convert);
+            reencode: reencode);
 
     [Fact]
-    public async Task RunOnceAsync_uploads_a_radio_hour_as_mp3_and_ledgers_the_local_opus()
+    public async Task RunOnceAsync_uploads_a_re_encoded_radio_hour_and_ledgers_the_local_opus()
     {
         var root = ArchiveFixture.NewRoot();
         try
@@ -264,16 +265,16 @@ public sealed class ArchiveUploadWorkerTests
             var worker = RadioWorker(root, storage, ledger, async (input, output, _) =>
             {
                 Assert.Equal(opus, input);
-                await File.WriteAllTextAsync(output, "mp3-bytes");
+                await File.WriteAllTextAsync(output, "opus-bytes");
                 uploadedFrom = output;
             });
 
             await worker.RunOnceAsync(CancellationToken.None);
 
-            Assert.Equal(["radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.mp3"], storage.Uploaded);
+            Assert.Equal(["radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus"], storage.Uploaded);
             // The ledger keys the LOCAL file (path + size), which is what the purge asks about.
             Assert.True(ledger.Contains("radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus", opusSize));
-            Assert.False(File.Exists(uploadedFrom!)); // the temporary mp3 is cleaned up
+            Assert.False(File.Exists(uploadedFrom!)); // the temporary re-encoded file is cleaned up
             Assert.True(File.Exists(opus));
         }
         finally
@@ -296,7 +297,7 @@ public sealed class ArchiveUploadWorkerTests
             var worker = RadioWorker(root, storage, ledger, async (_, output, _) =>
             {
                 if (broken) throw new InvalidOperationException("corrupt opus");
-                await File.WriteAllTextAsync(output, "mp3-bytes");
+                await File.WriteAllTextAsync(output, "opus-bytes");
             });
 
             await worker.RunOnceAsync(CancellationToken.None); // conversion fails
@@ -585,26 +586,31 @@ public sealed class FtpArchiveCredentialsTests
     }
 }
 
-public sealed class OpusToMp3ArchiveTests
+public sealed class OpusArchiveReencodeTests
 {
     private static string SampleOpus => Path.Combine(AppContext.BaseDirectory, "TestData", "sample-radio.opus");
 
     [Fact]
-    public void TranscodeFileToMp3_writes_a_playable_mono_mp3_as_long_as_the_whole_source()
+    public void TranscodeFileToOpus_writes_a_small_mono_opus_as_long_as_the_whole_source()
     {
-        var output = Path.Combine(Path.GetTempPath(), $"archive-test-{Guid.NewGuid():N}.mp3");
+        var output = Path.Combine(Path.GetTempPath(), $"archive-test-{Guid.NewGuid():N}.opus");
         try
         {
-            OpusSegmentTranscoder.TranscodeFileToMp3(SampleOpus, output, bitrateKbps: 32, sampleRateHz: 16000);
+            OpusSegmentTranscoder.TranscodeFileToOpus(SampleOpus, output, bitrateKbps: 24, sampleRateHz: 16000);
 
             var bytes = File.ReadAllBytes(output);
-            // 3 s of 32 kbps audio is ~12 KB; a header-only or silent-failure file would be far smaller.
-            Assert.InRange(bytes.Length, 8_000, 20_000);
+            Assert.Equal("OggS", System.Text.Encoding.ASCII.GetString(bytes, 0, 4)); // an Ogg container
+            // 3 s at 24 kbps is ~9 KB; a header-only or silent-failure file would be far smaller.
+            Assert.InRange(bytes.Length, 5_000, 14_000);
+
+            var info = Mp4Info.Read(output);
+            Assert.True(info.HasAudio);
+            Assert.Equal("opus", info.AudioCodec);
+            Assert.Equal(1, info.AudioChannels);
 
             // Read it back: mono 16-bit at 16 kHz is 32 000 bytes a second, after a 44-byte wav header.
             var wav = OpusSegmentTranscoder.Transcode([output], 0, 60, 16000, 64, "wav");
-            var seconds = (wav.Length - 44) / 32000.0;
-            Assert.InRange(seconds, 2.8, 3.3);
+            Assert.InRange((wav.Length - 44) / 32000.0, 2.8, 3.3);
         }
         finally
         {

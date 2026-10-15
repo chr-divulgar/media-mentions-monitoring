@@ -20,8 +20,9 @@ public sealed class ArchiveUploadWorker : BackgroundService
     // Gives each source's UTC offset, which its file names are stamped in. Optional: without it every
     // source is read as Bogota time.
     private readonly ICaptureSourceRepository? sourceRepository;
-    // Converts a radio hour (opus) into the mp3 that is archived; injectable so a pass can be tested without FFmpeg.
-    private readonly Func<string, string, CancellationToken, Task> convertToMp3;
+    // Rewrites a radio hour (opus) into the small mono opus that is archived; injectable so a pass can be tested
+    // without FFmpeg.
+    private readonly Func<string, string, CancellationToken, Task> reencode;
     private bool failingStreak;
 
     public ArchiveUploadWorker(
@@ -31,11 +32,11 @@ public sealed class ArchiveUploadWorker : BackgroundService
         ISourceIncidentRecorder incidentRecorder,
         ILogger<ArchiveUploadWorker> logger,
         ICaptureSourceRepository? sourceRepository = null,
-        Func<string, string, CancellationToken, Task>? convertToMp3 = null)
+        Func<string, string, CancellationToken, Task>? reencode = null)
     {
         this.sourceRepository = sourceRepository;
-        this.convertToMp3 = convertToMp3 ?? ((input, output, ct) => Task.Run(
-            () => OpusSegmentTranscoder.TranscodeFileToMp3(input, output, options.ArchiveRadioMp3Kbps, options.ArchiveRadioMp3SampleRateHz), ct));
+        this.reencode = reencode ?? ((input, output, ct) => Task.Run(
+            () => OpusSegmentTranscoder.TranscodeFileToOpus(input, output, options.ArchiveRadioKbps, options.ArchiveRadioSampleRateHz), ct));
         this.options = options;
         this.storage = storage;
         this.ledger = ledger;
@@ -84,31 +85,31 @@ public sealed class ArchiveUploadWorker : BackgroundService
         }
     }
 
-    // Uploads one file (converting a radio hour to mp3 first). False — never an exception — for an operational
+    // Uploads one file (re-encoding a radio hour smaller first). False — never an exception — for an operational
     // failure, so one corrupt file cannot stop the others and is simply retried on the next pass.
     private async Task<bool> ArchiveOneAsync(PendingArchiveFile file, CancellationToken cancellationToken)
     {
-        if (!file.ConvertToMp3)
+        if (!file.Reencode)
         {
             return await storage.UploadAsync(file.LocalPath, file.RemoteRelativePath, cancellationToken).ConfigureAwait(false);
         }
 
-        var temporaryMp3 = Path.Combine(Path.GetTempPath(), $"archive-{Guid.NewGuid():N}.mp3");
+        var temporaryFile = Path.Combine(Path.GetTempPath(), $"archive-{Guid.NewGuid():N}.opus");
         try
         {
-            await convertToMp3(file.LocalPath, temporaryMp3, cancellationToken).ConfigureAwait(false);
-            return await storage.UploadAsync(temporaryMp3, file.RemoteRelativePath, cancellationToken).ConfigureAwait(false);
+            await reencode(file.LocalPath, temporaryFile, cancellationToken).ConfigureAwait(false);
+            return await storage.UploadAsync(temporaryFile, file.RemoteRelativePath, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            logger.LogWarning(exception, "[ArchiveUploadWorker] Could not convert {Path} to mp3.", file.RelativePath);
+            logger.LogWarning(exception, "[ArchiveUploadWorker] Could not re-encode {Path} for the archive.", file.RelativePath);
             return false;
         }
         finally
         {
             try
             {
-                File.Delete(temporaryMp3);
+                File.Delete(temporaryFile);
             }
             catch (IOException)
             {

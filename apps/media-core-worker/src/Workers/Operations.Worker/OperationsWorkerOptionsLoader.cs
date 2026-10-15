@@ -39,9 +39,9 @@ public static class OperationsWorkerOptionsLoader
         string? ArchiveFtpCertificateHost,
         int? ArchiveMaxParallelUploads,
         int? ArchiveMinIdleMinutes,
-        int? ArchiveRadioMp3Kbps,
+        int? ArchiveRadioKbps,
         int? ArchiveRemoteRetentionDays,
-        int? ArchiveRadioMp3SampleRateHz,
+        int? ArchiveRadioSampleRateHz,
         int? VideoCacheHours,
         int? VideoCacheMaxGb,
         int? AudioCacheHours,
@@ -265,14 +265,14 @@ public static class OperationsWorkerOptionsLoader
             options.ArchiveRemoteRetentionDays = model.ArchiveRemoteRetentionDays.Value;
         }
 
-        if (model.ArchiveRadioMp3Kbps is > 0)
+        if (model.ArchiveRadioKbps is > 0)
         {
-            options.ArchiveRadioMp3Kbps = model.ArchiveRadioMp3Kbps.Value;
+            options.ArchiveRadioKbps = model.ArchiveRadioKbps.Value;
         }
 
-        if (model.ArchiveRadioMp3SampleRateHz is > 0)
+        if (model.ArchiveRadioSampleRateHz is > 0)
         {
-            options.ArchiveRadioMp3SampleRateHz = model.ArchiveRadioMp3SampleRateHz.Value;
+            options.ArchiveRadioSampleRateHz = model.ArchiveRadioSampleRateHz.Value;
         }
 
         if (model.ArchiveMinIdleMinutes is > 0)

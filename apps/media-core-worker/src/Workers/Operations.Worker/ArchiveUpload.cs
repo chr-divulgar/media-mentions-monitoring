@@ -1,13 +1,13 @@
 namespace MediaOpsCore.Workers.Operations;
 
 // RelativePath is the LOCAL file (what the ledger and the purge key on); RemoteRelativePath is where it goes
-// in the archive. They differ for radio, whose hourly opus is converted and archived as an mp3.
+// in the archive. Radio keeps its name there but is Reencode: the hourly opus is rewritten smaller first.
 internal sealed record PendingArchiveFile(
-    string LocalPath, string RelativePath, long Size, DateTime LastWriteUtc, string RemoteRelativePath, bool ConvertToMp3);
+    string LocalPath, string RelativePath, long Size, DateTime LastWriteUtc, string RemoteRelativePath, bool Reencode);
 
 /// <summary>
 /// Pure selection of what still needs archiving that the ledger does not already have: TV video (MP4) and
-/// radio audio (the hourly opus, archived as mp3). Everything else — transcriptions, resume files, a TV
+/// radio audio (the hourly opus, archived re-encoded to a small mono opus). Everything else — transcriptions, resume files, a TV
 /// channel's own audio — is not archived. "Closed" is judged by inactivity — an active hour is written every
 /// few seconds (audio flush, continuous video), so a file untouched for a while is finished — and, for the
 /// hourly files, by the hour named in the file being over.
@@ -38,7 +38,7 @@ internal static class ArchiveUpload
                 if (!isArchived(relative, file.Length))
                 {
                     pending.Add(new PendingArchiveFile(
-                        file.FullName, relative, file.Length, file.LastWriteTimeUtc, RemotePathFor(relative), ConvertToMp3: IsRadioOpus(relative)));
+                        file.FullName, relative, file.Length, file.LastWriteTimeUtc, RemotePathFor(relative), Reencode: IsRadioOpus(relative)));
                 }
             }
         }
@@ -56,10 +56,9 @@ internal static class ArchiveUpload
         relativePath.StartsWith("radio/", StringComparison.Ordinal)
         && relativePath.EndsWith(".opus", StringComparison.OrdinalIgnoreCase);
 
-    // Radio is archived as mp3 (what the alert editor works with, so nothing has to be converted when an
-    // old alert is opened); video is archived as it is.
-    public static string RemotePathFor(string relativePath) =>
-        IsRadioOpus(relativePath) ? Path.ChangeExtension(relativePath, ".mp3") : relativePath;
+    // Same path in the archive as on disk: the day folders, and the name of the hour, are what lets an old alert find
+    // its recording. (Radio hours archived before the format changed are .mp3; the reader still understands them.)
+    public static string RemotePathFor(string relativePath) => relativePath;
 
     // The mtime of a file that is still being written can lag by many minutes (observed on NTFS), so
     // "idle" alone mistakes the current hour's file for a finished one and uploads a growing file.

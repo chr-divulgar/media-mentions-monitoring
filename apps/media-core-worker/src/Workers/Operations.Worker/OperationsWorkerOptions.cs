@@ -61,16 +61,16 @@ public sealed class OperationsWorkerOptions
 
     public int ArchiveMinIdleMinutes { get; set; } = 20;
 
-    // Radio is archived as an mp3 per hour. The defaults are what the alert editor itself works with
-    // (32 kbps, 16 kHz, mono), so an old alert opens without converting anything.
-    public int ArchiveRadioMp3Kbps { get; set; } = 32;
+    // Radio is archived as one small mono opus per hour. 24 kbps at 16 kHz was transcribed as well as the 32 kbps mp3 it
+    // replaced and weighs 24 % less (10.6 MB an hour; 16 kbps is half the size but loses about 3.5 points of word match).
+    public int ArchiveRadioKbps { get; set; } = 24;
+
+    public int ArchiveRadioSampleRateHz { get; set; } = 16000;
 
     // How long the archive keeps a day of radio or TV before ArchiveRetentionWorker deletes it from the server.
     // 0 never deletes. Anything between 1 and 6 is treated as 7 (see ArchiveRemoteRetention.EffectiveDays), so a
     // typo cannot wipe last week's recordings.
     public int ArchiveRemoteRetentionDays { get; set; } = 90;
-
-    public int ArchiveRadioMp3SampleRateHz { get; set; } = 16000;
 
     // Recordings of earlier days are fetched back from the archive for the alert editor into
     // <StageFilesystemRootPath>/video-cache; one is kept this long and the folder is capped in size.

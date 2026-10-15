@@ -20,8 +20,10 @@ public sealed class ClosedHourAudioArchiveTests
     private static readonly DateTimeOffset Hour8 = new(2026, 1, 15, 8, 0, 0, TimeSpan.FromHours(-5));
     private static readonly DateTimeOffset Hour9 = Hour8.AddHours(1);
 
-    private static string Mp3Path(DateTimeOffset hour) =>
-        $"radio/{hour:yyyy}/{hour:MM}/{hour:dd}/radio-a/radio-a_{hour:yyyy-MM-dd_HH-mm-ss}.mp3";
+    private static string ArchivedPath(DateTimeOffset hour, string extension = ".opus") =>
+        $"radio/{hour:yyyy}/{hour:MM}/{hour:dd}/radio-a/radio-a_{hour:yyyy-MM-dd_HH-mm-ss}{extension}";
+
+    private static string Mp3Path(DateTimeOffset hour) => ArchivedPath(hour, ".mp3");
 
     private static string NewRoot() => Path.Combine(Path.GetTempPath(), $"closed-hour-archive-{Guid.NewGuid():N}");
 
@@ -51,7 +53,8 @@ public sealed class ClosedHourAudioArchiveTests
         public Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default)
         {
             Downloads++;
-            File.Copy(SampleMp3, localPath, overwrite: true);
+            // Radio is archived as opus; the mp3 is what was uploaded before the format changed.
+            File.Copy(relativePath.EndsWith(".mp3", StringComparison.Ordinal) ? SampleMp3 : SampleOpus, localPath, overwrite: true);
             return Task.FromResult(true);
         }
     }
@@ -74,12 +77,12 @@ public sealed class ClosedHourAudioArchiveTests
         (Assert.IsType<ClosedHourAudioSuccess>(result).Bytes.Length - 44) / 32000.0;
 
     [Fact]
-    public async Task ExtractSegmentAsync_serves_a_previous_day_hour_from_the_archived_mp3_and_downloads_it_only_once()
+    public async Task ExtractSegmentAsync_serves_a_previous_day_hour_from_the_archived_opus_and_downloads_it_only_once()
     {
         var root = NewRoot();
         try
         {
-            var archive = new FakeArchive(Mp3Path(Hour8));
+            var archive = new FakeArchive(ArchivedPath(Hour8));
             var reader = Reader(root, archive);
 
             var first = await reader.ExtractSegmentAsync("radio-a", Hour8, Hour8.AddSeconds(2), 64, 16000, "wav");
@@ -89,7 +92,45 @@ public sealed class ClosedHourAudioArchiveTests
             Assert.InRange(WavSeconds(second), 1.8, 2.4);
             Assert.Equal(1, archive.Downloads);
             Assert.Equal(1, archive.Listings); // the second request is served from the cache without touching the server
+            Assert.True(File.Exists(Path.Combine(root, "stage", "audio-cache", ArchivedPath(Hour8))));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtractSegmentAsync_still_serves_an_hour_that_was_archived_as_mp3_before_the_format_changed()
+    {
+        var root = NewRoot();
+        try
+        {
+            var archive = new FakeArchive(Mp3Path(Hour8));
+
+            var result = await Reader(root, archive).ExtractSegmentAsync("radio-a", Hour8, Hour8.AddSeconds(2), 64, 16000, "wav");
+
+            Assert.InRange(WavSeconds(result), 1.8, 2.4);
             Assert.True(File.Exists(Path.Combine(root, "stage", "audio-cache", Mp3Path(Hour8))));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtractSegmentAsync_prefers_the_opus_when_an_hour_is_archived_in_both_formats()
+    {
+        var root = NewRoot();
+        try
+        {
+            var archive = new FakeArchive(Mp3Path(Hour8), ArchivedPath(Hour8));
+
+            await Reader(root, archive).ExtractSegmentAsync("radio-a", Hour8, Hour8.AddSeconds(2), 64, 16000, "wav");
+
+            Assert.True(File.Exists(Path.Combine(root, "stage", "audio-cache", ArchivedPath(Hour8))));
+            Assert.False(File.Exists(Path.Combine(root, "stage", "audio-cache", Mp3Path(Hour8))));
         }
         finally
         {
@@ -106,7 +147,7 @@ public sealed class ClosedHourAudioArchiveTests
             var local = Path.Combine(root, "audio", "radio", "2026", "01", "15", "radio-a", "radio-a_2026-01-15_08-00-00.opus");
             Directory.CreateDirectory(Path.GetDirectoryName(local)!);
             File.Copy(SampleOpus, local);
-            var archive = new FakeArchive(Mp3Path(Hour8));
+            var archive = new FakeArchive(ArchivedPath(Hour8));
 
             var result = await Reader(root, archive).ExtractSegmentAsync("radio-a", Hour8, Hour8.AddSeconds(2), 64, 16000, "wav");
 
@@ -129,10 +170,10 @@ public sealed class ClosedHourAudioArchiveTests
             var local = Path.Combine(root, "audio", "radio", "2026", "01", "15", "radio-a", "radio-a_2026-01-15_08-00-00.opus");
             Directory.CreateDirectory(Path.GetDirectoryName(local)!);
             File.Copy(SampleOpus, local);
-            var archive = new FakeArchive(Mp3Path(Hour9));
+            var archive = new FakeArchive(ArchivedPath(Hour9));
 
             // The window reaches 2 s into the second hour, so both files are read to their end: the sample files are
-            // 3 s long (not an hour), which makes 3 s from the opus on disk plus 3 s from the archived mp3.
+            // 3 s long (not an hour), which makes 3 s from the opus on disk plus 3 s from the archived opus.
             var result = await Reader(root, archive).ExtractSegmentAsync("radio-a", Hour8, Hour9.AddSeconds(2), 64, 16000, "wav");
 
             Assert.InRange(WavSeconds(result), 5.8, 6.3);
@@ -166,7 +207,7 @@ public sealed class ClosedHourAudioArchiveTests
         var root = NewRoot();
         try
         {
-            var result = await Reader(root, new FakeArchive(Mp3Path(Hour8)) { ListThrows = true })
+            var result = await Reader(root, new FakeArchive(ArchivedPath(Hour8)) { ListThrows = true })
                 .ExtractSegmentAsync("radio-a", Hour8, Hour8.AddSeconds(2), 64, 16000, "wav");
 
             Assert.Contains("consultar", Assert.IsType<ClosedHourAudioNotAvailable>(result).Reason);

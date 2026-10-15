@@ -10,7 +10,8 @@ namespace MediaOpsCore.Workers.Operations;
 /// duplicated), and hands off to OpusSegmentTranscoder for the actual decode/cut/encode work.
 ///
 /// An hour that is no longer on this disk (the purge keeps only today's) is looked up in the archive, where
-/// it is kept as an mp3: ArchiveDownloadCache fetches it once and it is then cut like any other source.
+/// it is kept as a small opus (or, for hours archived before that format, an mp3): ArchiveDownloadCache fetches
+/// it once and it is then cut like any other source.
 ///
 /// A window that touches the still-recording current hour is served from a point-in-time copy of
 /// that hour's file rather than the live one — see TrySnapshotLiveFile — so extraction reads
@@ -192,7 +193,8 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
         return new ResolvedFiles(files, null, null);
     }
 
-    // The hour as the archive holds it: an mp3 next to where the opus was, fetched into the cache on first use.
+    // The hour as the archive holds it, fetched into the cache on first use: the opus that replaced the local one,
+    // else the mp3 that radio was archived as at first.
     // Without an archive this is "nothing" and the caller reports the plain "no recording" it always did. With
     // one, a missing hour and an archive that cannot be reached get different messages, because only the
     // second is worth retrying.
@@ -205,18 +207,23 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
         }
 
         var directory = $"{mediaDirectory}/{hourStart:yyyy}/{hourStart:MM}/{hourStart:dd}/{sourceId}";
-        var name = $"{sourceId}_{hourStart:yyyy-MM-dd_HH-mm-ss}.mp3";
-        var relativePath = $"{directory}/{name}";
+        var baseName = $"{sourceId}_{hourStart:yyyy-MM-dd_HH-mm-ss}";
+        string[] candidates = [$"{baseName}.opus", $"{baseName}.mp3"];
 
-        if (cache.IsFresh(relativePath))
+        foreach (var candidate in candidates)
         {
-            return (cache.PathFor(relativePath), null);
+            if (cache.IsFresh($"{directory}/{candidate}"))
+            {
+                return (cache.PathFor($"{directory}/{candidate}"), null);
+            }
         }
 
+        string? name;
         try
         {
             var names = await archive.ListAsync(directory, cancellationToken).ConfigureAwait(false);
-            if (!names.Contains(name, StringComparer.Ordinal))
+            name = candidates.FirstOrDefault(candidate => names.Contains(candidate, StringComparer.Ordinal));
+            if (name is null)
             {
                 return (null, $"No hay audio archivado de '{sourceId}' para {hourStart:yyyy-MM-dd HH:mm}.");
             }
@@ -227,6 +234,7 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
             return (null, "No se pudo consultar el archivo de audio. Intente de nuevo en unos minutos.");
         }
 
+        var relativePath = $"{directory}/{name}";
         return await cache.EnsureAsync(relativePath, cancellationToken).ConfigureAwait(false)
             ? (cache.PathFor(relativePath), null)
             : (null, "No se pudo descargar el audio del archivo. Intente de nuevo en unos minutos.");
