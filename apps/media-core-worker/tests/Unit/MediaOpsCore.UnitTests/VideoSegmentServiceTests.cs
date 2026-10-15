@@ -189,7 +189,9 @@ public sealed class VideoSegmentServiceTests
             NullLogger<VideoSegmentService>.Instance,
             archive);
 
-    private const string YesterdayFile = "television/2026/10/04/rcn_tv/rcn_tv_2026-10-04_12-05-59.mp4";
+    // Where yesterday's recording is archived now, and where it was before the backup folder existed.
+    private const string YesterdayFile = "backup/colombia/2026/10/04/rcn_tv/rcn_tv_2026-10-04_12-05-59.mp4";
+    private const string LegacyYesterdayFile = "television/2026/10/04/rcn_tv/rcn_tv_2026-10-04_12-05-59.mp4";
 
     [Fact]
     public async Task GetSegmentAsync_fetches_a_previous_day_recording_from_the_archive_once_and_reuses_the_cache()
@@ -214,6 +216,28 @@ public sealed class VideoSegmentServiceTests
         finally
         {
             clips.ForEach(File.Delete);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetSegmentAsync_still_finds_a_recording_archived_in_the_old_television_folder()
+    {
+        var root = NewRoot();
+        var archive = new FakeArchive(LegacyYesterdayFile);
+        var start = new DateTimeOffset(2026, 10, 4, 12, 5, 59, Bogota);
+        VideoSegmentSuccess? clip = null;
+        try
+        {
+            var result = await ServiceWithArchive(root, archive).GetSegmentAsync(
+                "rcn_tv", start.AddSeconds(4.5).ToUniversalTime(), start.AddSeconds(7).ToUniversalTime(), CancellationToken.None);
+
+            clip = Assert.IsType<VideoSegmentSuccess>(result);
+            Assert.True(File.Exists(Path.Combine(root, "stage", "video-cache", LegacyYesterdayFile)));
+        }
+        finally
+        {
+            if (clip is not null) File.Delete(clip.TempPath);
             Directory.Delete(root, recursive: true);
         }
     }

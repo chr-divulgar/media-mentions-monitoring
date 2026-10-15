@@ -84,12 +84,12 @@ public sealed class ArchiveUploadTests
 
             var radio = pending.Single(p => p.RelativePath.StartsWith("radio/", StringComparison.Ordinal));
             Assert.Equal("radio/2026/10/05/wradio/wradio_2026-10-05_10-00-00.opus", radio.RelativePath);
-            // Same name in the archive as on disk: only the bytes are smaller.
-            Assert.Equal(radio.RelativePath, radio.RemoteRelativePath);
+            // In the archive it lives under backup/<country>/..., with the same day, source and name as on disk.
+            Assert.Equal("backup/colombia/2026/10/05/wradio/wradio_2026-10-05_10-00-00.opus", radio.RemoteRelativePath);
             Assert.True(radio.Reencode);
 
             var video = pending.Single(p => p.RelativePath.StartsWith("television/", StringComparison.Ordinal));
-            Assert.Equal(video.RelativePath, video.RemoteRelativePath);
+            Assert.Equal("backup/colombia/2026/10/05/rcn_tv/rcn_tv_2026-10-05_10-00-04.mp4", video.RemoteRelativePath);
             Assert.False(video.Reencode);
         }
         finally
@@ -113,6 +113,27 @@ public sealed class ArchiveUploadTests
             var pending = ArchiveUpload.FindPendingFiles(root, (_, _) => false, now, TimeSpan.FromMinutes(20));
 
             Assert.Equal([closed], pending.Select(p => p.LocalPath));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FindPendingFiles_files_each_source_under_its_own_country()
+    {
+        var root = ArchiveFixture.NewRoot();
+        try
+        {
+            ArchiveFixture.MakeFile(root, "television", new DateOnly(2026, 10, 5), "azteca", "azteca_2026-10-05_09-00-03.mp4", Now.AddHours(-6));
+            ArchiveFixture.MakeFile(root, "radio", new DateOnly(2026, 10, 5), "wradio", "wradio_2026-10-05_09-00-00.opus", Now.AddHours(-6));
+
+            var pending = ArchiveUpload.FindPendingFiles(
+                root, (_, _) => false, Now, TimeSpan.FromMinutes(20), countryOfSource: source => source == "azteca" ? "México" : "Colombia");
+
+            Assert.Contains(pending, p => p.RemoteRelativePath == "backup/mexico/2026/10/05/azteca/azteca_2026-10-05_09-00-03.mp4");
+            Assert.Contains(pending, p => p.RemoteRelativePath == "backup/colombia/2026/10/05/wradio/wradio_2026-10-05_09-00-00.opus");
         }
         finally
         {
@@ -285,7 +306,7 @@ public sealed class ArchiveUploadWorkerTests
 
             await worker.RunOnceAsync(CancellationToken.None);
 
-            Assert.Equal(["radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus"], storage.Uploaded);
+            Assert.Equal(["backup/colombia/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus"], storage.Uploaded);
             // The ledger keys the LOCAL file (path + size), which is what the purge asks about.
             Assert.True(ledger.Contains("radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus", opusSize));
             Assert.False(File.Exists(uploadedFrom!)); // the temporary re-encoded file is cleaned up
@@ -315,8 +336,8 @@ public sealed class ArchiveUploadWorkerTests
 
             await worker.RunOnceAsync(CancellationToken.None);
 
-            Assert.Equal(["radio/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus"], radio.Uploaded);
-            Assert.Equal(["television/2026/10/04/rcn_tv/rcn_tv_2026-10-04_10-00-04.mp4"], television.Uploaded);
+            Assert.Equal(["backup/colombia/2026/10/04/wradio/wradio_2026-10-04_10-00-00.opus"], radio.Uploaded);
+            Assert.Equal(["backup/colombia/2026/10/04/rcn_tv/rcn_tv_2026-10-04_10-00-04.mp4"], television.Uploaded);
         }
         finally
         {

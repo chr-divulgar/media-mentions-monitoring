@@ -1,4 +1,5 @@
 using MediaOpsCore.Modules.Capture.Application;
+using MediaOpsCore.Modules.Capture.Domain;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -65,7 +66,9 @@ public sealed class ArchiveUploadWorker : BackgroundService
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
     }
 
-    private async Task<IReadOnlyDictionary<string, TimeSpan>?> LoadOffsetsAsync(CancellationToken cancellationToken)
+    // The catalog's sources: each one's UTC offset (its file names are stamped in it) and country (its folder in the
+    // backup). Without them every source is read as Bogota time and filed under the default country.
+    private async Task<IReadOnlyList<CaptureSource>?> LoadSourcesAsync(CancellationToken cancellationToken)
     {
         if (sourceRepository is null)
         {
@@ -74,13 +77,11 @@ public sealed class ArchiveUploadWorker : BackgroundService
 
         try
         {
-            var sources = await sourceRepository.ListAllAsync(cancellationToken).ConfigureAwait(false);
-            return sources.ToDictionary(
-                source => source.SourceId, source => TimeSpan.FromMinutes(source.UtcOffsetMinutes), StringComparer.OrdinalIgnoreCase);
+            return await sourceRepository.ListAllAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            logger.LogWarning(exception, "[ArchiveUploadWorker] Could not read source offsets; reading file names as Bogota time.");
+            logger.LogWarning(exception, "[ArchiveUploadWorker] Could not read the sources; reading file names as Bogota time, filing under {Country}.", ArchiveLayout.DefaultCountry);
             return null;
         }
     }
@@ -129,9 +130,12 @@ public sealed class ArchiveUploadWorker : BackgroundService
     {
         // A medium with no account is left alone here: nothing is uploaded or ledgered for it, so the purge keeps its
         // files, and its backlog incident is what says they are waiting for an account.
+        var sources = await LoadSourcesAsync(cancellationToken).ConfigureAwait(false);
+        var offsets = sources?.ToDictionary(source => source.SourceId, source => TimeSpan.FromMinutes(source.UtcOffsetMinutes), StringComparer.OrdinalIgnoreCase);
+        var countries = sources?.ToDictionary(source => source.SourceId, source => source.Country, StringComparer.OrdinalIgnoreCase);
         var pending = ArchiveUpload.FindPendingFiles(
             options.AudioOutputRootPath, ledger.Contains, DateTime.UtcNow, TimeSpan.FromMinutes(options.ArchiveMinIdleMinutes),
-            await LoadOffsetsAsync(cancellationToken).ConfigureAwait(false))
+            offsets, sourceId => countries is not null && countries.TryGetValue(sourceId, out var country) ? country : null)
             .Where(file => StorageFor(file) is not null)
             .ToList();
         if (pending.Count == 0)

@@ -140,6 +140,62 @@ public sealed class ArchiveRetentionTests
     }
 
     [Fact]
+    public async Task FindExpiredBackupDayFoldersAsync_returns_the_old_days_of_every_country_and_nothing_else()
+    {
+        var tree = new FakeTree(
+            "backup/colombia/2026/07/11/wradio/a.opus",   // 91 days: expired
+            "backup/colombia/2026/07/12/wradio/a.opus",   // exactly 90: kept
+            "backup/mexico/2025/12/31/azteca/a.mp4",      // another country, expired
+            "colombia/ecopetrol/2020/01/01/nota.mp3",      // a note: never part of the backup
+            "backup/Colombia Norte/2020/01/01/x/a.opus",   // not a country folder name the worker writes
+            "backup/colombia/ab/01/01/x/a.opus");
+
+        var expired = await ArchiveRemoteRetention.FindExpiredBackupDayFoldersAsync(tree, Today, 90, CancellationToken.None);
+
+        Assert.Equal(["backup/mexico/2025/12/31", "backup/colombia/2026/07/11"], expired);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_purges_the_backup_folder_of_each_account_with_its_media_days_and_never_the_notes()
+    {
+        var radio = new FakeTree(
+            "backup/colombia/2026/10/02/wradio/a.opus", "backup/colombia/2026/09/20/wradio/a.opus",
+            "colombia/ecopetrol/2020/01/01/nota.mp3");
+        var television = new FakeTree("backup/colombia/2026/10/02/rcn_tv/a.mp4", "backup/colombia/2026/10/09/rcn_tv/a.mp4");
+
+        await Worker(new ArchiveFixture.Storages(radio, television), incidents: null, radioDays: 10, televisionDays: 7).RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(["backup/colombia/2026/09/20"], radio.Deleted);       // 8 days old stays: radio keeps 10
+        Assert.Equal(["backup/colombia/2026/10/02"], television.Deleted);  // 8 days old goes: TV keeps 7
+        Assert.True(radio.Has("colombia/ecopetrol/"));
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_keeps_the_longer_retention_when_radio_and_television_share_one_account()
+    {
+        // One account holds both media in the same day folders, so a day can only go once both have let it go.
+        var shared = new FakeTree("backup/colombia/2026/10/02/wradio/a.opus", "backup/colombia/2026/10/02/rcn_tv/a.mp4");
+
+        await Worker(ArchiveFixture.Storages.All(shared), incidents: null, radioDays: 10, televisionDays: 7).RunOnceAsync(CancellationToken.None);
+
+        Assert.Empty(shared.Deleted); // 8 days old: TV would let it go, radio (10) would not
+
+        await Worker(ArchiveFixture.Storages.All(shared), incidents: null, radioDays: 7, televisionDays: 7).RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(["backup/colombia/2026/10/02"], shared.Deleted);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_keeps_a_shared_backup_forever_when_either_medium_never_deletes()
+    {
+        var shared = new FakeTree("backup/colombia/2020/01/01/wradio/a.opus");
+
+        await Worker(ArchiveFixture.Storages.All(shared), incidents: null, radioDays: 10, televisionDays: 0).RunOnceAsync(CancellationToken.None);
+
+        Assert.Empty(shared.Deleted);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_deletes_at_most_five_day_folders_per_pass()
     {
         var tree = new FakeTree(Enumerable.Range(1, 8).Select(day => $"radio/2026/03/{day:00}/wradio/a.mp3").ToArray());

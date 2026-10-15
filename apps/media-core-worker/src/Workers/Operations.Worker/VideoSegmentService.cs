@@ -1,4 +1,5 @@
 using MediaOpsCore.Modules.Capture.Application;
+using MediaOpsCore.Modules.Capture.Domain;
 using Microsoft.Extensions.Logging;
 
 namespace MediaOpsCore.Workers.Operations;
@@ -56,7 +57,8 @@ public sealed class VideoSegmentService
     public async Task<VideoSegmentResult> GetSegmentAsync(
         string sourceId, DateTimeOffset startUtc, DateTimeOffset endUtc, CancellationToken cancellationToken)
     {
-        var offset = SourceOffset(sourceId);
+        var source = FindSource(sourceId);
+        var offset = source is null ? FallbackOffset : TimeSpan.FromMinutes(source.UtcOffsetMinutes);
         var windowStart = startUtc.ToOffset(offset);
         var windowEnd = endUtc.ToOffset(offset);
 
@@ -70,7 +72,8 @@ public sealed class VideoSegmentService
             List<TvRecordingCandidate> archived;
             try
             {
-                archived = await ListArchivedRecordingsAsync(directories, sourceId, offset, cancellationToken).ConfigureAwait(false);
+                archived = await ListArchivedRecordingsAsync(
+                    windowStart, windowEnd, directories, sourceId, source?.Country, offset, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -124,12 +127,9 @@ public sealed class VideoSegmentService
         }
     }
 
-    private TimeSpan SourceOffset(string sourceId)
-    {
-        var source = sourceProvider.ListActiveSourcesAsync().GetAwaiter().GetResult()
+    private CaptureSource? FindSource(string sourceId) =>
+        sourceProvider.ListActiveSourcesAsync().GetAwaiter().GetResult()
             .FirstOrDefault(candidate => string.Equals(candidate.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
-        return source is null ? FallbackOffset : TimeSpan.FromMinutes(source.UtcOffsetMinutes);
-    }
 
     // The recording that holds the middle of the window; if that falls in a gap, either end.
     private static TvRecordingCandidate? Locate(
@@ -178,11 +178,25 @@ public sealed class VideoSegmentService
         return candidates;
     }
 
+    // The recordings the archive holds for those days: from backup/{country}/..., and — only when that has none — from the
+    // television/... folder the archive used before the backup folder existed.
     private async Task<List<TvRecordingCandidate>> ListArchivedRecordingsAsync(
-        List<string> directories, string sourceId, TimeSpan offset, CancellationToken cancellationToken)
+        DateTimeOffset windowStart, DateTimeOffset windowEnd, List<string> legacyDirectories, string sourceId, string? country,
+        TimeSpan offset, CancellationToken cancellationToken)
     {
         var candidates = new List<TvRecordingCandidate>();
-        foreach (var relativeDirectory in directories)
+        for (var day = DateOnly.FromDateTime(windowStart.DateTime).AddDays(-1); day <= DateOnly.FromDateTime(windowEnd.DateTime); day = day.AddDays(1))
+        {
+            var directory = ArchiveLayout.BackupDirectory(country, day, sourceId);
+            AddCandidates(candidates, directory, await archive!.ListAsync(directory, cancellationToken).ConfigureAwait(false), sourceId, offset);
+        }
+
+        if (candidates.Count > 0)
+        {
+            return candidates;
+        }
+
+        foreach (var relativeDirectory in legacyDirectories)
         {
             var names = await archive!.ListAsync(relativeDirectory, cancellationToken).ConfigureAwait(false);
             AddCandidates(candidates, relativeDirectory, names, sourceId, offset);

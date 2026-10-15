@@ -16,9 +16,51 @@ internal static partial class ArchiveRemoteRetention
     // days is a typo, not a policy, so it counts as 7. 0 (or less) means never delete.
     public static int EffectiveDays(int configured) => configured <= 0 ? 0 : Math.Max(7, configured);
 
-    // True for exactly "radio/2026/07/11" and "television/2026/07/11"-shaped paths: what the worker is
-    // allowed to delete, checked once more right before each deletion.
-    public static bool IsDayFolder(string relativePath) => DayFolderPattern().IsMatch(relativePath);
+    // True for exactly "backup/colombia/2026/07/11" and the older "radio/2026/07/11" / "television/2026/07/11" shapes:
+    // what the worker is allowed to delete, checked once more right before each deletion. Notes
+    // ({country}/{client}/...) and anything else never match.
+    public static bool IsDayFolder(string relativePath) => DayFolderPattern().IsMatch(relativePath) || BackupDayFolderPattern().IsMatch(relativePath);
+
+    // The day folders of the backup (backup/{country}/{yyyy}/{MM}/{dd}) older than the retention, oldest first, of
+    // every country the backup has.
+    public static async Task<IReadOnlyList<string>> FindExpiredBackupDayFoldersAsync(
+        IArchiveStorage storage, DateOnly today, int retentionDays, CancellationToken cancellationToken)
+    {
+        var days = EffectiveDays(retentionDays);
+        if (days == 0)
+        {
+            return [];
+        }
+
+        var cutoff = today.AddDays(-days);
+        var expired = new List<(DateOnly Date, string Path)>();
+
+        foreach (var country in (await storage.ListDirectoriesAsync(ArchiveLayout.BackupRoot, cancellationToken).ConfigureAwait(false))
+                     .Where(name => CountryName().IsMatch(name)))
+        {
+            var root = $"{ArchiveLayout.BackupRoot}/{country}";
+            foreach (var year in await NumericChildrenAsync(storage, root, 4, cancellationToken).ConfigureAwait(false))
+            {
+                if (int.Parse(year) > cutoff.Year)
+                {
+                    continue;
+                }
+
+                foreach (var month in await NumericChildrenAsync(storage, $"{root}/{year}", 2, cancellationToken).ConfigureAwait(false))
+                {
+                    foreach (var day in await NumericChildrenAsync(storage, $"{root}/{year}/{month}", 2, cancellationToken).ConfigureAwait(false))
+                    {
+                        if (DateOnly.TryParseExact($"{year}-{month}-{day}", "yyyy-MM-dd", out var date) && date < cutoff)
+                        {
+                            expired.Add((date, $"{root}/{year}/{month}/{day}"));
+                        }
+                    }
+                }
+            }
+        }
+
+        return expired.OrderBy(entry => entry.Date).ThenBy(entry => entry.Path, StringComparer.Ordinal).Select(entry => entry.Path).ToList();
+    }
 
     // The day folders of one medium (the folder radio/ or television/ in its account) dated before today minus the
     // retention, oldest first. The medium is the folder name: ArchiveMedia.Radio and ArchiveMedia.Television are the
@@ -66,6 +108,13 @@ internal static partial class ArchiveRemoteRetention
 
     [GeneratedRegex(@"^(radio|television)/\d{4}/\d{2}/\d{2}$")]
     private static partial Regex DayFolderPattern();
+
+    [GeneratedRegex(@"^backup/[a-z0-9-]{1,30}/\d{4}/\d{2}/\d{2}$")]
+    private static partial Regex BackupDayFolderPattern();
+
+    // A country folder the worker itself writes (see ArchiveLayout.CountrySlug).
+    [GeneratedRegex(@"^[a-z0-9-]{1,30}$")]
+    private static partial Regex CountryName();
 }
 
 /// <summary>
@@ -126,17 +175,46 @@ public sealed class ArchiveRetentionWorker : BackgroundService
     // Internal so a test can drive one pass without waiting on the timer.
     internal async Task RunOnceAsync(CancellationToken cancellationToken)
     {
-        foreach (var medium in new[] { ArchiveMedia.Radio, ArchiveMedia.Television })
+        var media = new[] { ArchiveMedia.Radio, ArchiveMedia.Television };
+
+        // The backup folder: one pass per account. Radio and television normally have an account each; if they share
+        // one (the single account used before) their days sit in the same folders, so a day only goes once both media
+        // have let it go, and never while either keeps everything.
+        foreach (var account in media.Select(medium => (Medium: medium, Storage: storages.For(medium))).Where(entry => entry.Storage is not null)
+                     .GroupBy(entry => entry.Storage!))
         {
-            await PurgeMediumAsync(medium, cancellationToken).ConfigureAwait(false);
+            var days = account.Select(entry => ArchiveRemoteRetention.EffectiveDays(options.RetentionDaysFor(entry.Medium))).ToArray();
+            if (days.Contains(0))
+            {
+                continue;
+            }
+
+            var label = string.Join("+", account.Select(entry => entry.Medium));
+            await PurgeAsync(
+                label, days.Max(),
+                (today, retention, ct) => ArchiveRemoteRetention.FindExpiredBackupDayFoldersAsync(account.Key, today, retention, ct),
+                account.Key, cancellationToken).ConfigureAwait(false);
+        }
+
+        // What was archived before the backup folder existed: {medium}/{yyyy}/{MM}/{dd}. It ages out the same way.
+        foreach (var medium in media)
+        {
+            var storage = storages.For(medium);
+            if (storage is not null)
+            {
+                await PurgeAsync(
+                    medium + " (old layout)", ArchiveRemoteRetention.EffectiveDays(options.RetentionDaysFor(medium)),
+                    (today, retention, ct) => ArchiveRemoteRetention.FindExpiredDayFoldersAsync(storage, medium, today, retention, ct),
+                    storage, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
-    private async Task PurgeMediumAsync(string medium, CancellationToken cancellationToken)
+    private async Task PurgeAsync(
+        string medium, int days, Func<DateOnly, int, CancellationToken, Task<IReadOnlyList<string>>> findExpired, IArchiveStorage storage,
+        CancellationToken cancellationToken)
     {
-        var days = ArchiveRemoteRetention.EffectiveDays(options.RetentionDaysFor(medium));
-        var storage = storages.For(medium);
-        if (days == 0 || storage is null)
+        if (days == 0)
         {
             return;
         }
@@ -146,7 +224,7 @@ public sealed class ArchiveRetentionWorker : BackgroundService
         IReadOnlyList<string> expired;
         try
         {
-            expired = await ArchiveRemoteRetention.FindExpiredDayFoldersAsync(storage, medium, today, days, cancellationToken).ConfigureAwait(false);
+            expired = await findExpired(today, days, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

@@ -20,7 +20,12 @@ public sealed class ClosedHourAudioArchiveTests
     private static readonly DateTimeOffset Hour8 = new(2026, 1, 15, 8, 0, 0, TimeSpan.FromHours(-5));
     private static readonly DateTimeOffset Hour9 = Hour8.AddHours(1);
 
+    // Where an hour is archived now: backup/<country>/<year>/<month>/<day>/<source>/...
     private static string ArchivedPath(DateTimeOffset hour, string extension = ".opus") =>
+        $"backup/colombia/{hour:yyyy}/{hour:MM}/{hour:dd}/radio-a/radio-a_{hour:yyyy-MM-dd_HH-mm-ss}{extension}";
+
+    // Where it was archived before the backup folder existed: radio/<year>/<month>/<day>/<source>/...
+    private static string LegacyPath(DateTimeOffset hour, string extension = ".opus") =>
         $"radio/{hour:yyyy}/{hour:MM}/{hour:dd}/radio-a/radio-a_{hour:yyyy-MM-dd_HH-mm-ss}{extension}";
 
     private static string Mp3Path(DateTimeOffset hour) => ArchivedPath(hour, ".mp3");
@@ -93,6 +98,25 @@ public sealed class ClosedHourAudioArchiveTests
             Assert.Equal(1, archive.Downloads);
             Assert.Equal(1, archive.Listings); // the second request is served from the cache without touching the server
             Assert.True(File.Exists(Path.Combine(root, "stage", "audio-cache", ArchivedPath(Hour8))));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtractSegmentAsync_still_finds_an_hour_archived_in_the_old_radio_folder()
+    {
+        var root = NewRoot();
+        try
+        {
+            var archive = new FakeArchive(LegacyPath(Hour8));
+
+            var result = await Reader(root, archive).ExtractSegmentAsync("radio-a", Hour8, Hour8.AddSeconds(2), 64, 16000, "wav");
+
+            Assert.InRange(WavSeconds(result), 1.8, 2.4);
+            Assert.True(File.Exists(Path.Combine(root, "stage", "audio-cache", LegacyPath(Hour8))));
         }
         finally
         {

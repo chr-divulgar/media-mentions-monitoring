@@ -115,7 +115,8 @@ public sealed class ReconnectionRecoveryTests
             Assert.True(await incidents.WaitForAsync(IncidentKinds.Recovered, monitor.Raise));
             // Either path recovers it: the connection event, or the service's own once-a-minute review if that ran first.
             Assert.Contains(incidents.Records, record => record.Kind == IncidentKinds.Recovered
-                && record.Reason is "Recuperada al volver la conexión" or { } reason && reason.StartsWith("Recuperada en la revisión", StringComparison.Ordinal));
+                && (record.Reason == "Recuperada al volver la conexión"
+                    || (record.Reason?.StartsWith("Recuperada en la revisión", StringComparison.Ordinal) ?? false)));
             Assert.False(repository.Exclusions["rcn"]);
         }
         finally

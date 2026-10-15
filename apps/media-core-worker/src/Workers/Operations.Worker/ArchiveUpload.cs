@@ -19,7 +19,8 @@ internal static class ArchiveUpload
         Func<string, long, bool> isArchived,
         DateTime nowUtc,
         TimeSpan minIdle,
-        IReadOnlyDictionary<string, TimeSpan>? offsetBySourceId = null)
+        IReadOnlyDictionary<string, TimeSpan>? offsetBySourceId = null,
+        Func<string, string?>? countryOfSource = null)
     {
         var pending = new List<PendingArchiveFile>();
 
@@ -38,7 +39,9 @@ internal static class ArchiveUpload
                 if (!isArchived(relative, file.Length))
                 {
                     pending.Add(new PendingArchiveFile(
-                        file.FullName, relative, file.Length, file.LastWriteTimeUtc, RemotePathFor(relative), Reencode: IsRadioOpus(relative)));
+                        file.FullName, relative, file.Length, file.LastWriteTimeUtc,
+                        ArchiveLayout.BackupPathFor(countryOfSource?.Invoke(file.Directory?.Name ?? string.Empty), relative),
+                        Reencode: IsRadioOpus(relative)));
                 }
             }
         }
@@ -55,10 +58,6 @@ internal static class ArchiveUpload
     private static bool IsRadioOpus(string relativePath) =>
         relativePath.StartsWith("radio/", StringComparison.Ordinal)
         && relativePath.EndsWith(".opus", StringComparison.OrdinalIgnoreCase);
-
-    // Same path in the archive as on disk: the day folders, and the name of the hour, are what lets an old alert find
-    // its recording. (Radio hours archived before the format changed are .mp3; the reader still understands them.)
-    public static string RemotePathFor(string relativePath) => relativePath;
 
     // The mtime of a file that is still being written can lag by many minutes (observed on NTFS), so
     // "idle" alone mistakes the current hour's file for a finished one and uploads a growing file.

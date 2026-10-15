@@ -92,7 +92,7 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
         var firstHourStart = InProcessFfmpegAudioCapturePlugin.AlignWindow(startLocal, rotationInterval);
 
         var resolved = await ResolveOrderedFilesAsync(
-            sourceId, mediaDirectory, firstHourStart, endLocal, currentHourStart, rotationInterval, liveProgress, cancellationToken)
+            sourceId, source.Country, mediaDirectory, firstHourStart, endLocal, currentHourStart, rotationInterval, liveProgress, cancellationToken)
             .ConfigureAwait(false);
         if (resolved.Rejection is not null)
         {
@@ -144,6 +144,7 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
     // as far as it goes rather than rejected outright.
     private async Task<ResolvedFiles> ResolveOrderedFilesAsync(
         string sourceId,
+        string? country,
         string mediaDirectory,
         DateTimeOffset firstHourStart,
         DateTimeOffset endLocal,
@@ -174,7 +175,7 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
 
             if (!File.Exists(candidate))
             {
-                var archived = await FindArchivedHourAsync(mediaDirectory, sourceId, hourStart, cancellationToken).ConfigureAwait(false);
+                var archived = await FindArchivedHourAsync(mediaDirectory, sourceId, country, hourStart, cancellationToken).ConfigureAwait(false);
                 if (archived.Path is not null)
                 {
                     files.Add(archived.Path);
@@ -199,30 +200,49 @@ public sealed class ClosedHourAudioSegmentReader : IClosedHourAudioReader
     // one, a missing hour and an archive that cannot be reached get different messages, because only the
     // second is worth retrying.
     private async Task<(string? Path, string? Reason)> FindArchivedHourAsync(
-        string mediaDirectory, string sourceId, DateTimeOffset hourStart, CancellationToken cancellationToken)
+        string mediaDirectory, string sourceId, string? country, DateTimeOffset hourStart, CancellationToken cancellationToken)
     {
         if (archive is null || cache is null)
         {
             return (null, null);
         }
 
-        var directory = $"{mediaDirectory}/{hourStart:yyyy}/{hourStart:MM}/{hourStart:dd}/{sourceId}";
+        // backup/{country}/{yyyy}/{MM}/{dd}/{source} is where the hour is archived now; {medium}/{yyyy}/... is where it was
+        // before the backup folder existed.
+        string[] directories =
+        [
+            ArchiveLayout.BackupDirectory(country, DateOnly.FromDateTime(hourStart.DateTime), sourceId),
+            $"{mediaDirectory}/{hourStart:yyyy}/{hourStart:MM}/{hourStart:dd}/{sourceId}",
+        ];
         var baseName = $"{sourceId}_{hourStart:yyyy-MM-dd_HH-mm-ss}";
         string[] candidates = [$"{baseName}.opus", $"{baseName}.mp3"];
 
-        foreach (var candidate in candidates)
+        foreach (var directoryOption in directories)
         {
-            if (cache.IsFresh($"{directory}/{candidate}"))
+            foreach (var candidate in candidates)
             {
-                return (cache.PathFor($"{directory}/{candidate}"), null);
+                if (cache.IsFresh($"{directoryOption}/{candidate}"))
+                {
+                    return (cache.PathFor($"{directoryOption}/{candidate}"), null);
+                }
             }
         }
 
-        string? name;
+        string? name = null;
+        var directory = directories[0];
         try
         {
-            var names = await archive.ListAsync(directory, cancellationToken).ConfigureAwait(false);
-            name = candidates.FirstOrDefault(candidate => names.Contains(candidate, StringComparer.Ordinal));
+            foreach (var directoryOption in directories)
+            {
+                var names = await archive.ListAsync(directoryOption, cancellationToken).ConfigureAwait(false);
+                name = candidates.FirstOrDefault(candidate => names.Contains(candidate, StringComparer.Ordinal));
+                if (name is not null)
+                {
+                    directory = directoryOption;
+                    break;
+                }
+            }
+
             if (name is null)
             {
                 return (null, $"No hay audio archivado de '{sourceId}' para {hourStart:yyyy-MM-dd HH:mm}.");
