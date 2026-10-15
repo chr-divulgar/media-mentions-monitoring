@@ -34,7 +34,8 @@ builder.Services.AddSingleton<IArchiveStorageProvider>(sp => new ArchiveStorageP
 builder.Services.AddSingleton(sp => new NoteClipService(
 	sp.GetRequiredService<IArchiveStorageProvider>(),
 	sp.GetRequiredService<ICaptureSourceRepository>(),
-	sp.GetRequiredService<ILogger<NoteClipService>>()));
+	sp.GetRequiredService<ILogger<NoteClipService>>(),
+	options.PublicBaseUrlFor));
 
 // Add hosted service for YouTube cookies HTTP endpoint
 builder.Services.AddSingleton(sp => new VideoSegmentService(
@@ -71,12 +72,12 @@ if (options.HeadlessBrowserEnabled)
 }
 // PDF copy of a web note (RQ-014): needs the archive, its public https base URL and the browser.
 if (options.IsArchiveActive && options.CredentialsFor(ArchiveMedia.Press) is not null
-	&& options.ArchivePublicBaseUrl is not null && options.HeadlessBrowserEnabled)
+	&& options.PublicBaseUrlFor(ArchiveMedia.Press) is not null && options.HeadlessBrowserEnabled)
 {
 	builder.Services.AddSingleton(sp => new NotePdfService(
 		sp.GetRequiredService<HeadlessBrowser>(),
 		sp.GetRequiredService<IArchiveStorageProvider>().For(ArchiveMedia.Press)!,
-		options.ArchivePublicBaseUrl,
+		options.PublicBaseUrlFor(ArchiveMedia.Press)!,
 		Path.Combine(options.StageFilesystemRootPath, "note-pdf"),
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<NotePdfService>>()));
 }

@@ -478,6 +478,20 @@ public static class OperationsWorkerOptionsLoader
             }
         }
 
+        foreach (var (medium, variable) in new[]
+        {
+            (ArchiveMedia.Radio, "ARCHIVE_RADIO_PUBLIC_BASE_URL"),
+            (ArchiveMedia.Television, "ARCHIVE_TELEVISION_PUBLIC_BASE_URL"),
+            (ArchiveMedia.Press, "ARCHIVE_PRESS_PUBLIC_BASE_URL"),
+        })
+        {
+            var address = Environment.GetEnvironmentVariable(variable);
+            if (!string.IsNullOrWhiteSpace(address) && Uri.TryCreate(address.Trim(), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+            {
+                options.ArchivePublicBaseUrlByMedium[medium] = address.Trim();
+            }
+        }
+
         var archivePublicBaseUrl = Environment.GetEnvironmentVariable("ARCHIVE_PUBLIC_BASE_URL");
         if (!string.IsNullOrWhiteSpace(archivePublicBaseUrl) && Uri.TryCreate(archivePublicBaseUrl.Trim(), UriKind.Absolute, out _))
         {

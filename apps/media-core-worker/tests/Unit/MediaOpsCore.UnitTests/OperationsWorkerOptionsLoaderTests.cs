@@ -266,6 +266,44 @@ public sealed class OperationsWorkerOptionsLoaderTests
     }
 
     [Fact]
+    public void Load_should_read_the_public_address_of_each_medium_and_fall_back_to_the_old_one_for_the_press()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-public-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(tempPath, "{ }");
+
+            using (new EnvironmentVariableScope(
+                ("ARCHIVE_RADIO_PUBLIC_BASE_URL", "https://radio.example.org/"),
+                ("ARCHIVE_TELEVISION_PUBLIC_BASE_URL", "https://tv.example.com/"),
+                ("ARCHIVE_PRESS_PUBLIC_BASE_URL", "https://prensa.example.org/"),
+                ("ARCHIVE_PUBLIC_BASE_URL", "https://old.example.org/")))
+            {
+                var options = OperationsWorkerOptionsLoader.Load(tempPath);
+
+                Assert.Equal("https://radio.example.org/", options.PublicBaseUrlFor("radio"));
+                Assert.Equal("https://tv.example.com/", options.PublicBaseUrlFor("television"));
+                Assert.Equal("https://prensa.example.org/", options.PublicBaseUrlFor("press"));
+            }
+
+            using (new EnvironmentVariableScope(
+                ("ARCHIVE_RADIO_PUBLIC_BASE_URL", null), ("ARCHIVE_TELEVISION_PUBLIC_BASE_URL", null), ("ARCHIVE_PRESS_PUBLIC_BASE_URL", null),
+                ("ARCHIVE_PUBLIC_BASE_URL", "https://old.example.org/")))
+            {
+                var options = OperationsWorkerOptionsLoader.Load(tempPath);
+
+                // The single address used before is the press's (it only ever served the PDF of press notes).
+                Assert.Equal("https://old.example.org/", options.PublicBaseUrlFor("press"));
+                Assert.Null(options.PublicBaseUrlFor("radio"));
+            }
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
     public void Load_should_read_an_archive_account_per_medium_and_the_days_each_one_keeps()
     {
         var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-media-{Guid.NewGuid():N}.json");

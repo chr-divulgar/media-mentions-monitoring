@@ -265,6 +265,16 @@ export class NotesService {
     return saved;
   }
 
+  // The public link of the clip is the note's "enlace o archivo" (RQ-021) — unless the note already has a link of its own.
+  private async keepClipLink(alertId: string, link?: string): Promise<void> {
+    if (!link) return;
+    const note = await this.noteRepo.findOne({ where: { alert_id: alertId } });
+    if (note && !note.link) {
+      note.link = link;
+      await this.noteRepo.save(note);
+    }
+  }
+
   /**
    * Files the clip of a radio or TV note (the mp3, or the mp4 of a TV note edited on its video) in the archive
    * account of its medium, under {country}/{client}/{year}/{month}/{day}, through the worker. These are the notes,
@@ -294,7 +304,7 @@ export class NotesService {
       NotesService.BOGOTA_OFFSET_MINUTES,
     );
     try {
-      await this.callWorker('/notes/clip', {
+      const filed = await this.callWorker<{ path: string; link?: string }>('/notes/clip', {
         medium: media,
         client: note.clientName,
         platform: note.mediaName,
@@ -303,6 +313,7 @@ export class NotesService {
         alertId,
         filePath,
       });
+      await this.keepClipLink(alertId, filed.link);
       return true;
     } catch (error) {
       console.error(`Could not file the clip of note ${alertId} in the archive:`, error);

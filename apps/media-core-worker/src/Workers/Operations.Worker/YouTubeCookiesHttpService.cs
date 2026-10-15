@@ -506,7 +506,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             return;
         }
 
-        await SendJsonResponse(context, 200, new NoteClipResponse { Path = result.Path! }).ConfigureAwait(false);
+        await SendJsonResponse(context, 200, new NoteClipResponse { Path = result.Path!, Link = result.Link }).ConfigureAwait(false);
     }
 
     private async Task HandleNotePdfPreviewRequestAsync(HttpListenerContext context)

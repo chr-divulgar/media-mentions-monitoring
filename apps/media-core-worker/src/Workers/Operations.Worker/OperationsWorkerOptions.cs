@@ -117,6 +117,16 @@ public sealed class OperationsWorkerOptions
     // published, so a note's PDF gets a link anyone with access can open. Null disables note PDFs.
     public string? ArchivePublicBaseUrl { get; set; }
 
+    // The https address of each medium's account, from ARCHIVE_<MEDIUM>_PUBLIC_BASE_URL: what turns a path in the archive
+    // into a link anyone can open.
+    public Dictionary<string, string> ArchivePublicBaseUrlByMedium { get; } = new(StringComparer.Ordinal);
+
+    // The medium's own address; for the press, the single one used before when it has none of its own.
+    public string? PublicBaseUrlFor(string medium) =>
+        ArchivePublicBaseUrlByMedium.TryGetValue(medium, out var own)
+            ? own
+            : medium == ArchiveMedia.Press ? ArchivePublicBaseUrl : null;
+
     public bool IsArchiveActive => ArchiveEnabled && (ArchiveFtp is not null || ArchiveFtpByMedium.Count > 0);
 
     public int DefaultFlacWindowDurationSeconds { get; set; } = 30;

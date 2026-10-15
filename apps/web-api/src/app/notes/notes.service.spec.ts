@@ -269,6 +269,27 @@ describe('NotesService.archiveNoteClip', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('stores the public link of the clip in the note when it has none', async () => {
+    present('audioFiles/fragment_AL1.mp3');
+    fetchMock.mockResolvedValue(workerReply({ path: 'colombia/ecopetrol/2026/10/14/x.mp3', link: 'https://chrmonitoreo.org/colombia/ecopetrol/2026/10/14/x.mp3' }));
+    const note = { alert_id: 'AL1' } as Record<string, unknown>;
+    const { service, saved } = build(null, note);
+
+    await service.archiveNoteClip(radioNote, 'AL1');
+
+    expect(saved[0]).toMatchObject({ link: 'https://chrmonitoreo.org/colombia/ecopetrol/2026/10/14/x.mp3' });
+  });
+
+  it('keeps the link a note already has', async () => {
+    present('audioFiles/fragment_AL1.mp3');
+    fetchMock.mockResolvedValue(workerReply({ path: 'p', link: 'https://chrmonitoreo.org/x.mp3' }));
+    const { service, saved } = build(null, { alert_id: 'AL1', link: 'https://news.example/own' });
+
+    await service.archiveNoteClip(radioNote, 'AL1');
+
+    expect(saved).toHaveLength(0);
+  });
+
   it('never lets an archive failure break saving the note', async () => {
     present('audioFiles/fragment_AL1.mp3');
     fetchMock.mockResolvedValue(workerReply({ message: 'No se pudo subir el clip' }, false, 502));

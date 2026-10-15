@@ -35,10 +35,13 @@ public sealed class NoteClipRequest
 public sealed class NoteClipResponse
 {
     public string Path { get; set; } = string.Empty;
+
+    // The address anyone can open the clip at; empty when the medium has no public address configured.
+    public string? Link { get; set; }
 }
 
 /// <summary>Where a clip was filed, or why it was not (Spanish: it can reach the user).</summary>
-public sealed record NoteClipResult(string? Path, string? Error)
+public sealed record NoteClipResult(string? Path, string? Error, string? Link = null)
 {
     public bool Succeeded => Path is not null;
 }
@@ -54,12 +57,16 @@ public sealed partial class NoteClipService
     private readonly IArchiveStorageProvider storages;
     private readonly ICaptureSourceRepository sources;
     private readonly ILogger<NoteClipService> logger;
+    private readonly Func<string, string?> publicBaseUrlFor;
 
-    public NoteClipService(IArchiveStorageProvider storages, ICaptureSourceRepository sources, ILogger<NoteClipService> logger)
+    public NoteClipService(
+        IArchiveStorageProvider storages, ICaptureSourceRepository sources, ILogger<NoteClipService> logger,
+        Func<string, string?>? publicBaseUrlFor = null)
     {
         this.storages = storages;
         this.sources = sources;
         this.logger = logger;
+        this.publicBaseUrlFor = publicBaseUrlFor ?? (_ => null);
     }
 
     public async Task<NoteClipResult> ArchiveAsync(NoteClipRequest request, CancellationToken cancellationToken = default)
@@ -113,7 +120,9 @@ public sealed partial class NoteClipService
             return new NoteClipResult(null, "No se pudo subir el clip de la nota al servidor de archivo.");
         }
 
-        return new NoteClipResult(remote, null);
+        // Each medium's account has its own domain, so the link is built from that medium's address.
+        var baseUrl = publicBaseUrlFor(medium);
+        return new NoteClipResult(remote, null, string.IsNullOrWhiteSpace(baseUrl) ? null : NotePdfService.BuildPublicLink(baseUrl, remote));
     }
 
     // The country of the station or channel the alert is from, by its display name in the catalog.

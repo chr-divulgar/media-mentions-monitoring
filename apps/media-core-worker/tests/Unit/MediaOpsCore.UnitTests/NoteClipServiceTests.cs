@@ -35,7 +35,14 @@ public sealed class NoteClipServiceTests
     }
 
     private static NoteClipService Service(FakeStorage? radio, FakeStorage? television, params CaptureSource[] sources) =>
-        new(new ArchiveFixture.Storages(radio, television), new FakeSources(sources), NullLogger<NoteClipService>.Instance);
+        new(
+            new ArchiveFixture.Storages(radio, television), new FakeSources(sources), NullLogger<NoteClipService>.Instance,
+            publicBaseUrlFor: medium => medium switch
+            {
+                ArchiveMedia.Radio => "https://radio.example.org/",
+                ArchiveMedia.Television => "https://tv.example.com",
+                _ => null,
+            });
 
     private static string MakeClip(string name = "fragment_6700ab12cd.mp3")
     {
@@ -79,6 +86,28 @@ public sealed class NoteClipServiceTests
         Assert.Equal("colombia/ecopetrol/2026/10/14/rcn_2026-10-14_10-30-48_6700ab12cd.mp4", result.Path);
         Assert.Equal([result.Path!], television.Uploaded);
         Assert.Empty(radio.Uploaded);
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_gives_the_public_link_of_the_clip_from_its_media_own_domain()
+    {
+        var radio = await Service(new FakeStorage(), new FakeStorage()).ArchiveAsync(Request(MakeClip()));
+        var tv = await Service(new FakeStorage(), new FakeStorage()).ArchiveAsync(Request(MakeClip("fragment_6700ab12cd.mp4"), medium: "tv", platform: "RCN"));
+
+        Assert.Equal("https://radio.example.org/colombia/ecopetrol/2026/10/14/blu-radio_2026-10-14_10-30-48_6700ab12cd.mp3", radio.Link);
+        Assert.Equal("https://tv.example.com/colombia/ecopetrol/2026/10/14/rcn_2026-10-14_10-30-48_6700ab12cd.mp4", tv.Link);
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_has_no_link_when_the_medium_has_no_public_address()
+    {
+        var service = new NoteClipService(
+            new ArchiveFixture.Storages(new FakeStorage()), new FakeSources(), NullLogger<NoteClipService>.Instance, publicBaseUrlFor: _ => null);
+
+        var result = await service.ArchiveAsync(Request(MakeClip()));
+
+        Assert.True(result.Succeeded);
+        Assert.Null(result.Link);
     }
 
     [Fact]
