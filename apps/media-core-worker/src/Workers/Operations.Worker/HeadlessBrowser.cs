@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Playwright;
 
@@ -33,7 +34,50 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
     // A challenge that a real browser can pass resolves within seconds; past this it never will.
     private static readonly TimeSpan ChallengeWait = TimeSpan.FromSeconds(25);
 
+    // Long enough for a page's own scripts and images, short enough that a page full of ad trackers (whose load event may
+    // never come) does not stall the note: past this the page is printed as it is.
+    private static readonly TimeSpan DefaultLoadWait = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ConsentWait = TimeSpan.FromSeconds(3);
+
+    // The consent managers outlets use (the accept button of each), and the buttons any other one labels that way.
+    private const string ConsentButtonCss =
+        "#didomi-notice-agree-button, #onetrust-accept-btn-handler, #CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll, .fc-cta-consent";
+    private static readonly Regex ConsentButtonName = new(
+        @"^\s*(agree and close|accept all( cookies)?|aceptar( todo| todas)?( y cerrar)?|acepto|estoy de acuerdo|entendido|permitir todas?)\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // What a consent wall leaves behind once (or if never) accepted: its overlay and the page lock it puts on the body.
+    private const string HideConsentCss = @"
+        #didomi-host, #didomi-popup, #onetrust-consent-sdk, #acceptationCMPWall, .cmp-overlay, .blockNavigation { display: none !important; }
+        html, body { overflow: visible !important; position: static !important; }
+        ";
+
+    // Windows, banners, a player stuck to the bottom: whatever is fixed to the screen is not part of the note and would
+    // print over it. A fixed container that holds the article itself stays.
+    private const string HidePinnedScript = @"
+        () => {
+          for (const el of document.querySelectorAll('body *')) {
+            if (getComputedStyle(el).position === 'fixed' && !el.matches('h1, article') && !el.querySelector('h1, article')) {
+              el.style.setProperty('display', 'none', 'important');
+            }
+          }
+        }
+        ";
+
+    // Lazy images only load when they are scrolled to.
+    private const string ScrollThroughScript = @"
+        async () => {
+          const end = Date.now() + 3000;
+          for (let y = 0; y < document.documentElement.scrollHeight && Date.now() < end; y += window.innerHeight) {
+            window.scrollTo(0, y);
+            await new Promise(resolve => setTimeout(resolve, 150));
+          }
+          window.scrollTo(0, 0);
+        }
+        ";
+
     private readonly string browsersPath;
+    private readonly TimeSpan loadWait;
     private readonly ILogger<HeadlessBrowser> logger;
     private readonly SemaphoreSlim startGate = new(1, 1);
     // A browser page is heavy; a few at a time is plenty for the occasional blocked outlet.
@@ -41,10 +85,11 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
     private IPlaywright? playwright;
     private IBrowser? browser;
 
-    public HeadlessBrowser(string browsersPath, ILogger<HeadlessBrowser> logger)
+    public HeadlessBrowser(string browsersPath, ILogger<HeadlessBrowser> logger, TimeSpan? loadWait = null)
     {
         this.browsersPath = browsersPath;
         this.logger = logger;
+        this.loadWait = loadWait ?? DefaultLoadWait;
     }
 
     public async Task<string?> GetHtmlAsync(string url, CancellationToken cancellationToken = default)
@@ -79,21 +124,17 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
 
     public async Task<bool> PrintPdfAsync(string url, string outputPath, CancellationToken cancellationToken = default)
     {
-        await pageGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        IBrowserContext? context = null;
         try
         {
-            context = await NewContextAsync(cancellationToken).ConfigureAwait(false);
-            // Load, not DOMContentLoaded: the PDF should include the images and styles.
-            var page = await OpenPageAsync(context, url, WaitUntilState.Load).ConfigureAwait(false);
-            if (page is null)
-            {
-                return false;
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
-            await page.PdfAsync(new PagePdfOptions { Path = outputPath, Format = "A4", PrintBackground = true }).ConfigureAwait(false);
-            return true;
+            return await WithPreparedPageAsync(
+                url,
+                async page =>
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+                    await page.PdfAsync(new PagePdfOptions { Path = outputPath, Format = "A4", PrintBackground = true }).ConfigureAwait(false);
+                    return true;
+                },
+                cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -104,6 +145,37 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
             logger.LogWarning(exception, "[HeadlessBrowser] Could not print {Url} to PDF.", url);
             return false;
         }
+    }
+
+    // Opens the page the way the note's PDF needs it (loaded as far as it will, consent wall out of the way) and hands
+    // it to use. Default when the page could not be opened (an anti-bot challenge it never passed).
+    internal async Task<T?> WithPreparedPageAsync<T>(string url, Func<IPage, Task<T>> use, CancellationToken cancellationToken)
+    {
+        await pageGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        IBrowserContext? context = null;
+        try
+        {
+            context = await NewContextAsync(cancellationToken).ConfigureAwait(false);
+            // Not "load": a page of ad trackers may never fire it (Caracol did not in 30 s). The content is there once
+            // the DOM is; load is waited for a while only to get the images and styles, then the page is printed as it is.
+            var page = await OpenPageAsync(context, url, WaitUntilState.DOMContentLoaded).ConfigureAwait(false);
+            if (page is null)
+            {
+                return default;
+            }
+
+            try
+            {
+                await page.WaitForLoadStateAsync(LoadState.Load, new PageWaitForLoadStateOptions { Timeout = (float)loadWait.TotalMilliseconds }).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                logger.LogInformation("[HeadlessBrowser] {Url} did not finish loading in {Seconds}s; using it as it is.", url, loadWait.TotalSeconds);
+            }
+
+            await PrepareForPrintAsync(page).ConfigureAwait(false);
+            return await use(page).ConfigureAwait(false);
+        }
         finally
         {
             if (context is not null)
@@ -112,6 +184,36 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
             }
 
             pageGate.Release();
+        }
+    }
+
+    // Accepts the cookie wall if there is one (a few seconds at most: many appear after the page has loaded), then hides
+    // what remains of it and of anything fixed to the screen, and scrolls through the page so lazy images load. Every
+    // step is best effort: a page without a wall just goes on.
+    private async Task PrepareForPrintAsync(IPage page)
+    {
+        try
+        {
+            var accept = page.Locator(ConsentButtonCss).Or(page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { NameRegex = ConsentButtonName })).First;
+            try
+            {
+                await accept.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = (float)ConsentWait.TotalMilliseconds }).ConfigureAwait(false);
+                await accept.ClickAsync(new LocatorClickOptions { Timeout = 2000 }).ConfigureAwait(false);
+                await page.WaitForTimeoutAsync(500).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is TimeoutException or PlaywrightException)
+            {
+                // No wall, or one that is not a known kind: it is hidden below.
+            }
+
+            await page.AddStyleTagAsync(new PageAddStyleTagOptions { Content = HideConsentCss }).ConfigureAwait(false);
+            await page.EvaluateAsync(HidePinnedScript).ConfigureAwait(false);
+            await page.EvaluateAsync(ScrollThroughScript).ConfigureAwait(false);
+            await page.EvaluateAsync(HidePinnedScript).ConfigureAwait(false); // what the scroll brought up
+        }
+        catch (Exception exception) when (exception is PlaywrightException or TimeoutException)
+        {
+            logger.LogWarning(exception, "[HeadlessBrowser] Could not tidy the page before printing; printing it as it is.");
         }
     }
 
