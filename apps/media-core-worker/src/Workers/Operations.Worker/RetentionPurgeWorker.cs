@@ -76,7 +76,8 @@ public sealed class RetentionPurgeWorker : BackgroundService
     private void PurgeOldDays()
     {
         var today = DateOnly.FromDateTime(clock().ToOffset(BogotaOffset).DateTime);
-        var cutoff = today.AddDays(-options.AudioRetentionDays);
+        // Each medium keeps its own days: TV is heavy and only today's is needed, radio keeps a month.
+        Func<string, DateOnly> cutoff = medium => today.AddDays(-options.LocalRetentionDaysFor(medium));
 
         if (archiveLedger is not null)
         {
@@ -89,7 +90,7 @@ public sealed class RetentionPurgeWorker : BackgroundService
             try
             {
                 Directory.Delete(dayDir, recursive: true);
-                logger.LogInformation("[RetentionPurgeWorker] Purged {Dir} (older than {RetentionDays} days).", dayDir, options.AudioRetentionDays);
+                logger.LogInformation("[RetentionPurgeWorker] Purged {Dir} (past its retention).", dayDir);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -108,7 +109,7 @@ public sealed class RetentionPurgeWorker : BackgroundService
     // its day is over. Today's folder is
     // never part of this (the cutoff is at most today), and a file written to recently is left for a
     // later pass: right after midnight the last hour of the day can still be flushing.
-    private void PurgeArchivedFiles(DateOnly cutoff, ArchiveLedger ledger)
+    private void PurgeArchivedFiles(Func<string, DateOnly> cutoff, ArchiveLedger ledger)
     {
         var nowUtc = clock().UtcDateTime;
         var minIdle = TimeSpan.FromMinutes(options.ArchiveMinIdleMinutes);

@@ -266,6 +266,29 @@ public sealed class OperationsWorkerOptionsLoaderTests
     }
 
     [Fact]
+    public void Load_should_read_the_local_days_of_television_apart_and_leave_them_unset_otherwise()
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-tvdays-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(tempPath, "{ \"audioRetentionDays\": 31 }");
+            var general = OperationsWorkerOptionsLoader.Load(tempPath);
+            Assert.Null(general.AudioRetentionDaysTelevision);
+            Assert.Equal(31, general.LocalRetentionDaysFor("television"));
+
+            File.WriteAllText(tempPath, "{ \"audioRetentionDays\": 31, \"audioRetentionDaysTelevision\": 0, \"archiveRetentionDaysTelevision\": 1 }");
+            var own = OperationsWorkerOptionsLoader.Load(tempPath);
+            Assert.Equal(0, own.LocalRetentionDaysFor("television"));
+            Assert.Equal(31, own.LocalRetentionDaysFor("radio"));
+            Assert.Equal(1, own.ArchiveRetentionDaysTelevision);
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
     public void Load_should_read_the_public_address_of_each_medium_and_fall_back_to_the_old_one_for_the_press()
     {
         var tempPath = Path.Combine(Path.GetTempPath(), $"worker-options-public-{Guid.NewGuid():N}.json");

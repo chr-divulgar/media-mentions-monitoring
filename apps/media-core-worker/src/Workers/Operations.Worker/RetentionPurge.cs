@@ -19,6 +19,14 @@ internal static partial class RetentionPurge
             .Select(day => day.Path)
             .ToArray();
 
+    // The same, with a cutoff per medium: the folder directly under the root (radio, television) says which one.
+    public static IReadOnlyList<string> FindDayFoldersOlderThan(string audioOutputRootPath, Func<string, DateOnly> cutoffExclusiveOf) =>
+        EnumerateDayFolders(audioOutputRootPath)
+            .Where(day => day.Date < cutoffExclusiveOf(
+                Path.GetRelativePath(audioOutputRootPath, day.Path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0]))
+            .Select(day => day.Path)
+            .ToArray();
+
     // Every capture day folder under the root, whatever its date — shared by the purge and the
     // archive uploader so both recognise exactly the same folder shape.
     public static IEnumerable<(string Path, DateOnly Date)> EnumerateDayFolders(string audioOutputRootPath)

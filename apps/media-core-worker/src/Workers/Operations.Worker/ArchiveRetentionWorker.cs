@@ -12,9 +12,12 @@ namespace MediaOpsCore.Workers.Operations;
 /// </summary>
 internal static partial class ArchiveRemoteRetention
 {
-    // A day folder is expired when it is dated before today minus this many days; and a retention of 1 to 6
-    // days is a typo, not a policy, so it counts as 7. 0 (or less) means never delete.
-    public static int EffectiveDays(int configured) => configured <= 0 ? 0 : Math.Max(7, configured);
+    // How many days before today a day folder is still kept: it is expired when dated before today minus this. Null
+    // means never delete (0 or less configured). Radio's setting is that number, and 1 to 6 is a typo, not a policy, so
+    // it counts as 7. TV's setting counts the days kept including today (1 = only today, so 0 days before), because
+    // its recordings are heavy and only the current day is worked on.
+    public static int? KeepDaysBeforeToday(string medium, int configured) =>
+        configured <= 0 ? null : medium == ArchiveMedia.Television ? configured - 1 : Math.Max(7, configured);
 
     // True for exactly "backup/colombia/2026/07/11" and the older "radio/2026/07/11" / "television/2026/07/11" shapes:
     // what the worker is allowed to delete, checked once more right before each deletion. Notes
@@ -24,15 +27,9 @@ internal static partial class ArchiveRemoteRetention
     // The day folders of the backup (backup/{country}/{yyyy}/{MM}/{dd}) older than the retention, oldest first, of
     // every country the backup has.
     public static async Task<IReadOnlyList<string>> FindExpiredBackupDayFoldersAsync(
-        IArchiveStorage storage, DateOnly today, int retentionDays, CancellationToken cancellationToken)
+        IArchiveStorage storage, DateOnly today, int keepDaysBeforeToday, CancellationToken cancellationToken)
     {
-        var days = EffectiveDays(retentionDays);
-        if (days == 0)
-        {
-            return [];
-        }
-
-        var cutoff = today.AddDays(-days);
+        var cutoff = today.AddDays(-keepDaysBeforeToday);
         var expired = new List<(DateOnly Date, string Path)>();
 
         foreach (var country in (await storage.ListDirectoriesAsync(ArchiveLayout.BackupRoot, cancellationToken).ConfigureAwait(false))
@@ -66,15 +63,14 @@ internal static partial class ArchiveRemoteRetention
     // retention, oldest first. The medium is the folder name: ArchiveMedia.Radio and ArchiveMedia.Television are the
     // folders InProcessFfmpegAudioCapturePlugin.BuildMediaDirectoryName writes locally and ArchiveUpload mirrors here.
     public static async Task<IReadOnlyList<string>> FindExpiredDayFoldersAsync(
-        IArchiveStorage storage, string medium, DateOnly today, int retentionDays, CancellationToken cancellationToken)
+        IArchiveStorage storage, string medium, DateOnly today, int keepDaysBeforeToday, CancellationToken cancellationToken)
     {
-        var days = EffectiveDays(retentionDays);
-        if (days == 0 || medium is not (ArchiveMedia.Radio or ArchiveMedia.Television))
+        if (medium is not (ArchiveMedia.Radio or ArchiveMedia.Television))
         {
             return [];
         }
 
-        var cutoff = today.AddDays(-days);
+        var cutoff = today.AddDays(-keepDaysBeforeToday);
         var expired = new List<(DateOnly Date, string Path)>();
 
         foreach (var year in await NumericChildrenAsync(storage, medium, 4, cancellationToken).ConfigureAwait(false))
@@ -183,8 +179,8 @@ public sealed class ArchiveRetentionWorker : BackgroundService
         foreach (var account in media.Select(medium => (Medium: medium, Storage: storages.For(medium))).Where(entry => entry.Storage is not null)
                      .GroupBy(entry => entry.Storage!))
         {
-            var days = account.Select(entry => ArchiveRemoteRetention.EffectiveDays(options.RetentionDaysFor(entry.Medium))).ToArray();
-            if (days.Contains(0))
+            var days = account.Select(entry => ArchiveRemoteRetention.KeepDaysBeforeToday(entry.Medium, options.RetentionDaysFor(entry.Medium))).ToArray();
+            if (days.Contains(null))
             {
                 continue;
             }
@@ -203,7 +199,7 @@ public sealed class ArchiveRetentionWorker : BackgroundService
             if (storage is not null)
             {
                 await PurgeAsync(
-                    medium + " (old layout)", ArchiveRemoteRetention.EffectiveDays(options.RetentionDaysFor(medium)),
+                    medium + " (old layout)", ArchiveRemoteRetention.KeepDaysBeforeToday(medium, options.RetentionDaysFor(medium)),
                     (today, retention, ct) => ArchiveRemoteRetention.FindExpiredDayFoldersAsync(storage, medium, today, retention, ct),
                     storage, cancellationToken).ConfigureAwait(false);
             }
@@ -211,10 +207,10 @@ public sealed class ArchiveRetentionWorker : BackgroundService
     }
 
     private async Task PurgeAsync(
-        string medium, int days, Func<DateOnly, int, CancellationToken, Task<IReadOnlyList<string>>> findExpired, IArchiveStorage storage,
+        string medium, int? keepDays, Func<DateOnly, int, CancellationToken, Task<IReadOnlyList<string>>> findExpired, IArchiveStorage storage,
         CancellationToken cancellationToken)
     {
-        if (days == 0)
+        if (keepDays is not { } days)
         {
             return;
         }
@@ -243,7 +239,7 @@ public sealed class ArchiveRetentionWorker : BackgroundService
             try
             {
                 await storage.DeleteDirectoryAsync(dayFolder, cancellationToken).ConfigureAwait(false);
-                logger.LogInformation("[ArchiveRetentionWorker] Deleted {Folder} from the archive (older than {Days} days).", dayFolder, days);
+                logger.LogInformation("[ArchiveRetentionWorker] Deleted {Folder} from the archive (older than {Days} day(s) before today).", dayFolder, days);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {

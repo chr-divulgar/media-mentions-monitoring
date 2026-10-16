@@ -26,6 +26,15 @@ public sealed class OperationsWorkerOptions
     // AudioOutputRootPath points at a drive/volume sized for more.
     public int AudioRetentionDays { get; set; } = 3;
 
+    // TV recordings are the heavy ones (and only the current day's is worked on locally; earlier days are fetched back
+    // from the archive), so they can be kept for fewer days than AudioRetentionDays: 0 is only today. Unset, TV
+    // follows AudioRetentionDays like everything else.
+    public int? AudioRetentionDaysTelevision { get; set; }
+
+    // Days before today that a medium's local day folder is kept (the purge removes the ones dated before today minus this).
+    public int LocalRetentionDaysFor(string medium) =>
+        medium == ArchiveMedia.Television && AudioRetentionDaysTelevision is { } television ? television : AudioRetentionDays;
+
     // Below this, RetentionPurgeWorker logs a "disk-low" incident (visible on every source's
     // /status row) in addition to its normal age-based purge — a loud signal that retention alone
     // isn't keeping up, before the drive actually fills and capture starts failing.
@@ -35,8 +44,9 @@ public sealed class OperationsWorkerOptions
     // 0.25–0.45 GB per channel-hour at 480p, on top of the audio's disk use.
     public bool TvVideoEnabled { get; set; } = false;
 
-    // 240 is YouTube's 426x240 rendition: copied as it is served (no CPU) at about a third of the size of 480p.
-    public int TvVideoMaxHeight { get; set; } = 240;
+    // The tallest YouTube rendition copied as it is served (no CPU, 16:9 kept). Measured per channel-hour with the
+    // audio re-encoded to mono: 240p (426x240) 0.13 GB, 480p (854x480) 0.30 GB, 720p 0.57 GB. 240p looked too poor.
+    public int TvVideoMaxHeight { get; set; } = 480;
 
     // The audio of a TV recording is re-encoded to mono AAC at this bitrate and sample rate (YouTube's own is 128 kbps
     // stereo, a third of the file); 0 keeps the audio as it comes. 32 kbps at 16 kHz was transcribed as well as the
@@ -72,8 +82,9 @@ public sealed class OperationsWorkerOptions
     // How long the archive keeps a day of radio and of TV before ArchiveRetentionWorker deletes it from the
     // server; each medium has its own account and space, so each has its own days. This is the company's backup of
     // the raw recordings (the notes and their supports are what the contract requires keeping: AMB-026).
-    // 0 never deletes. Anything between 1 and 6 is treated as 7 (see ArchiveRemoteRetention.EffectiveDays), so a
-    // typo cannot wipe last week's recordings.
+    // Radio: 0 never deletes, and anything between 1 and 6 is treated as 7 (see ArchiveRemoteRetention.KeepDaysBeforeToday),
+    // so a typo cannot wipe last week's recordings. Television counts the days it keeps including today, so 1 is only
+    // today (its recordings are heavy and only the current day is worked on); 0 never deletes.
     public int ArchiveRetentionDaysRadio { get; set; } = 10;
 
     public int ArchiveRetentionDaysTelevision { get; set; } = 10;

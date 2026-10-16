@@ -41,6 +41,7 @@ public static class OperationsWorkerOptionsLoader
         int? SegmentDurationSeconds,
         string? AudioOutputRootPath,
         int? AudioRetentionDays,
+        int? AudioRetentionDaysTelevision,
         int? MinFreeDiskGb,
         bool? TvVideoEnabled,
         int? TvVideoMaxHeight,
@@ -202,6 +203,11 @@ public static class OperationsWorkerOptionsLoader
             // Floored at 0 (keep only today): a negative value would put the purge cutoff after
             // today and delete today's own folder.
             options.AudioRetentionDays = Math.Max(0, model.AudioRetentionDays.Value);
+        }
+
+        if (model.AudioRetentionDaysTelevision.HasValue)
+        {
+            options.AudioRetentionDaysTelevision = Math.Max(0, model.AudioRetentionDaysTelevision.Value);
         }
 
         if (model.MinFreeDiskGb.HasValue)

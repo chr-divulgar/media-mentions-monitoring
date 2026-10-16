@@ -171,6 +171,35 @@ public sealed class ArchiveRetentionTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_keeps_only_today_of_television_when_it_is_set_to_one_day_and_radio_keeps_its_days()
+    {
+        // TV counts the days it keeps including today: 1 is only today (yesterday's recordings are gone), unlike radio,
+        // where anything under 7 is a typo.
+        var radio = new FakeTree("backup/colombia/2026/10/09/wradio/a.opus", "backup/colombia/2026/09/20/wradio/a.opus");
+        var television = new FakeTree(
+            "backup/colombia/2026/10/09/rcn_tv/a.mp4", "backup/colombia/2026/10/10/rcn_tv/a.mp4",
+            "television/2026/10/09/rcn_tv/a.mp4", "colombia/ecopetrol/2026/10/09/nota.mp4");
+        var worker = Worker(new ArchiveFixture.Storages(radio, television), incidents: null, radioDays: 40, televisionDays: 1);
+
+        await worker.RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(["backup/colombia/2026/10/09", "television/2026/10/09"], television.Deleted.Order().ToArray());
+        Assert.True(television.Has("backup/colombia/2026/10/10/"));
+        Assert.True(television.Has("colombia/ecopetrol/")); // a note is never a backup day
+        Assert.Empty(radio.Deleted); // 40 days: neither yesterday nor three weeks ago
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_keeps_yesterday_of_television_when_it_is_set_to_two_days()
+    {
+        var television = new FakeTree("backup/colombia/2026/10/08/rcn_tv/a.mp4", "backup/colombia/2026/10/09/rcn_tv/a.mp4");
+
+        await Worker(new ArchiveFixture.Storages(radio: null, television), incidents: null, radioDays: 40, televisionDays: 2).RunOnceAsync(CancellationToken.None);
+
+        Assert.Equal(["backup/colombia/2026/10/08"], television.Deleted);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_keeps_the_longer_retention_when_radio_and_television_share_one_account()
     {
         // One account holds both media in the same day folders, so a day can only go once both have let it go.

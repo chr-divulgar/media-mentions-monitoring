@@ -47,6 +47,60 @@ public sealed class RetentionPurgeWorkerTests
     }
 
     [Fact]
+    public void Tick_keeps_each_medium_for_its_own_days_and_only_today_of_television()
+    {
+        // Radio keeps 31 days, TV only the current one: the TV recordings of yesterday go, the radio of yesterday and
+        // of a month ago stay.
+        var root = Path.Combine(Path.GetTempPath(), $"retention-worker-{Guid.NewGuid():N}");
+        try
+        {
+            var radioMonthAgo = MakeDayDir(root, "radio", new DateOnly(2026, 9, 10), "wradio");
+            var radioExpired = MakeDayDir(root, "radio", new DateOnly(2026, 9, 2), "wradio");
+            var radioYesterday = MakeDayDir(root, "radio", new DateOnly(2026, 10, 3), "wradio");
+            var tvYesterday = MakeDayDir(root, "television", new DateOnly(2026, 10, 3), "rcn_tv");
+            var tvToday = MakeDayDir(root, "television", new DateOnly(2026, 10, 4), "rcn_tv");
+
+            var options = new OperationsWorkerOptions
+            {
+                AudioOutputRootPath = root, AudioRetentionDays = 31, AudioRetentionDaysTelevision = 0, MinFreeDiskGb = 0,
+            };
+            new RetentionPurgeWorker(
+                options, new FakeIncidentRecorder(), NullLogger<RetentionPurgeWorker>.Instance, () => new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.FromHours(-5)))
+                .Tick();
+
+            Assert.True(Directory.Exists(radioMonthAgo));
+            Assert.False(Directory.Exists(radioExpired));
+            Assert.True(Directory.Exists(radioYesterday));
+            Assert.False(Directory.Exists(tvYesterday));
+            Assert.True(Directory.Exists(tvToday));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Tick_gives_television_the_general_retention_when_it_has_none_of_its_own()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-worker-{Guid.NewGuid():N}");
+        try
+        {
+            var tvYesterday = MakeDayDir(root, "television", new DateOnly(2026, 10, 3), "rcn_tv");
+
+            new RetentionPurgeWorker(
+                new OperationsWorkerOptions { AudioOutputRootPath = root, AudioRetentionDays = 3, MinFreeDiskGb = 0 },
+                new FakeIncidentRecorder(), NullLogger<RetentionPurgeWorker>.Instance, () => new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.FromHours(-5))).Tick();
+
+            Assert.True(Directory.Exists(tvYesterday));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Tick_records_a_disk_low_incident_once_and_a_recovered_incident_once_space_is_freed()
     {
         var root = Path.Combine(Path.GetTempPath(), $"retention-worker-{Guid.NewGuid():N}");
