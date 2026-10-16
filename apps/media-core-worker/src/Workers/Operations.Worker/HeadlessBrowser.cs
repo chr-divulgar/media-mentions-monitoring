@@ -52,15 +52,22 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
         html, body { overflow: visible !important; position: static !important; }
         ";
 
-    // Windows, banners, a player stuck to the bottom: whatever is fixed to the screen is not part of the note and would
-    // print over it. A fixed container that holds the article itself stays.
+    // Windows, banners, a player stuck to the bottom, an ad that pops up (Google's vignette arrives seconds after the
+    // page): whatever is fixed to the screen is not part of the note and would print over it. A fixed container that
+    // holds the article itself stays. It runs now and then every quarter second for as long as the page is open, so
+    // what appears late (even while the PDF is being drawn) is hidden too.
     private const string HidePinnedScript = @"
         () => {
-          for (const el of document.querySelectorAll('body *')) {
-            if (getComputedStyle(el).position === 'fixed' && !el.matches('h1, article') && !el.querySelector('h1, article')) {
-              el.style.setProperty('display', 'none', 'important');
+          if (window.__hidePinned) { window.__hidePinned(); return; }
+          window.__hidePinned = () => {
+            for (const el of document.querySelectorAll('body *')) {
+              if (getComputedStyle(el).position === 'fixed' && !el.matches('h1, article') && !el.querySelector('h1, article')) {
+                el.style.setProperty('display', 'none', 'important');
+              }
             }
-          }
+          };
+          window.__hidePinned();
+          setInterval(window.__hidePinned, 250);
         }
         ";
 
@@ -209,7 +216,7 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
             await page.AddStyleTagAsync(new PageAddStyleTagOptions { Content = HideConsentCss }).ConfigureAwait(false);
             await page.EvaluateAsync(HidePinnedScript).ConfigureAwait(false);
             await page.EvaluateAsync(ScrollThroughScript).ConfigureAwait(false);
-            await page.EvaluateAsync(HidePinnedScript).ConfigureAwait(false); // what the scroll brought up
+            await page.WaitForTimeoutAsync(1000).ConfigureAwait(false); // what the scroll (or a late ad) brings up
         }
         catch (Exception exception) when (exception is PlaywrightException or TimeoutException)
         {
