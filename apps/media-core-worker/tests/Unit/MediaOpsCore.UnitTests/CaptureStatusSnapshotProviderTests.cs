@@ -311,7 +311,9 @@ public sealed class CaptureStatusSnapshotProviderTests
     {
         var incidents = new FakeIncidentReader(
             Incident("google-news", IncidentKinds.CycleOk, 10, 1, null),
-            Incident("google-news", IncidentKinds.CycleOk, 10, 31, null));
+            Incident("google-news", IncidentKinds.CycleOk, 10, 16, null),
+            Incident("google-news", IncidentKinds.CycleOk, 10, 31, null),
+            Incident("google-news", IncidentKinds.CycleOk, 10, 46, null));
         var provider = CreateProvider(
             sources: [CreateSource("radio-a")],
             evidenceStore: new FakeEvidenceFileStore(),
@@ -325,7 +327,7 @@ public sealed class CaptureStatusSnapshotProviderTests
         Assert.Equal("internet", googleSource.Media);
         var hour10 = googleSource.Hours.Single(h => h.Hour == 10);
         Assert.Equal("ok", hour10.Status);
-        Assert.Equal(2, hour10.Segments!.Count);
+        Assert.Equal(4, hour10.Segments!.Count); // a cycle every 15 minutes
     }
 
     private static SourceIncident Incident(string sourceId, string kind, int hour, int minute, string? reason) =>

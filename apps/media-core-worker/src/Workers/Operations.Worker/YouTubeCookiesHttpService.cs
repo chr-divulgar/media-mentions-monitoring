@@ -652,8 +652,10 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             return;
         }
 
+        // exact=1: the clip a note keeps, which must start and end on the instants asked; without it a plain copy.
+        var exact = query["exact"] is "1" or "true";
         var result = await videoSegmentService
-            .GetSegmentAsync(sourceId, startUtc, endUtc, CancellationToken.None)
+            .GetSegmentAsync(sourceId, startUtc, endUtc, CancellationToken.None, exact)
             .ConfigureAwait(false);
 
         if (result is VideoSegmentNotAvailable notAvailable)

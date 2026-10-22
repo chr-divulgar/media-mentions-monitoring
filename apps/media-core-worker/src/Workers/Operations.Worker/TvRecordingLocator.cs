@@ -2,8 +2,14 @@ using System.Globalization;
 
 namespace MediaOpsCore.Workers.Operations;
 
-/// <summary>One MP4 of a TV source: its path relative to the capture root and when it started.</summary>
-internal sealed record TvRecordingCandidate(string RelativePath, DateTimeOffset Start);
+/// <summary>
+/// One MP4 of a TV source: its path relative to the capture root (or, when Archived, to the archive's folder) and when it
+/// started.
+/// </summary>
+internal sealed record TvRecordingCandidate(string RelativePath, DateTimeOffset Start, bool Archived = false);
+
+/// <summary>The part of a window that falls inside one recording: from..to, both inside that recording's span.</summary>
+internal sealed record TvRecordingSlice(TvRecordingCandidate Recording, DateTimeOffset From, DateTimeOffset To);
 
 /// <summary>
 /// Finds which hourly MP4 holds a given instant. Pure: the caller supplies the files (local folder or
@@ -43,6 +49,33 @@ internal static class TvRecordingLocator
             .Where(candidate => candidate.Start <= instant && instant < TvVideoRecording.PlannedEnd(candidate.Start))
             .OrderByDescending(candidate => candidate.Start)
             .FirstOrDefault();
+
+    // Every recording the window touches, in order, each with the part of the window that is in it. A recording's span
+    // is from its start to the end it was planned for, cut short by the next one if that started earlier (a restart
+    // mid-hour). A hole between two recordings belongs to neither.
+    public static IReadOnlyList<TvRecordingSlice> FindOverlapping(
+        IReadOnlyList<TvRecordingCandidate> candidates, DateTimeOffset windowStart, DateTimeOffset windowEnd)
+    {
+        var ordered = candidates.OrderBy(candidate => candidate.Start).ToList();
+        var slices = new List<TvRecordingSlice>();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var end = TvVideoRecording.PlannedEnd(ordered[i].Start);
+            if (i + 1 < ordered.Count && ordered[i + 1].Start < end)
+            {
+                end = ordered[i + 1].Start;
+            }
+
+            var from = windowStart > ordered[i].Start ? windowStart : ordered[i].Start;
+            var to = windowEnd < end ? windowEnd : end;
+            if (from < to)
+            {
+                slices.Add(new TvRecordingSlice(ordered[i], from, to));
+            }
+        }
+
+        return slices;
+    }
 
     // The requested window as seconds from the start of the recording, clamped to the span the
     // recording was planned to cover (a window never crosses into the next file).

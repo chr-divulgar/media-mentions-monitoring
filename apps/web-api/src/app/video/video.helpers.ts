@@ -3,15 +3,33 @@
 
 /**
  * Where a segment window starts, in seconds from the start of the alert's hour file: centred on the
- * end of the alert (the same rule the audio flow uses), and never before the beginning of the file.
+ * end of the alert (the same rule the audio flow uses). It can be negative: the window then reaches
+ * into the recording before this one, and the worker joins them.
  */
 export function segmentStartSeconds(
   alertEndSeconds: number,
   windowSeconds: number,
 ): number {
-  return alertEndSeconds > windowSeconds / 2
-    ? alertEndSeconds - windowSeconds / 2
-    : 0;
+  return alertEndSeconds - windowSeconds / 2;
+}
+
+/**
+ * The worker's /video/segment query. `exact` is for the clip a note keeps: it then starts and ends on
+ * the instants asked, instead of on the keyframe before the start (what the wide editing window does).
+ */
+export function segmentQuery(
+  sourceId: string,
+  startUtc: Date,
+  endUtc: Date,
+  exact: boolean,
+): URLSearchParams {
+  const query = new URLSearchParams({
+    sourceId,
+    startUtc: startUtc.toISOString(),
+    endUtc: endUtc.toISOString(),
+  });
+  if (exact) query.set('exact', '1');
+  return query;
 }
 
 /**

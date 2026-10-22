@@ -3,6 +3,7 @@ import {
   isSafeClipName,
   noteMediaKind,
   parseByteRange,
+  segmentQuery,
   segmentStartSeconds,
 } from './video.helpers';
 
@@ -12,9 +13,29 @@ describe('segmentStartSeconds', () => {
     expect(segmentStartSeconds(1200, 600)).toBe(900);
   });
 
-  it('never starts before the beginning of the file', () => {
-    expect(segmentStartSeconds(120, 600)).toBe(0);
-    expect(segmentStartSeconds(-30, 600)).toBe(0);
+  it('may start before the hour file: the worker brings in the recording before it, as the audio does', () => {
+    // alert ends 2 min into the hour, 30 min window: starts 13 min before the hour
+    expect(segmentStartSeconds(120, 1800)).toBe(-780);
+    expect(segmentStartSeconds(-30, 600)).toBe(-330);
+  });
+});
+
+describe('segmentQuery', () => {
+  const start = new Date('2026-10-05T17:00:10.000Z');
+  const end = new Date('2026-10-05T17:00:20.000Z');
+
+  it('asks for the window as it is by default (a copy from the keyframe)', () => {
+    const query = segmentQuery('rcn_tv', start, end, false);
+
+    expect(Object.fromEntries(query)).toEqual({
+      sourceId: 'rcn_tv',
+      startUtc: '2026-10-05T17:00:10.000Z',
+      endUtc: '2026-10-05T17:00:20.000Z',
+    });
+  });
+
+  it('asks for the exact start and end for the clip a note keeps', () => {
+    expect(segmentQuery('rcn_tv', start, end, true).get('exact')).toBe('1');
   });
 });
 

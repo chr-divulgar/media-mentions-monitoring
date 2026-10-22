@@ -45,6 +45,52 @@ public sealed class TvRecordingLocatorTests
     }
 
     [Fact]
+    public void FindOverlapping_gives_the_part_of_the_window_in_each_recording_in_order()
+    {
+        // 12:05:59 to 13:00:00, a restart at 12:40:38 (which ends the first one's part there), and the next hour.
+        var first = Candidate(At(5, 12, 5, 59));
+        var restart = Candidate(At(5, 12, 40, 38));
+        var next = Candidate(At(5, 13, 0, 8));
+
+        var slices = TvRecordingLocator.FindOverlapping([next, restart, first], At(5, 12, 30), At(5, 13, 10));
+
+        Assert.Equal([first, restart, next], slices.Select(slice => slice.Recording));
+        Assert.Equal([At(5, 12, 30), At(5, 12, 40, 38), At(5, 13, 0, 8)], slices.Select(slice => slice.From));
+        Assert.Equal([At(5, 12, 40, 38), At(5, 13, 0), At(5, 13, 10)], slices.Select(slice => slice.To));
+    }
+
+    [Fact]
+    public void FindOverlapping_of_a_window_inside_one_recording_is_that_recording_alone()
+    {
+        var first = Candidate(At(5, 12, 5, 59));
+        var next = Candidate(At(5, 13, 0, 8));
+
+        var slices = TvRecordingLocator.FindOverlapping([first, next], At(5, 12, 20), At(5, 12, 50));
+
+        Assert.Equal(first, Assert.Single(slices).Recording);
+    }
+
+    [Fact]
+    public void FindOverlapping_skips_recordings_outside_the_window_and_the_gap_between_them()
+    {
+        var early = Candidate(At(5, 11, 5, 59));   // runs until 12:00
+        var late = Candidate(At(5, 14, 0, 8));
+        var first = Candidate(At(5, 12, 5, 59));
+
+        var slices = TvRecordingLocator.FindOverlapping([early, first, late], At(5, 12, 3), At(5, 12, 30));
+
+        // 12:03 is in the gap between the end of `early` (12:00) and the start of `first` (12:05:59).
+        Assert.Equal(first, Assert.Single(slices).Recording);
+        Assert.Equal(At(5, 12, 5, 59), slices[0].From);
+    }
+
+    [Fact]
+    public void FindOverlapping_is_empty_when_nothing_covers_the_window()
+    {
+        Assert.Empty(TvRecordingLocator.FindOverlapping([Candidate(At(5, 12, 5, 59))], At(5, 15, 0), At(5, 15, 30)));
+    }
+
+    [Fact]
     public void Find_returns_nothing_before_the_first_recording_or_after_the_last_one_ended()
     {
         var only = Candidate(At(5, 12, 5, 59)); // planned to run until 13:00

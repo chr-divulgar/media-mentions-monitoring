@@ -112,7 +112,9 @@ internal sealed record Mp4Info(double DurationSeconds, bool HasVideo, bool HasAu
 /// already ships — no ffmpeg.exe. Stream copy (no decoding or encoding), so it is fast and lossless:
 /// the clip therefore starts at the video keyframe at or before the requested start, while the end is
 /// exact to the frame. The output is a regular MP4 with the index up front (faststart) so a browser
-/// can play and seek it right away.
+/// can play and seek it right away. With exact: true the video is decoded from that keyframe and only
+/// what falls in the window is encoded again (VideoClipEncoder), so the clip also starts on the very
+/// picture asked for; the audio is copied from its first packet at or after the start.
 ///
 /// The recordings are fragmented MP4, and the one being written right now has no index at its end, so
 /// seeking is not reliable. Instead the file is read from its start, keeping only the latest group of
@@ -133,7 +135,7 @@ internal static unsafe class Mp4SegmentCutter
 
     // Null when the requested start is beyond the end of the recording (nothing to cut).
     public static Mp4ClipResult? Cut(
-        string inputPath, double startSeconds, double endSeconds, string outputPath, CancellationToken cancellationToken)
+        string inputPath, double startSeconds, double endSeconds, string outputPath, CancellationToken cancellationToken, bool exact = false)
     {
         InProcessFfmpegAudioCapturePlugin.EnsureFfmpegInitialized();
 
@@ -143,6 +145,7 @@ internal static unsafe class Mp4SegmentCutter
         AVPacket* carry = null;
         var packet = ffmpeg.av_packet_alloc();
         var wroteHeader = false;
+        VideoClipEncoder? videoEncoder = null;
 
         try
         {
@@ -209,7 +212,14 @@ internal static unsafe class Mp4SegmentCutter
             ffmpeg.avformat_alloc_output_context2(&output, null, "mp4", outputPath).ThrowIfError("avformat_alloc_output_context2");
             ffmpeg.av_opt_set(output, "avoid_negative_ts", "make_zero", ffmpeg.AV_OPT_SEARCH_CHILDREN);
 
-            var outVideo = AddStream(output, input->streams[videoIndex]);
+            // Exact: the video is encoded again from the keyframe, the stream is the encoder's. If this build cannot
+            // encode, the clip is a plain copy (it then starts on the keyframe).
+            if (exact)
+            {
+                videoEncoder = VideoClipEncoder.TryCreate(output, input, input->streams[videoIndex], startSeconds + origin, endSeconds + origin);
+            }
+
+            var outVideo = videoEncoder?.OutputStreamIndex ?? AddStream(output, input->streams[videoIndex]);
             var outAudio = audioIndex >= 0 ? AddStream(output, input->streams[audioIndex]) : -1;
 
             ffmpeg.avio_open(&output->pb, outputPath, ffmpeg.AVIO_FLAG_WRITE).ThrowIfError("avio_open");
@@ -220,23 +230,36 @@ internal static unsafe class Mp4SegmentCutter
             headerResult.ThrowIfError("avformat_write_header");
             wroteHeader = true;
 
-            var videoBase = BaseTimestamp(input->streams[videoIndex], keySeconds + origin);
-            var audioBase = audioIndex >= 0 ? BaseTimestamp(input->streams[audioIndex], keySeconds + origin) : 0;
-            var clipEnd = keySeconds;
+            // Where the clip's own clock starts: the keyframe when copying, the asked start when exact.
+            var clipStart = videoEncoder is null ? keySeconds : startSeconds;
+            var videoBase = BaseTimestamp(input->streams[videoIndex], clipStart + origin);
+            var audioBase = audioIndex >= 0 ? BaseTimestamp(input->streams[audioIndex], clipStart + origin) : 0;
+            var clipEnd = clipStart;
+            // Pictures come out of the decoder in display order but go in as stored: a B-frame shown before the end can sit
+            // after a packet stamped later, so the encoder is fed a little past the end (it drops what is not wanted).
+            var videoLimit = videoEncoder is null ? endSeconds : endSeconds + 1.0;
 
             var videoDone = false;
             var audioDone = audioIndex < 0;
 
             foreach (var item in buffer)
             {
-                var past = item.Seconds > endSeconds;
-                if (item.Stream == videoIndex ? past : past || item.Seconds < keySeconds)
+                var past = item.Seconds > (item.Stream == videoIndex ? videoLimit : endSeconds);
+                if (item.Stream == videoIndex ? past : past || item.Seconds < clipStart)
                 {
                     FreePacket(item.Packet);
                     continue;
                 }
 
-                WritePacket(input, output, item.Packet, item.Stream == videoIndex, outVideo, outAudio, videoBase, audioBase, item.Seconds, ref clipEnd);
+                if (videoEncoder is not null && item.Stream == videoIndex)
+                {
+                    videoEncoder.Write(item.Packet); // every picture from the keyframe: the decoder needs them all
+                }
+                else
+                {
+                    WritePacket(input, output, item.Packet, item.Stream == videoIndex, outVideo, outAudio, videoBase, audioBase, item.Seconds, ref clipEnd);
+                }
+
                 FreePacket(item.Packet);
             }
 
@@ -262,9 +285,13 @@ internal static unsafe class Mp4SegmentCutter
                 var seconds = PacketSeconds(input, current) - origin;
                 if (stream == videoIndex)
                 {
-                    if (seconds > endSeconds)
+                    if (seconds > videoLimit)
                     {
                         videoDone = true;
+                    }
+                    else if (videoEncoder is not null)
+                    {
+                        videoDone = !videoEncoder.Write(current);
                     }
                     else
                     {
@@ -277,7 +304,7 @@ internal static unsafe class Mp4SegmentCutter
                     {
                         audioDone = true;
                     }
-                    else if (seconds >= keySeconds)
+                    else if (seconds >= clipStart)
                     {
                         WritePacket(input, output, current, isVideo: false, outVideo, outAudio, videoBase, audioBase, seconds, ref clipEnd);
                     }
@@ -295,12 +322,19 @@ internal static unsafe class Mp4SegmentCutter
                 current = null;
             }
 
+            if (videoEncoder is not null)
+            {
+                videoEncoder.Finish();
+                clipEnd = clipStart + videoEncoder.EndSeconds;
+            }
+
             ffmpeg.av_write_trailer(output);
             wroteHeader = false;
-            return new Mp4ClipResult(keySeconds, Math.Max(0, clipEnd - keySeconds));
+            return new Mp4ClipResult(clipStart, Math.Max(0, clipEnd - clipStart));
         }
         finally
         {
+            videoEncoder?.Dispose();
             foreach (var item in buffer)
             {
                 FreePacket(item.Packet);

@@ -62,6 +62,91 @@ public sealed class VideoSegmentServiceTests
     }
 
     [Fact]
+    public async Task GetSegmentAsync_exact_starts_and_ends_on_the_asked_instants()
+    {
+        var root = NewRoot();
+        VideoSegmentSuccess? clip = null;
+        try
+        {
+            var start = new DateTimeOffset(2026, 10, 5, 12, 5, 59, Bogota);
+            Record(root, "rcn_tv", start);
+
+            var result = await Service(root).GetSegmentAsync(
+                "rcn_tv", start.AddSeconds(4.5).ToUniversalTime(), start.AddSeconds(7).ToUniversalTime(), CancellationToken.None, exact: true);
+
+            clip = Assert.IsType<VideoSegmentSuccess>(result);
+            // Not the keyframe at 4.08 s: the clip starts where it was asked to and lasts what was asked.
+            Assert.Equal(start.AddSeconds(4.5).ToUniversalTime(), clip.ClipStartUtc, TimeSpan.FromMilliseconds(20));
+            Assert.InRange(clip.DurationSeconds, 2.4, 2.6);
+            Assert.InRange(Mp4Info.Read(clip.TempPath, scanStreams: true).VideoStartSeconds, 0, 0.1);
+        }
+        finally
+        {
+            if (clip is not null) File.Delete(clip.TempPath);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetSegmentAsync_joins_the_recordings_a_window_crosses()
+    {
+        var root = NewRoot();
+        VideoSegmentSuccess? clip = null;
+        try
+        {
+            // 12:58:00 (8 s of video) and a restart at 12:58:09 (8 s of video): the window crosses from one to the other.
+            var first = new DateTimeOffset(2026, 10, 5, 12, 58, 0, Bogota);
+            var second = new DateTimeOffset(2026, 10, 5, 12, 58, 9, Bogota);
+            Record(root, "rcn_tv", first);
+            Record(root, "rcn_tv", second);
+
+            var windowStart = first.AddSeconds(4);
+            var result = await Service(root).GetSegmentAsync(
+                "rcn_tv", windowStart.ToUniversalTime(), second.AddSeconds(5).ToUniversalTime(), CancellationToken.None);
+
+            clip = Assert.IsType<VideoSegmentSuccess>(result);
+            var info = Mp4Info.Read(clip.TempPath, scanStreams: true);
+            Assert.True(info.HasVideo && info.HasAudio);
+            // From the keyframe at 2.08 s of the first (the window starts at 4 s) to second 14 of the minute: the 1 s hole stays.
+            Assert.Equal(first.AddSeconds(2.08).ToUniversalTime(), clip.ClipStartUtc, TimeSpan.FromMilliseconds(300));
+            Assert.InRange(clip.DurationSeconds, 11.0, 12.5);
+            Assert.InRange(info.VideoStartSeconds + info.VideoDurationSeconds, 11.0, 12.5);
+        }
+        finally
+        {
+            if (clip is not null) File.Delete(clip.TempPath);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetSegmentAsync_joined_and_exact_starts_and_ends_on_the_asked_instants()
+    {
+        var root = NewRoot();
+        VideoSegmentSuccess? clip = null;
+        try
+        {
+            var first = new DateTimeOffset(2026, 10, 5, 12, 58, 0, Bogota);
+            var second = new DateTimeOffset(2026, 10, 5, 12, 58, 9, Bogota);
+            Record(root, "rcn_tv", first);
+            Record(root, "rcn_tv", second);
+
+            var windowStart = first.AddSeconds(5.5);
+            var result = await Service(root).GetSegmentAsync(
+                "rcn_tv", windowStart.ToUniversalTime(), second.AddSeconds(3).ToUniversalTime(), CancellationToken.None, exact: true);
+
+            clip = Assert.IsType<VideoSegmentSuccess>(result);
+            Assert.Equal(windowStart.ToUniversalTime(), clip.ClipStartUtc, TimeSpan.FromMilliseconds(20));
+            Assert.InRange(clip.DurationSeconds, 6.4, 6.6); // 5.5 s to 12.0 s into the minute
+        }
+        finally
+        {
+            if (clip is not null) File.Delete(clip.TempPath);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task GetSegmentAsync_finds_a_recording_that_started_the_day_before()
     {
         var root = NewRoot();

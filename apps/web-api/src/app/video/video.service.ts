@@ -8,6 +8,7 @@ import { pipeline } from 'stream/promises';
 import {
   audioOffsetInClip,
   isSafeClipName,
+  segmentQuery,
   segmentStartSeconds,
 } from './video.helpers';
 
@@ -75,6 +76,7 @@ export class VideoService {
       new Date(fileTime.getTime() + windowStart * 1000),
       new Date(fileTime.getTime() + (windowStart + windowSeconds) * 1000),
       outputPath,
+      false,
     );
 
     return {
@@ -93,11 +95,13 @@ export class VideoService {
     outputPath: string,
   ): Promise<AudioFile> {
     const selectedStart = new Date(fileTime.getTime() + startSecond * 1000);
+    // exact: the note's clip starts and ends on the instants the user chose, not on the keyframe before the start.
     const clip = await this.fetchClip(
       sourceId,
       selectedStart,
       new Date(selectedStart.getTime() + durationSeconds * 1000),
       outputPath,
+      true,
     );
 
     const offset = audioOffsetInClip(clip.startUtc, selectedStart);
@@ -115,14 +119,11 @@ export class VideoService {
     startUtc: Date,
     endUtc: Date,
     outputPath: string,
+    exact: boolean,
   ): Promise<{ startUtc: Date; durationSeconds: number }> {
     const workerUrl =
       process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
-    const query = new URLSearchParams({
-      sourceId,
-      startUtc: startUtc.toISOString(),
-      endUtc: endUtc.toISOString(),
-    });
+    const query = segmentQuery(sourceId, startUtc, endUtc, exact);
 
     const response = await fetch(`${workerUrl}/video/segment?${query}`, {
       signal: AbortSignal.timeout(VideoService.WORKER_TIMEOUT_MS),

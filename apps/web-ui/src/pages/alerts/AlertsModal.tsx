@@ -63,11 +63,9 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
   // still have their audio on this machine; earlier days' audio is purged).
   const [audioFallback, setAudioFallback] = useState(false);
   const isVideo = isTvAlert(selectedAlert) && !audioFallback;
-  // Audio defaults to 30 min (1800s); the user can widen it to bring in audio from the adjacent
-  // hour's recording (see audio.service.ts). Video is far heavier, so its window starts at 10 min.
-  const [segmentDuration, setSegmentDuration] = useState(() =>
-    isTvAlert(selectedAlert) ? 600 : 1800,
-  );
+  // The window defaults to 30 min (1800s) for audio and video alike; the user can widen it to 1 or 2 hours,
+  // which brings in the adjacent hours' recordings (audio.service.ts, and the worker joins the MP4s).
+  const [segmentDuration, setSegmentDuration] = useState(1800);
 
   const createSegmentDto = useMemo(
     () => ({
@@ -189,17 +187,11 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
   const videoNotAvailable =
     isVideo && (errorSegment as AxiosError | null)?.response?.status === 404;
 
-  const windowOptions = isVideo
-    ? [
-        { value: 300, label: "5 min" },
-        { value: 600, label: "10 min" },
-        { value: 1200, label: "20 min" },
-      ]
-    : [
-        { value: 1800, label: "30 min" },
-        { value: 3600, label: "1 hora" },
-        { value: 7200, label: "2 horas" },
-      ];
+  const windowOptions = [
+    { value: 1800, label: "30 min" },
+    { value: 3600, label: "1 hora" },
+    { value: 7200, label: "2 horas" },
+  ];
 
   const steps = [
     {
