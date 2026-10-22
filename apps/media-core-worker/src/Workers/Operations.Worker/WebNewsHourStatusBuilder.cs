@@ -3,14 +3,15 @@ using MediaOpsCore.Modules.Capture.Application;
 namespace MediaOpsCore.Workers.Operations;
 
 /// <summary>
-/// Turns one hour's worth of WebNewsCaptureUseCase incidents into a status plus two half-hour
+/// Turns one hour's worth of WebNewsCaptureUseCase incidents into a status plus four quarter-hour
 /// segments, reusing the same captured/gap/no-session vocabulary (and colors) the audio timeline
-/// already renders with — a cycle runs every 30 minutes, so a half-hour segment is this row's
-/// natural unit, the way a checkpoint-derived slice is for a recording session.
+/// already renders with — a cycle runs every 15 minutes (see DiscreteSchedule), so a quarter of an hour is this
+/// row's natural unit, the way a checkpoint-derived slice is for a recording session.
 /// </summary>
 public static class WebNewsHourStatusBuilder
 {
-    private const double HalfHourSeconds = 1800;
+    private const double QuarterSeconds = 900;
+    private const int QuartersPerHour = 4;
 
     public static (string Status, IReadOnlyList<CaptureSegmentEntry>? Segments) Build(
         IReadOnlyList<SourceIncident> hourIncidents, TimeSpan bogotaOffset)
@@ -22,11 +23,9 @@ public static class WebNewsHourStatusBuilder
             return ("no-data", null);
         }
 
-        CaptureSegmentEntry[] segments =
-        [
-            BuildSegment(hourIncidents, firstHalf: true, bogotaOffset, 0, HalfHourSeconds),
-            BuildSegment(hourIncidents, firstHalf: false, bogotaOffset, HalfHourSeconds, HalfHourSeconds * 2),
-        ];
+        var segments = Enumerable.Range(0, QuartersPerHour)
+            .Select(quarter => BuildSegment(hourIncidents, quarter, bogotaOffset))
+            .ToArray();
 
         var status = segments.All(segment => segment.State == "captured") ? "ok"
             : segments.All(segment => segment.State == "no-session") ? "no-session"
@@ -35,23 +34,19 @@ public static class WebNewsHourStatusBuilder
         return (status, segments);
     }
 
-    private static CaptureSegmentEntry BuildSegment(
-        IReadOnlyList<SourceIncident> hourIncidents, bool firstHalf, TimeSpan bogotaOffset, double startSeconds, double endSeconds)
+    private static CaptureSegmentEntry BuildSegment(IReadOnlyList<SourceIncident> hourIncidents, int quarter, TimeSpan bogotaOffset)
     {
-        var halfIncidents = hourIncidents.Where(incident => IsInHalf(incident, firstHalf, bogotaOffset)).ToArray();
+        var quarterIncidents = hourIncidents.Where(incident => QuarterOf(incident, bogotaOffset) == quarter).ToArray();
 
-        // A cycle that never completed (crashed, or just never ran this half) reads the same as
-        // one that explicitly failed — both mean "no evidence this half worked".
-        var ranCleanly = halfIncidents.Any(incident => incident.Kind == IncidentKinds.CycleOk);
-        var hadArticleProblems = halfIncidents.Any(incident => incident.Kind is IncidentKinds.ArticleFailed or IncidentKinds.SendFailed);
+        // A cycle that never completed (crashed, or just never ran this quarter) reads the same as
+        // one that explicitly failed — both mean "no evidence this quarter worked".
+        var ranCleanly = quarterIncidents.Any(incident => incident.Kind == IncidentKinds.CycleOk);
+        var hadArticleProblems = quarterIncidents.Any(incident => incident.Kind is IncidentKinds.ArticleFailed or IncidentKinds.SendFailed);
 
         var state = ranCleanly ? (hadArticleProblems ? "gap" : "captured") : "no-session";
-        return new CaptureSegmentEntry { StartSeconds = startSeconds, EndSeconds = endSeconds, State = state };
+        return new CaptureSegmentEntry { StartSeconds = quarter * QuarterSeconds, EndSeconds = (quarter + 1) * QuarterSeconds, State = state };
     }
 
-    private static bool IsInHalf(SourceIncident incident, bool firstHalf, TimeSpan bogotaOffset)
-    {
-        var minute = incident.At.ToOffset(bogotaOffset).Minute;
-        return firstHalf ? minute < 30 : minute >= 30;
-    }
+    private static int QuarterOf(SourceIncident incident, TimeSpan bogotaOffset) =>
+        incident.At.ToOffset(bogotaOffset).Minute / (int)(QuarterSeconds / 60);
 }

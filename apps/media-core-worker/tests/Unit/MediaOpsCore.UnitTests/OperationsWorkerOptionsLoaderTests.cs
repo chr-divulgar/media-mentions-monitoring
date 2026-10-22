@@ -40,7 +40,7 @@ public sealed class OperationsWorkerOptionsLoaderTests
         Assert.Equal(8, options.WebNewsKeywordsPerQuery);
         Assert.Equal(4, options.WebNewsMaxConcurrency);
         Assert.Equal(20, options.WebNewsRequestTimeoutSeconds);
-        Assert.Equal(3, options.WebNewsMaxFailedAttempts);
+        Assert.Equal(5, options.WebNewsMaxFailedAttempts);
         Assert.False(options.DailyHeadlinesEnabled);
         Assert.Equal("07:00", options.DailyHeadlinesTime);
     }

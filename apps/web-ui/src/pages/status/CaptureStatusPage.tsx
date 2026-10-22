@@ -46,7 +46,7 @@ const SEGMENT_LABEL: Record<CaptureSegmentState, string> = {
   "no-session": "Sin grabación (conexión caída o reconectando)",
 };
 
-// The "google-news" row has no audio session — each half-hour segment is one search cycle, not a
+// The "google-news" row has no audio session — each quarter-hour segment is one search cycle, not a
 // recording stretch, so it gets its own wording for the same captured/gap/no-session states.
 const WEB_NEWS_SEGMENT_LABEL: Record<CaptureSegmentState, string> = {
   captured: "Ciclo completo",

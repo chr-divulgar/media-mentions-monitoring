@@ -1,6 +1,6 @@
 ﻿{
   "segmentationIntervalSeconds": 30,
-  "discreteWorkerIntervalSeconds": 1800,
+  "discreteWorkerIntervalSeconds": 900,
   "pluginProfilesFilePath": "stage/plugin-profiles.json",
   "continuousMediaAllowList": "radio,television",
   "captureMaxDegreeOfParallelism": 64,
@@ -46,7 +46,7 @@
   "webNewsKeywordsPerQuery": 8,
   "webNewsMaxConcurrency": 4,
   "webNewsRequestTimeoutSeconds": 20,
-  "webNewsMaxFailedAttempts": 3,
+  "webNewsMaxFailedAttempts": 5,
   "dailyHeadlinesEnabled": false,
   "dailyHeadlinesTime": "07:00",
   "connectivityCheckEnabled": true,
