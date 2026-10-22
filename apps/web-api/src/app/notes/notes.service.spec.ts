@@ -2,7 +2,11 @@ import * as fs from 'fs';
 import { NotesService } from './notes.service';
 
 // Minimal in-memory stand-ins for the two Mongo repositories the service reads and writes.
-function build(alert: Record<string, unknown> | null, existingNote: Record<string, unknown> | null = null) {
+function build(
+  alert: Record<string, unknown> | null,
+  existingNote: Record<string, unknown> | null = null,
+  clients: unknown = {},
+) {
   const saved: Record<string, unknown>[] = [];
   const noteRepo = {
     findOne: jest.fn().mockResolvedValue(existingNote),
@@ -18,7 +22,7 @@ function build(alert: Record<string, unknown> | null, existingNote: Record<strin
     getMongoRepository: (entity: { name: string }) =>
       entity.name === 'WorkerAlert' ? workerAlertRepo : noteRepo,
   };
-  const service = new NotesService(dataSource as never, {} as never, {} as never);
+  const service = new NotesService(dataSource as never, clients as never, {} as never);
   return { service, saved };
 }
 
@@ -30,6 +34,7 @@ const alert = {
   text: 'Primer párrafo.',
   platform: 'Runrun',
   clientName: 'Ecopetrol',
+  words: ['Ecopetrol', 'Cenit'],
   startTime: new Date('2026-10-06T00:26:28Z'),
 };
 
@@ -61,6 +66,8 @@ describe('internet notes', () => {
         date: '2026-10-05T19:26:28-05:00',
         // The PDF is filed under the client's folder.
         client: 'Ecopetrol',
+        // The words the alert matched come out highlighted in yellow in the PDF.
+        keywords: ['Ecopetrol', 'Cenit'],
       });
       expect(preview).toMatchObject({
         previewId: 'p1',
@@ -68,6 +75,31 @@ describe('internet notes', () => {
         note: { title: alert.title, summary: alert.text, program: 'Runrun', link: alert.url },
       });
       expect(saved).toHaveLength(0);
+    });
+
+    it('highlights the client\'s own keywords when the alert has no matched words (one left for manual review)', async () => {
+      fetchMock.mockResolvedValue(workerReply({ previewId: 'p1', link: 'https://files.test/x.pdf' }));
+      const clients = {
+        getClients: jest.fn().mockResolvedValue([
+          { name: 'Otro', words: [{ value: 'Nada' }] },
+          { name: 'Ecopetrol', words: [{ value: 'Ecopetrol S.A.' }, { value: ' ' }, { value: 'Cenit' }] },
+        ]),
+      };
+      const { service } = build({ ...alert, words: [] }, null, clients);
+
+      await service.previewInternetNote(ALERT_ID);
+
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).keywords).toEqual(['Ecopetrol S.A.', 'Cenit']);
+    });
+
+    it('still prints when the client\'s keywords cannot be read', async () => {
+      fetchMock.mockResolvedValue(workerReply({ previewId: 'p1', link: 'https://files.test/x.pdf' }));
+      const clients = { getClients: jest.fn().mockRejectedValue(new Error('mongo down')) };
+      const { service } = build({ ...alert, words: [] }, null, clients);
+
+      await service.previewInternetNote(ALERT_ID);
+
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).keywords).toEqual([]);
     });
 
     it('offers what the user already edited on an earlier pass', async () => {

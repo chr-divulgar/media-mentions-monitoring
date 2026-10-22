@@ -91,6 +91,8 @@ public sealed class HeadlessBrowserPrintTests : IAsyncLifetime
                     "/known" => $"<html><body>{Article}<div id=\"didomi-popup\" style=\"position:fixed;inset:0;background:#000;z-index:99999\">" +
                                 "<button id=\"didomi-notice-agree-button\" onclick=\"document.getElementById('didomi-popup').remove()\">Agree and close</button></div></body></html>",
                     "/unknown" => $"<html><body style=\"overflow:hidden\">{Article}<div class=\"x\" style=\"position:fixed;inset:0;background:#000;z-index:99999\">Aceptas las cookies de 1044 socios</div></body></html>",
+                    "/words" => "<html><body><article id=\"nota\"><h1>Ecopetrol y el árbol</h1><p>El ARBOL de Ecopetrol S.A. creció, dijo la ecopetrolera.</p>" +
+                                "<script id=\"s\">var ecopetrol = 'arbol';</script></article></body></html>",
                     "/hang" => $"<html><body>{Article}<img src=\"/slow\"></body></html>",
                     _ => $"<html><body>{Article}</body></html>",
                 };
@@ -120,6 +122,49 @@ public sealed class HeadlessBrowserPrintTests : IAsyncLifetime
         if (browser is null) return; // no Chromium on this machine
 
         Assert.Equal("article", await CenterOfPageAsync(route));
+    }
+
+    private static readonly string[] Terms = ["ecopetrol", "arbol", "S.A."];
+
+    [Fact]
+    public async Task Keywords_are_highlighted_in_yellow_like_a_browser_search_ignoring_case_and_accents()
+    {
+        if (browser is null) return;
+
+        var result = await browser.WithPreparedPageAsync(
+            baseUrl + "/words",
+            async page =>
+            {
+                var count = await HeadlessBrowser.HighlightTermsAsync(page, Terms);
+                var marks = await page.EvaluateAsync<string[]>(
+                    "() => [...document.querySelectorAll('mark')].map(m => m.textContent + '|' + getComputedStyle(m).backgroundColor)");
+                var script = await page.EvaluateAsync<string>("() => document.getElementById('s').textContent");
+                return (count, marks, script);
+            },
+            CancellationToken.None);
+
+        // Ecopetrol (title), árbol, ARBOL, Ecopetrol, S.A., the "ecopetrol" inside ecopetrolera: a substring match, as a find does.
+        Assert.Equal(6, result.count);
+        Assert.Equal(6, result.marks.Length);
+        Assert.All(result.marks, mark => Assert.EndsWith("|rgb(255, 255, 0)", mark));
+        Assert.Contains("árbol|rgb(255, 255, 0)", result.marks);
+        Assert.Contains("ARBOL|rgb(255, 255, 0)", result.marks);
+        Assert.Contains("S.A.|rgb(255, 255, 0)", result.marks);
+        // The text of the page is the same and the script was left alone.
+        Assert.Equal("var ecopetrol = 'arbol';", result.script);
+    }
+
+    [Fact]
+    public async Task Highlighting_with_no_terms_changes_nothing_and_a_pdf_is_printed_with_them()
+    {
+        if (browser is null) return;
+
+        var none = await browser.WithPreparedPageAsync(baseUrl + "/words", page => HeadlessBrowser.HighlightTermsAsync(page, []), CancellationToken.None);
+        Assert.Equal(0, none);
+
+        var pdf = Path.Combine(folder, "words.pdf");
+        Assert.True(await browser.PrintPdfAsync(baseUrl + "/words", pdf, Terms));
+        Assert.True(new FileInfo(pdf).Length > 1000);
     }
 
     [Fact]

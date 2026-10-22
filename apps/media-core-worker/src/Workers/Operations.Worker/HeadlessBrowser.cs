@@ -14,8 +14,10 @@ public interface IBrowserPageReader
 /// <summary>Prints a page to PDF the way a real browser does (the permanent copy of a web note, RQ-014).</summary>
 public interface IBrowserPagePrinter
 {
-    // False when the page could not be loaded or never got past an anti-bot challenge.
-    Task<bool> PrintPdfAsync(string url, string outputPath, CancellationToken cancellationToken = default);
+    // False when the page could not be loaded or never got past an anti-bot challenge. highlightTerms are marked in
+    // yellow in the printed page, the way a browser's find does.
+    Task<bool> PrintPdfAsync(
+        string url, string outputPath, IReadOnlyList<string>? highlightTerms = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -129,7 +131,8 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
         }
     }
 
-    public async Task<bool> PrintPdfAsync(string url, string outputPath, CancellationToken cancellationToken = default)
+    public async Task<bool> PrintPdfAsync(
+        string url, string outputPath, IReadOnlyList<string>? highlightTerms = null, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -137,6 +140,11 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
                 url,
                 async page =>
                 {
+                    if (highlightTerms is { Count: > 0 })
+                    {
+                        await HighlightTermsAsync(page, highlightTerms).ConfigureAwait(false);
+                    }
+
                     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
                     await page.PdfAsync(new PagePdfOptions { Path = outputPath, Format = "A4", PrintBackground = true }).ConfigureAwait(false);
                     return true;
@@ -193,6 +201,89 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
             pageGate.Release();
         }
     }
+
+    // Marks every occurrence of the terms in the page's text in yellow, as a browser's find does: any case, accents
+    // ignored ("arbol" finds "Árbol"), as part of a word too. Script and style text, form fields and what is already
+    // marked are left alone. Returns how many marks were made (capped, so a one-letter term cannot freeze a page).
+    internal static async Task<int> HighlightTermsAsync(IPage page, IReadOnlyList<string> terms)
+    {
+        var pattern = HighlightPattern(terms);
+        return pattern is null ? 0 : await page.EvaluateAsync<int>(HighlightScript, pattern).ConfigureAwait(false);
+    }
+
+    private const string AccentedForms = "aàáâãäåāăą|eèéêëēėę|iìíîïīį|oòóôõöøō|uùúûüūů|nñ|cçćč";
+
+    // One JavaScript regular expression for all the terms (longest first, so "Ecopetrol S.A." wins over "Ecopetrol"):
+    // each letter also matches its accented forms and spaces match any run of whitespace. Null when there is no term.
+    internal static string? HighlightPattern(IReadOnlyList<string> terms)
+    {
+        var alternatives = new List<string>();
+        foreach (var term in terms.Where(term => !string.IsNullOrWhiteSpace(term)).Select(term => term.Trim()).Distinct().OrderByDescending(term => term.Length))
+        {
+            var pattern = new System.Text.StringBuilder();
+            foreach (var character in term.Normalize(System.Text.NormalizationForm.FormD)
+                         .Where(c => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark))
+            {
+                var forms = AccentedForms.Split('|').FirstOrDefault(group => group[0] == char.ToLowerInvariant(character));
+                if (char.IsWhiteSpace(character))
+                {
+                    pattern.Append(@"\s+");
+                }
+                else if (forms is not null)
+                {
+                    pattern.Append('[').Append(forms).Append(forms.ToUpperInvariant()).Append(']');
+                }
+                else
+                {
+                    // Only the characters a pattern gives a meaning to are escaped (JavaScript's unicode mode rejects any other escape).
+                    pattern.Append(@"\^$.*+?()[]{}|/".Contains(character) ? "\\" : string.Empty).Append(character);
+                }
+            }
+
+            if (pattern.Length > 0)
+            {
+                alternatives.Add(pattern.ToString());
+            }
+        }
+
+        return alternatives.Count == 0 ? null : string.Join('|', alternatives);
+    }
+
+    private const string HighlightScript = @"
+        (pattern) => {
+          const finder = new RegExp(pattern, 'giu');
+          const tester = new RegExp(pattern, 'iu');
+          const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT', 'MARK', 'TEMPLATE']);
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+            acceptNode: node => node.parentElement && !skip.has(node.parentElement.tagName) && tester.test(node.nodeValue)
+              ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+          });
+          const nodes = [];
+          while (walker.nextNode()) nodes.push(walker.currentNode);
+
+          let marks = 0;
+          for (const node of nodes) {
+            if (marks >= 2000) break;
+            const text = node.nodeValue;
+            const fragment = document.createDocumentFragment();
+            let last = 0;
+            finder.lastIndex = 0;
+            let match;
+            while ((match = finder.exec(text)) && match[0].length > 0) {
+              fragment.append(text.slice(last, match.index));
+              const mark = document.createElement('mark');
+              mark.textContent = match[0];
+              mark.style.cssText = 'background:#ffff00 !important;color:#000 !important;padding:0 !important;-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;';
+              fragment.append(mark);
+              last = match.index + match[0].length;
+              marks++;
+            }
+            fragment.append(text.slice(last));
+            node.parentNode.replaceChild(fragment, node);
+          }
+          return marks;
+        }
+        ";
 
     // Accepts the cookie wall if there is one (a few seconds at most: many appear after the page has loaded), then hides
     // what remains of it and of anything fixed to the screen, and scrolls through the page so lazy images load. Every

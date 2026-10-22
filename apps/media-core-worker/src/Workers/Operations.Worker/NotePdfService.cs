@@ -25,6 +25,9 @@ public sealed class NotePdfPreviewRequest
 
     // Left out, Colombia: an outlet found through the news search has no country of its own.
     public string? Country { get; set; }
+
+    // The words the alert matched: they come out highlighted in yellow in the PDF.
+    public List<string>? Keywords { get; set; }
 }
 
 /// <summary>200 body of POST /notes/pdf/preview.</summary>
@@ -107,14 +110,21 @@ public sealed partial class NotePdfService
 
     public async Task<NotePdfPreviewResult> PreviewAsync(
         string outlet, string title, string url, DateTimeOffset date, string? client = null, string? country = null,
-        CancellationToken cancellationToken = default)
+        IEnumerable<string>? keywords = null, CancellationToken cancellationToken = default)
     {
         PurgeExpired();
 
         var previewId = Guid.NewGuid().ToString("N");
         var localPath = Path.Combine(scratchDirectory, $"{previewId}.pdf");
 
-        if (!await printer.PrintPdfAsync(url, localPath, cancellationToken).ConfigureAwait(false))
+        // Blank words and repeats (in any case) would only mark twice, or everything.
+        var highlight = (keywords ?? [])
+            .Select(keyword => keyword?.Trim() ?? string.Empty)
+            .Where(keyword => keyword.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!await printer.PrintPdfAsync(url, localPath, highlight, cancellationToken).ConfigureAwait(false))
         {
             TryDelete(localPath);
             return new NotePdfPreviewResult(null, null, "No se pudo generar el PDF de la página (no cargó o está bloqueada).");

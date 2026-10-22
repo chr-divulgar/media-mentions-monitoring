@@ -100,6 +100,28 @@ public sealed class NotePdfServiceTests
     }
 
     [Fact]
+    public async Task Preview_asks_the_printer_to_highlight_the_keywords()
+    {
+        var printer = new FakePrinter();
+
+        await Build(printer, new FakeStorage()).PreviewAsync(
+            "Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol", keywords: ["Ecopetrol", "  ", "Cenit", "ecopetrol"]);
+
+        // Blank terms and repeats (any case) are dropped: they would only highlight twice or everything.
+        Assert.Equal(["Ecopetrol", "Cenit"], printer.HighlightedTerms);
+    }
+
+    [Fact]
+    public async Task Preview_without_keywords_highlights_nothing()
+    {
+        var printer = new FakePrinter();
+
+        await Build(printer, new FakeStorage()).PreviewAsync("Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol");
+
+        Assert.Empty(printer.HighlightedTerms ?? []);
+    }
+
+    [Fact]
     public async Task Preview_keeps_the_printed_file_available_for_the_viewer()
     {
         var sut = Build(new FakePrinter(), new FakeStorage());
@@ -281,9 +303,13 @@ public sealed class NotePdfServiceTests
         public string? PrintedUrl { get; private set; }
         public string LastPath { get; private set; } = string.Empty;
 
-        public Task<bool> PrintPdfAsync(string url, string outputPath, CancellationToken cancellationToken = default)
+        public IReadOnlyList<string>? HighlightedTerms { get; private set; }
+
+        public Task<bool> PrintPdfAsync(
+            string url, string outputPath, IReadOnlyList<string>? highlightTerms = null, CancellationToken cancellationToken = default)
         {
             PrintedUrl = url;
+            HighlightedTerms = highlightTerms;
             LastPath = outputPath;
             if (Succeeds)
             {

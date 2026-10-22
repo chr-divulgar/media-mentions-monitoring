@@ -61,10 +61,33 @@ export class NotesService {
         date: published.format(),
         // The PDF is filed under the client's folder: {country}/{client}/{year}/{month}/{day}.
         client: alert.clientName,
+        // Marked in yellow in the PDF, as when searching the page in a browser.
+        keywords: await this.highlightTerms(alert),
       },
     );
 
     return this.previewDraft(alert, alertId, title, preview);
+  }
+
+  /**
+   * The words to highlight in the PDF: the ones the alert matched. An alert left for manual review (the page
+   * could not be read) has none, so the client's own keywords are used instead. Never fails the preview.
+   */
+  private async highlightTerms(alert: WorkerAlert): Promise<string[]> {
+    const matched = (alert.words ?? []).filter((word) => word?.trim());
+    if (matched.length > 0) {
+      return matched;
+    }
+    try {
+      const clients = await this.clientsService.getClients();
+      const client = clients.find((candidate) => candidate.name === alert.clientName);
+      return (client?.words ?? [])
+        .map((word) => word.value?.trim())
+        .filter((value): value is string => !!value);
+    } catch (error) {
+      console.error('Could not read the client keywords to highlight the PDF:', error);
+      return [];
+    }
   }
 
   /**
