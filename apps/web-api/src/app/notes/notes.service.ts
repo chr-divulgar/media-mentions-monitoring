@@ -64,6 +64,59 @@ export class NotesService {
       },
     );
 
+    return this.previewDraft(alert, alertId, title, preview);
+  }
+
+  /**
+   * The same preview from a PDF the user made themselves (the page could not be printed or verified, so the alert
+   * is left for manual review). The worker keeps the file as the scratch preview and says which link it will have;
+   * saving the note then archives it exactly like a printed one.
+   */
+  async uploadInternetNotePdf(
+    alertId: string,
+    pdf: Buffer,
+  ): Promise<InternetNotePreviewDto> {
+    if (!pdf?.length) {
+      throw new Error('No se recibió ningún PDF.');
+    }
+    const alert = await this.loadInternetAlert(alertId);
+    const title = alert.title?.trim() || `nota-${alertId}`;
+
+    const query = new URLSearchParams({
+      outlet: alert.platform ?? '',
+      title,
+      date: this.publishedAt(alert).format(),
+      client: alert.clientName ?? '',
+    });
+    const workerUrl =
+      process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
+    const response = await fetch(`${workerUrl}/notes/pdf/upload?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: pdf as unknown as BodyInit, // Node sends a Buffer as is; the DOM typings do not list it
+      signal: AbortSignal.timeout(NotesService.PDF_TIMEOUT_MS),
+    });
+    const parsed = (await response.json().catch(() => ({}))) as {
+      previewId: string;
+      link: string;
+      message?: string;
+    };
+    if (!response.ok) {
+      throw new Error(
+        parsed.message ?? `El servicio de PDF respondió ${response.status}`,
+      );
+    }
+    return this.previewDraft(alert, alertId, title, parsed);
+  }
+
+  // What the editor opens with: the PDF's preview and the note as the user left it on an earlier pass, else as the
+  // alert knows it.
+  private async previewDraft(
+    alert: WorkerAlert,
+    alertId: string,
+    title: string,
+    preview: { previewId: string; link: string },
+  ): Promise<InternetNotePreviewDto> {
     const existing = await this.noteRepo.findOne({
       where: { alert_id: alertId },
     });

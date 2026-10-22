@@ -181,6 +181,75 @@ public sealed class NotePdfServiceTests
         Assert.Contains("expiró", result.Error);
     }
 
+    private static byte[] Pdf(int extraBytes = 0) =>
+        [.. System.Text.Encoding.ASCII.GetBytes("%PDF-1.7 1 0 obj<<>>endobj %%EOF"), .. new byte[extraBytes]];
+
+    [Fact]
+    public async Task A_pdf_made_by_hand_is_previewed_and_filed_like_a_printed_one()
+    {
+        // The page could not be printed (blocked), so the user made the PDF themselves and uploads it.
+        var storage = new FakeStorage { Existing = ["forbes-01-otra-nota.pdf"] };
+        var printer = new FakePrinter { Succeeds = false };
+        var sut = Build(printer, storage);
+
+        var preview = await sut.PreviewFromFileAsync(Pdf(), "Forbes", "Ecopetrol culmina", Date, "Ecopetrol");
+
+        Assert.True(preview.Succeeded);
+        Assert.Equal("https://files.test/colombia/ecopetrol/2026/10/06/forbes-02-ecopetrol-culmina.pdf", preview.Link);
+        Assert.Null(printer.PrintedUrl);
+        Assert.Null(storage.UploadedTo); // nothing reaches the archive until the note is saved
+        Assert.True(File.Exists(sut.FindPreviewFile(preview.PreviewId!)!));
+
+        var saved = await sut.CommitAsync(preview.PreviewId!);
+
+        Assert.Equal(preview.Link, saved.Link);
+        Assert.Equal($"{Folder}/forbes-02-ecopetrol-culmina.pdf", storage.UploadedTo);
+    }
+
+    [Fact]
+    public async Task A_pdf_made_by_hand_keeps_the_exact_bytes_that_were_uploaded()
+    {
+        var sut = Build(new FakePrinter(), new FakeStorage());
+        var bytes = Pdf(1000);
+
+        var preview = await sut.PreviewFromFileAsync(bytes, "Forbes", "Titular", Date, "Ecopetrol");
+
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(sut.FindPreviewFile(preview.PreviewId!)!));
+    }
+
+    [Fact]
+    public async Task A_file_that_is_not_a_pdf_is_refused_with_a_message_and_kept_nowhere()
+    {
+        var sut = Build(new FakePrinter(), new FakeStorage());
+
+        var preview = await sut.PreviewFromFileAsync("<html>no soy un pdf</html>"u8.ToArray(), "Forbes", "T", Date, "Ecopetrol");
+
+        Assert.False(preview.Succeeded);
+        Assert.Contains("PDF", preview.Error);
+    }
+
+    [Fact]
+    public async Task A_pdf_over_the_size_limit_is_refused()
+    {
+        var sut = Build(new FakePrinter(), new FakeStorage());
+
+        var preview = await sut.PreviewFromFileAsync(Pdf(NotePdfService.MaxUploadBytes), "Forbes", "T", Date, "Ecopetrol");
+
+        Assert.False(preview.Succeeded);
+        Assert.Contains("25", preview.Error);
+    }
+
+    [Fact]
+    public async Task A_pdf_made_by_hand_fails_cleanly_when_the_archive_cannot_be_listed()
+    {
+        var sut = Build(new FakePrinter(), new FakeStorage { ListFails = true });
+
+        var preview = await sut.PreviewFromFileAsync(Pdf(), "Forbes", "T", Date, "Ecopetrol");
+
+        Assert.False(preview.Succeeded);
+        Assert.Contains("servidor", preview.Error);
+    }
+
     [Fact]
     public async Task Preview_reports_a_print_failure_and_keeps_nothing()
     {

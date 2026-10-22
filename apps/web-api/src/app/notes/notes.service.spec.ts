@@ -93,6 +93,52 @@ describe('internet notes', () => {
     });
   });
 
+  describe('uploadInternetNotePdf', () => {
+    const pdf = Buffer.from('%PDF-1.7 hecho a mano');
+
+    it('sends the PDF the user made to the worker as the preview and returns the same draft as an automatic one', async () => {
+      fetchMock.mockResolvedValue(workerReply({ previewId: 'p9', link: 'https://files.test/runrun-01-x.pdf' }));
+      const { service, saved } = build(alert, { index: '12', title: 'Mi titular' });
+
+      const preview = await service.uploadInternetNotePdf(ALERT_ID, pdf);
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toMatch(/\/notes\/pdf\/upload\?/);
+      const query = new URL(url).searchParams;
+      expect(Object.fromEntries(query)).toMatchObject({
+        outlet: 'Runrun',
+        title: alert.title,
+        date: '2026-10-05T19:26:28-05:00',
+        client: 'Ecopetrol',
+      });
+      expect(init.method).toBe('POST');
+      expect(init.headers).toMatchObject({ 'Content-Type': 'application/pdf' });
+      expect(init.body).toBe(pdf);
+      expect(preview).toMatchObject({
+        previewId: 'p9',
+        pdfLink: 'https://files.test/runrun-01-x.pdf',
+        note: { index: '12', title: 'Mi titular', link: alert.url },
+      });
+      expect(saved).toHaveLength(0);
+    });
+
+    it('surfaces the worker message when the file is not a usable PDF', async () => {
+      fetchMock.mockResolvedValue(workerReply({ message: 'El archivo no es un PDF.' }, false, 502));
+      const { service } = build(alert);
+
+      await expect(service.uploadInternetNotePdf(ALERT_ID, pdf)).rejects.toThrow('El archivo no es un PDF.');
+    });
+
+    it('rejects an empty upload and an alert that is not an internet one', async () => {
+      const { service } = build(alert);
+      await expect(service.uploadInternetNotePdf(ALERT_ID, Buffer.alloc(0))).rejects.toThrow('PDF');
+
+      const radio = build({ ...alert, media: 'radio' }).service;
+      await expect(radio.uploadInternetNotePdf(ALERT_ID, pdf)).rejects.toThrow('no es una nota de internet');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('saveInternetNote', () => {
     const dto = { alertId: ALERT_ID, previewId: 'p1', index: '10', program: 'Runrun', title: '  Mi titular ', summary: 'Resumen' };
 

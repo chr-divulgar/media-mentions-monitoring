@@ -26,6 +26,15 @@ async function bootstrap() {
     bodyLimit: 10485760, // 10 MB
     connectionTimeout: 600000, // 10 minutes
   });
+  // A PDF made by hand for an internet note (InternetNoteModal): its bytes are the body, up to 25 MB. The rest of the
+  // API keeps the 10 MB limit.
+  fastifyAdapter
+    .getInstance()
+    .addContentTypeParser(
+      'application/pdf',
+      { parseAs: 'buffer', bodyLimit: 26214400 },
+      (_request, body, done) => done(null, body),
+    );
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     fastifyAdapter,

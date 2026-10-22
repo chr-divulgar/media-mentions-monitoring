@@ -71,6 +71,9 @@ public sealed record NotePdfResult(string? Link, string? Error)
 /// </summary>
 public sealed partial class NotePdfService
 {
+    // A PDF the user made by hand and uploads (a page the browser could not print): bigger than this is not a note.
+    public const int MaxUploadBytes = 25 * 1024 * 1024;
+
     private const int MaxSlugLength = 120;
     private const int MaxOutletSlugLength = 40;
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromHours(2);
@@ -108,8 +111,6 @@ public sealed partial class NotePdfService
     {
         PurgeExpired();
 
-        var outletSlug = ToFileSlug(outlet, MaxOutletSlugLength, "sin-fuente");
-        var titleSlug = ToFileSlug(title);
         var previewId = Guid.NewGuid().ToString("N");
         var localPath = Path.Combine(scratchDirectory, $"{previewId}.pdf");
 
@@ -118,6 +119,46 @@ public sealed partial class NotePdfService
             TryDelete(localPath);
             return new NotePdfPreviewResult(null, null, "No se pudo generar el PDF de la página (no cargó o está bloqueada).");
         }
+
+        return await RegisterPreviewAsync(previewId, localPath, outlet, title, date, client, country, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The same preview, from a PDF the user made themselves (the page could not be printed: it blocks the browser or
+    /// cannot be verified). The file takes the place of the printed one; from here on the flow is the same, so nothing
+    /// reaches the archive until the note is saved, and it is named and numbered the same way.
+    /// </summary>
+    public async Task<NotePdfPreviewResult> PreviewFromFileAsync(
+        byte[] pdf, string outlet, string title, DateTimeOffset date, string? client = null, string? country = null,
+        CancellationToken cancellationToken = default)
+    {
+        PurgeExpired();
+
+        if (pdf.Length > MaxUploadBytes)
+        {
+            return new NotePdfPreviewResult(null, null, "El PDF pesa más de 25 MB.");
+        }
+
+        if (!pdf.AsSpan().StartsWith("%PDF-"u8))
+        {
+            return new NotePdfPreviewResult(null, null, "El archivo no es un PDF.");
+        }
+
+        var previewId = Guid.NewGuid().ToString("N");
+        var localPath = Path.Combine(scratchDirectory, $"{previewId}.pdf");
+        Directory.CreateDirectory(scratchDirectory);
+        await File.WriteAllBytesAsync(localPath, pdf, cancellationToken).ConfigureAwait(false);
+
+        return await RegisterPreviewAsync(previewId, localPath, outlet, title, date, client, country, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Names the file in the archive and remembers the scratch PDF until the note is saved (or it expires).
+    private async Task<NotePdfPreviewResult> RegisterPreviewAsync(
+        string previewId, string localPath, string outlet, string title, DateTimeOffset date, string? client, string? country,
+        CancellationToken cancellationToken)
+    {
+        var outletSlug = ToFileSlug(outlet, MaxOutletSlugLength, "sin-fuente");
+        var titleSlug = ToFileSlug(title);
 
         var target = await ChooseTargetAsync(outletSlug, titleSlug, date, client, country, cancellationToken).ConfigureAwait(false);
         if (target.Error is not null)

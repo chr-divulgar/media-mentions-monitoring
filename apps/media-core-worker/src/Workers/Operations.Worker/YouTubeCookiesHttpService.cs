@@ -210,6 +210,12 @@ public sealed class YouTubeCookiesHttpService : IHostedService
                 return;
             }
 
+            if (method == "POST" && path == "/notes/pdf/upload")
+            {
+                await HandleNotePdfUploadRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
             if (method == "GET" && path == "/notes/pdf/preview")
             {
                 await HandleNotePdfPreviewFileRequestAsync(context).ConfigureAwait(false);
@@ -535,6 +541,43 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         if (!result.Succeeded)
         {
             await SendJsonResponse(context, 502, new AudioSegmentErrorResponse { Message = result.Error ?? "No se pudo generar el PDF." }).ConfigureAwait(false);
+            return;
+        }
+
+        await SendJsonResponse(context, 200, new NotePdfPreviewResponse { PreviewId = result.PreviewId!, Link = result.Link! }).ConfigureAwait(false);
+    }
+
+    // A PDF the user made by hand: the bytes are the body, what the note is about is in the query.
+    private async Task HandleNotePdfUploadRequestAsync(HttpListenerContext context)
+    {
+        if (!await EnsureNotePdfConfiguredAsync(context).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var query = context.Request.QueryString;
+        if (string.IsNullOrWhiteSpace(query["title"])
+            || !DateTimeOffset.TryParse(query["date"], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date))
+        {
+            await SendJsonResponse(context, 400, new AudioSegmentErrorResponse { Message = "Missing or invalid query parameters (title and date are required)." }).ConfigureAwait(false);
+            return;
+        }
+
+        // One byte over the limit is enough to know it is too big: never read an unbounded body.
+        using var body = new MemoryStream();
+        var buffer = new byte[81920];
+        int read;
+        while (body.Length <= NotePdfService.MaxUploadBytes
+               && (read = await context.Request.InputStream.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+        {
+            body.Write(buffer, 0, read);
+        }
+
+        var result = await notePdfService!.PreviewFromFileAsync(
+            body.ToArray(), query["outlet"] ?? string.Empty, query["title"]!, date, query["client"], query["country"]).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            await SendJsonResponse(context, 502, new AudioSegmentErrorResponse { Message = result.Error ?? "No se pudo guardar el PDF." }).ConfigureAwait(false);
             return;
         }
 

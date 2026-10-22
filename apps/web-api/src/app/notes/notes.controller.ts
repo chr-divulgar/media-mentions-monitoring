@@ -4,6 +4,7 @@ import {
   Body,
   Get,
   Param,
+  Query,
   StreamableFile,
   HttpException,
   HttpStatus,
@@ -42,6 +43,19 @@ export class NotesController {
   async previewInternetNote(@Body() dto: CreateInternetPdfDto) {
     try {
       return await this.notesService.previewInternetNote(dto.alertId);
+    } catch (error) {
+      throw this.internetNoteError(error);
+    }
+  }
+
+  // A PDF the user made by hand when the page could not be printed: the body is the file itself.
+  @Post('internet-pdf/upload')
+  async uploadInternetNotePdf(
+    @Query('alertId') alertId: string,
+    @Body() pdf: Buffer,
+  ) {
+    try {
+      return await this.notesService.uploadInternetNotePdf(alertId, pdf);
     } catch (error) {
       throw this.internetNoteError(error);
     }
