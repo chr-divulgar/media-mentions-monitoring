@@ -34,6 +34,34 @@ public sealed class PlatformErrorNotifierTests : IDisposable
             users);
     }
 
+    // A sidecar that does not answer makes HttpClient throw TaskCanceledException (its own timeout): that is a
+    // disconnected WhatsApp, not a reason for the whole worker — and the capture with it — to stop.
+    private sealed class TimingOutHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.");
+    }
+
+    [Fact]
+    public async Task Watchdog_reads_a_sidecar_that_times_out_as_disconnected_instead_of_throwing()
+    {
+        var sut = new WhatsAppConnectionWatchdog(
+            new OperationsWorkerOptions(), new HttpClient(new TimingOutHandler()), new CountingNotifier(), NullLogger<WhatsAppConnectionWatchdog>.Instance);
+
+        Assert.False(await sut.IsConnectedAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Watchdog_still_stops_when_the_worker_is_stopping()
+    {
+        var sut = new WhatsAppConnectionWatchdog(
+            new OperationsWorkerOptions(), new HttpClient(new TimingOutHandler()), new CountingNotifier(), NullLogger<WhatsAppConnectionWatchdog>.Instance);
+        using var stopping = new CancellationTokenSource();
+        await stopping.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.IsConnectedAsync(stopping.Token));
+    }
+
     [Fact]
     public void Watchdog_alerts_once_per_outage_after_the_grace_period()
     {

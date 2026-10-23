@@ -79,7 +79,7 @@ public sealed class WhatsAppConnectionWatchdog : BackgroundService
         return true;
     }
 
-    private async Task<bool> IsConnectedAsync(CancellationToken cancellationToken)
+    internal async Task<bool> IsConnectedAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -96,9 +96,11 @@ public sealed class WhatsAppConnectionWatchdog : BackgroundService
                 .ConfigureAwait(false);
             return json.RootElement.TryGetProperty("status", out var status) && status.GetString() == "connected";
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        // Not "is not OperationCanceledException": the HttpClient's own timeout is a TaskCanceledException, and letting it
+        // out of a BackgroundService stops the whole host (and the capture with it). Only a real shutdown passes through.
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
-            logger.LogDebug(exception, "[WhatsAppConnectionWatchdog] Sidecar /status unreachable.");
+            logger.LogDebug("[WhatsAppConnectionWatchdog] Sidecar /status unreachable.");
             return false;
         }
     }
