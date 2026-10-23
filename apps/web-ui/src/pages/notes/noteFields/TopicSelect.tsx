@@ -68,12 +68,14 @@ const TopicSelect: React.FC<TopicSelectProps> = ({ value, onChange, placeholder,
         <>
           {menu}
           {canAdd && (
-            <>
+            // Pressing the button must not take the focus from the search box first: that blur cleared the search,
+            // the button disappeared with it and the click never arrived (nothing was added).
+            <div onMouseDown={(event) => event.preventDefault()}>
               <Divider style={{ margin: "4px 0" }} />
               <Button type="link" icon={<PlusOutlined />} loading={adding} onClick={add} style={{ width: "100%", textAlign: "left" }}>
                 Agregar «{typed}»
               </Button>
-            </>
+            </div>
           )}
         </>
       )}

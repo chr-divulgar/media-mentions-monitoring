@@ -88,6 +88,29 @@ public sealed class HtmlArticleReaderTests
         Assert.Equal("El barril de petroleo subió esta semana.", content.FirstParagraph);
     }
 
+    [Theory]
+    // Regression: TradingView's lead "Ecopetrol S.A. (BVC:ECOPETROL; NYSE:EC) anunció hoy..." was cut to "Ecopetrol S.A.".
+    [InlineData(
+        "Ecopetrol S.A. (BVC:ECOPETROL; NYSE:EC) anunció hoy que su Consejo de Administración designó a Armando José Cuello. Otra frase más.",
+        "Ecopetrol S.A. (BVC:ECOPETROL; NYSE:EC) anunció hoy que su Consejo de Administración designó a Armando José Cuello.")]
+    [InlineData(
+        "La firma Grupo Sura S.A.S. Colombia reportó ganancias en el trimestre para la región. Analistas esperan más.",
+        "La firma Grupo Sura S.A.S. Colombia reportó ganancias en el trimestre para la región.")]
+    [InlineData(
+        "El Dr. García y la Sra. Pérez, de la Cía. Minera Ltda. de la región, firmaron el contrato en Bogotá. Luego hablaron.",
+        "El Dr. García y la Sra. Pérez, de la Cía. Minera Ltda. de la región, firmaron el contrato en Bogotá.")]
+    [InlineData(
+        "La producción subió 3.5 % en EE.UU. durante el mes de septiembre según la agencia. Analistas lo esperaban.",
+        "La producción subió 3.5 % en EE.UU. durante el mes de septiembre según la agencia.")]
+    public async Task ParseAsync_does_not_end_the_lead_sentence_at_an_abbreviation(string paragraph, string expected)
+    {
+        var html = $"<html><body><article><p>{paragraph}</p></article></body></html>";
+
+        var content = await HtmlArticleReader.ParseAsync(html);
+
+        Assert.Equal(expected, content.FirstParagraph);
+    }
+
     [Fact]
     public async Task ParseAsync_keeps_the_whole_paragraph_when_it_has_no_sentence_ending_punctuation()
     {

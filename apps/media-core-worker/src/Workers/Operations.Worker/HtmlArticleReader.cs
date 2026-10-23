@@ -411,11 +411,53 @@ public sealed partial class HtmlArticleReader : IArticleReader
 
     private static string CollapseWhitespace(string text) => WhitespaceRun().Replace(text, " ").Trim();
 
-    // Only the lead sentence survives — the rest is deliberately dropped to keep alerts short. An
-    // abbreviation like "Dr. García" still cuts early; that trade-off was accepted over building an
-    // abbreviation list. Text with no sentence-ending punctuation at all is left whole.
-    private static string TruncateAtFirstSentence(string text) =>
-        FirstSentence().Match(text) is { Success: true } match ? match.Value : text;
+    // Only the lead sentence survives — the rest is deliberately dropped to keep alerts short. Text with no
+    // sentence-ending punctuation at all is left whole. A period only ends the sentence when what follows starts a new
+    // one (a capital letter, an opening quote or ¿¡) and what precedes it is not an abbreviation: a single letter
+    // ("S.A.", "EE.UU.") or one of the usual ones ("Dr.", "Sra.", "Ltda."...). "Ecopetrol S.A. (BVC...) anunció..." was
+    // cut to "Ecopetrol S.A." before.
+    private static string TruncateAtFirstSentence(string text)
+    {
+        foreach (Match end in SentenceEnd().Matches(text))
+        {
+            var cut = end.Index + 1;
+            if (end.Value == "." && IsAbbreviation(text, end.Index))
+            {
+                continue;
+            }
+
+            var rest = text[cut..].TrimStart();
+            if (rest.Length == 0 || StartsSentence(rest[0]))
+            {
+                return text[..cut];
+            }
+        }
+
+        return text;
+    }
+
+    private static readonly HashSet<string> Abbreviations = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "sr", "sra", "srta", "dr", "dra", "ing", "lic", "prof", "gral", "cnel", "tte", "sgto", "mons", "pdte",
+        "ltda", "cía", "cia", "co", "inc", "corp", "av", "cra", "cl", "no", "nro", "núm", "num", "art", "pág", "pag",
+        "etc", "vs", "aprox", "dto", "depto", "sto", "sta", "ud", "uds", "vda", "km",
+    };
+
+    // The word that ends at this period: one letter (an initial, "S.A.", "EE.UU.") or a known abbreviation.
+    private static bool IsAbbreviation(string text, int periodIndex)
+    {
+        var start = periodIndex;
+        while (start > 0 && char.IsLetter(text[start - 1]))
+        {
+            start--;
+        }
+
+        var word = text[start..periodIndex];
+        return word.Length == 1 || (word.Length == 2 && word.All(char.IsUpper)) || Abbreviations.Contains(word);
+    }
+
+    private static bool StartsSentence(char character) =>
+        char.IsUpper(character) || char.IsDigit(character) || character is '"' or '“' or '«' or '¿' or '¡' or '\'' or '‘';
 
     // JSON-LD news markup is sometimes a single object, sometimes an array of them, and sometimes
     // wrapped in a top-level "@graph" array — this walks all three shapes looking for one string
@@ -464,8 +506,9 @@ public sealed partial class HtmlArticleReader : IArticleReader
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRun();
 
-    [GeneratedRegex(@"^.*?[.!?](?=\s|$)", RegexOptions.Singleline)]
-    private static partial Regex FirstSentence();
+    // A sentence-ending mark followed by a space or the end of the text.
+    [GeneratedRegex(@"[.!?](?=\s|$)")]
+    private static partial Regex SentenceEnd();
 
     [GeneratedRegex(@"\b(de|la|el|en|que|y|los|las|un|una|del|con|por|para)\b", RegexOptions.IgnoreCase)]
     private static partial Regex StopwordRun();
