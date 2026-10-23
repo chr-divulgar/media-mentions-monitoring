@@ -20,6 +20,7 @@ import * as path from 'path';
 import { ClientsService } from '../clients/clients.service';
 import { WhatsAppService } from '../settings/whatsapp.service';
 import { noteMediaKind } from '../video/video.helpers';
+import { buildDailyReport, dailyReportFileName } from './daily-report';
 import * as fs from 'fs';
 
 @Injectable()
@@ -544,6 +545,41 @@ export class NotesService {
       minDate: minNote?.date ?? null,
       maxDate: maxNote?.date ?? null,
     };
+  }
+
+  /**
+   * The daily news report of a client (Word): its internet notes of the range, grouped by subtopic, with the
+   * client's logo and indicators. Throws when there is no note to report (the message is for the user).
+   */
+  async dailyReport(
+    clientName: string,
+    from: string,
+    to: string,
+  ): Promise<{ fileName: string; content: Buffer }> {
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    if (!clientName?.trim() || !day.test(from ?? '') || !day.test(to ?? '') || from > to) {
+      throw new Error('Elige el cliente y un rango de fechas válido.');
+    }
+
+    const notes = await this.noteRepo.find({
+      where: { media: 'internet', clientName, date: { $gte: from, $lte: to } },
+    } as never);
+    if (notes.length === 0) {
+      throw new Error(`No hay notas de internet de ${clientName} en esas fechas.`);
+    }
+
+    const client = (await this.clientsService.getClients()).find((candidate) => candidate.name === clientName);
+    const content = await buildDailyReport({
+      client: {
+        name: clientName,
+        reportLogo: client?.reportLogo || undefined,
+        reportIndicators: client?.reportIndicators,
+      },
+      from,
+      to,
+      notes,
+    });
+    return { fileName: dailyReportFileName(clientName, to), content };
   }
 
   // Trae todas las notas en un rango de fechas (inclusive)

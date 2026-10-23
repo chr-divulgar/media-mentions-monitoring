@@ -15,6 +15,18 @@ const DEFAULT_MEDIA: Array<Omit<MediaTypeDto, 'id'> & { order: number }> = [
   { name: 'redes', label: 'Redes Sociales', order: 4 },
 ];
 
+const MAX_LOGO_BYTES = 500 * 1024;
+
+// The daily report's logo: only a PNG or JPEG data URL, and not a big one (it is stored in the client document).
+function checkReportLogo(logo: unknown): void {
+  if (logo === undefined || logo === null || logo === '') return;
+  const match = typeof logo === 'string' ? /^data:image\/(png|jpe?g);base64,([A-Za-z0-9+/=]+)$/i.exec(logo) : null;
+  if (!match) throw new BadRequestException('El logo debe ser una imagen PNG o JPG.');
+  if (Buffer.from(match[2], 'base64').length > MAX_LOGO_BYTES) {
+    throw new BadRequestException('El logo pesa más de 500 KB.');
+  }
+}
+
 // Case and accents do not tell two names apart ("Inversión" is "inversion").
 const fold = (value?: string): string =>
   (value ?? '').normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
@@ -40,6 +52,7 @@ export class ClientsService {
   }
 
   async createClient(dto: ClientDto): Promise<ClientDto> {
+    checkReportLogo(dto.reportLogo);
     const payload = {
       name: dto.name,
       words: dto.words ?? [],
@@ -47,6 +60,8 @@ export class ClientsService {
       alerts: dto.alerts ?? {},
       alertEmails: dto.alertEmails ?? {},
       notes: dto.notes ?? {},
+      reportLogo: dto.reportLogo ?? '',
+      reportIndicators: dto.reportIndicators ?? [],
     };
     try {
       const result = await this.configDb.clients.insertOne({ ...payload });
@@ -62,6 +77,7 @@ export class ClientsService {
   async updateClient(id: string, dto: ClientDto): Promise<ClientDto> {
     const objectId = toObjectId(id);
     if (!objectId) throw new NotFoundException('Cliente no encontrado');
+    checkReportLogo(dto.reportLogo);
 
     const payload: Record<string, unknown> = {};
     if (dto.name !== undefined) payload['name'] = dto.name;
@@ -70,6 +86,16 @@ export class ClientsService {
     if (dto.alerts !== undefined) payload['alerts'] = dto.alerts;
     if (dto.alertEmails !== undefined) payload['alertEmails'] = dto.alertEmails;
     if (dto.notes !== undefined) payload['notes'] = dto.notes;
+    if (dto.reportLogo !== undefined) payload['reportLogo'] = dto.reportLogo ?? '';
+    if (dto.reportIndicators !== undefined) {
+      payload['reportIndicators'] = (dto.reportIndicators ?? [])
+        .filter((item) => item?.source?.trim() || item?.label?.trim())
+        .map((item) => ({
+          source: item.source?.trim() ?? '',
+          label: item.label?.trim() ?? '',
+          ...(item.url?.trim() ? { url: item.url.trim() } : {}),
+        }));
+    }
 
     try {
       // MongoDB rejects an empty $set: with nothing to change the update is just a read.

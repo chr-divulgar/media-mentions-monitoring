@@ -9,6 +9,7 @@ function build(
 ) {
   const saved: Record<string, unknown>[] = [];
   const noteRepo = {
+    find: jest.fn().mockResolvedValue(existingNote ? [existingNote] : []),
     findOne: jest.fn().mockResolvedValue(existingNote),
     findOneBy: jest.fn().mockResolvedValue(existingNote),
     create: jest.fn((fields: Record<string, unknown>) => ({ ...fields })),
@@ -395,5 +396,32 @@ describe('NotesService.setNote and the clip', () => {
     });
 
     expect(archive).toHaveBeenCalledWith(expect.objectContaining({ media: 'radio', clientName: 'Ecopetrol' }), 'AL1');
+  });
+});
+
+describe('NotesService.dailyReport', () => {
+  const internetNote = {
+    media: 'internet', clientName: 'Ecopetrol', date: '2026-10-23', mediaName: 'Infobae', title: 'Titular',
+    summary: 'Resumen', subtopic: 'Carlos Suarez', attachment: 'https://chrdivulgar.org/x.pdf',
+  };
+
+  it('asks only for the internet notes of the client in the range and names the file after the last day', async () => {
+    const clients = { getClients: jest.fn().mockResolvedValue([{ name: 'Ecopetrol', reportIndicators: [{ source: 'El Tiempo', label: 'Divisas' }] }]) };
+    const { service } = build(null, internetNote, clients);
+
+    const report = await service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23');
+
+    const query = (service.noteRepo.find as jest.Mock).mock.calls[0][0];
+    expect(query.where).toEqual({ media: 'internet', clientName: 'Ecopetrol', date: { $gte: '2026-10-22', $lte: '2026-10-23' } });
+    expect(report.fileName).toBe('Informe Ecopetrol-23-10-26.docx');
+    expect(report.content.subarray(0, 2).toString()).toBe('PK'); // a .docx is a zip
+  });
+
+  it('says so when there is no note to report, and refuses a missing client or a reversed range', async () => {
+    const { service } = build(null, null, { getClients: jest.fn().mockResolvedValue([]) });
+
+    await expect(service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23')).rejects.toThrow('No hay notas de internet de Ecopetrol');
+    await expect(service.dailyReport('', '2026-10-22', '2026-10-23')).rejects.toThrow('Elige el cliente');
+    await expect(service.dailyReport('Ecopetrol', '2026-10-24', '2026-10-23')).rejects.toThrow('Elige el cliente');
   });
 });

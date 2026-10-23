@@ -5,6 +5,8 @@ import {
   Get,
   Param,
   Query,
+  Header,
+  Res,
   StreamableFile,
   HttpException,
   HttpStatus,
@@ -70,6 +72,27 @@ export class NotesController {
       );
     } catch (error) {
       throw this.internetNoteError(error);
+    }
+  }
+
+  // The daily news report of a client (.docx) for a range of days: GET /notes/daily-report?client=&from=&to=
+  @Get('daily-report')
+  @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+  async dailyReport(
+    @Query('client') client: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Res({ passthrough: true }) reply: { header: (name: string, value: string) => void },
+  ) {
+    try {
+      const report = await this.notesService.dailyReport(client, from, to);
+      reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(report.fileName)}`);
+      return new StreamableFile(report.content);
+    } catch (error) {
+      throw new HttpException(
+        { status: HttpStatus.NOT_FOUND, error: error instanceof Error ? error.message : String(error) },
+        HttpStatus.NOT_FOUND,
+      );
     }
   }
 

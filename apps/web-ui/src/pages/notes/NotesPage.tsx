@@ -9,13 +9,14 @@ import {
   Checkbox,
   message,
 } from "antd";
-import { UploadOutlined } from "@ant-design/icons";
+import { FileWordOutlined, UploadOutlined } from "@ant-design/icons";
 import * as XLSX from "xlsx";
 import dayjs from "dayjs";
 import isoWeek from "dayjs/plugin/isoWeek";
 dayjs.extend(isoWeek);
 import api from "../../services/Agent";
 import { useQuery } from "react-query";
+import DailyReportModal from "./DailyReportModal";
 import NotesTable from "./NotesTable";
 import NoteEditModal from "./NoteEditModal";
 
@@ -27,6 +28,7 @@ const NotesPage: React.FC = () => {
 
   // Estado para modal de nueva nota
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [addNote, setAddNote] = useState<any>(null);
 
   // Guardar nueva nota
@@ -312,6 +314,9 @@ const NotesPage: React.FC = () => {
           />
         </Col>
         <Col style={{ display: "flex", gap: 8 }}>
+          <Button icon={<FileWordOutlined />} onClick={() => setReportOpen(true)}>
+            Informe diario
+          </Button>
           <Upload {...uploadProps}>
             <Button type="primary" icon={<UploadOutlined />}>
               Cargar XLSX
@@ -328,6 +333,7 @@ const NotesPage: React.FC = () => {
           </Button>
         </Col>
       </Row>
+      <DailyReportModal open={reportOpen} onClose={() => setReportOpen(false)} defaultRange={selectedDates} />
       <Modal
         title="Selecciona las hojas a cargar"
         open={modalVisible}

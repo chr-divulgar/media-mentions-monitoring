@@ -159,6 +159,43 @@ describe('ClientsService (MongoDB)', () => {
     });
   });
 
+  describe('the daily report settings', () => {
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+    it('keeps the logo and the indicators, dropping empty lines', async () => {
+      const service = new ClientsService(buildDb() as never);
+      const created = await service.createClient({ name: 'Alfa' });
+
+      await service.updateClient(created.id as string, {
+        name: 'Alfa',
+        reportLogo: PNG,
+        reportIndicators: [
+          { source: ' El Tiempo ', label: 'Divisas' },
+          { source: '', label: '' },
+          { source: 'La República', label: 'Movimiento accionario', url: ' https://larepublica.co ' },
+        ],
+      });
+
+      const client = await service.getClient(created.id as string);
+      expect(client.reportLogo).toBe(PNG);
+      expect(client.reportIndicators).toEqual([
+        { source: 'El Tiempo', label: 'Divisas' },
+        { source: 'La República', label: 'Movimiento accionario', url: 'https://larepublica.co' },
+      ]);
+    });
+
+    it('refuses a logo that is not a PNG or JPG, or weighs more than 500 KB', async () => {
+      const service = new ClientsService(buildDb() as never);
+      const created = await service.createClient({ name: 'Alfa' });
+      const big = 'data:image/png;base64,' + Buffer.alloc(501 * 1024).toString('base64');
+
+      await expect(service.updateClient(created.id as string, { name: 'Alfa', reportLogo: 'data:text/html;base64,PGI+' })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.updateClient(created.id as string, { name: 'Alfa', reportLogo: big })).rejects.toBeInstanceOf(BadRequestException);
+      // Taking the logo off is allowed.
+      await expect(service.updateClient(created.id as string, { name: 'Alfa', reportLogo: '' })).resolves.toMatchObject({ reportLogo: '' });
+    });
+  });
+
   it('refuses two clients with the same name', async () => {
     const service = new ClientsService(buildDb() as never);
     await service.createClient({ name: 'Alfa' });

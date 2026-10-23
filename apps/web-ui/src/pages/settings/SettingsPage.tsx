@@ -30,6 +30,7 @@ import {
 } from "@ant-design/icons";
 import { useQuery, useMutation, useQueryClient } from "react-query";
 import api from "../../services/Agent";
+import ClientReportSettings from "./ClientReportSettings";
 import type {
   PlatformDto,
   ClientDto,
@@ -973,6 +974,8 @@ const ClientModal: React.FC<{
       alerts: initial?.alerts ?? {},
       alertEmails: initial?.alertEmails ?? {},
       notes: initial?.notes ?? {},
+      reportLogo: initial?.reportLogo ?? "",
+      reportIndicators: initial?.reportIndicators ?? [],
     }),
     [open, initial],
   );
@@ -993,6 +996,8 @@ const ClientModal: React.FC<{
       alerts: values.alerts ?? initial?.alerts ?? {},
       alertEmails: values.alertEmails ?? initial?.alertEmails ?? {},
       notes: values.notes ?? initial?.notes ?? {},
+      reportLogo: values.reportLogo ?? initial?.reportLogo ?? "",
+      reportIndicators: values.reportIndicators ?? initial?.reportIndicators ?? [],
     });
   };
 
@@ -1407,6 +1412,11 @@ const ClientModal: React.FC<{
         "notes",
         "Usuarios o grupos de WhatsApp que recibirán notas por cada medio.",
       ),
+    },
+    {
+      key: "report",
+      label: "Informe diario",
+      children: <ClientReportSettings />,
     },
   ];
 

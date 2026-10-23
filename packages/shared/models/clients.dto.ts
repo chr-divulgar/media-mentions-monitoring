@@ -30,6 +30,13 @@ export class SubsubtopicItemDto {
   readonly name!: string;
 }
 
+/** A line of the "Indicadores" block of the daily report: "El Tiempo Divisas", optionally a link. */
+export class ReportIndicatorDto {
+  readonly source!: string;
+  readonly label!: string;
+  readonly url?: string;
+}
+
 export class ClientDto {
   readonly id?: string;
   readonly name!: string;
@@ -41,6 +48,10 @@ export class ClientDto {
   readonly alertEmails?: Record<string, string[]>;
   /** mediaName → array of user phone numbers */
   readonly notes?: Record<string, string[]>;
+  /** Logo heading every page of the daily report: a PNG or JPEG data URL (500 KB at most). */
+  readonly reportLogo?: string;
+  /** The "Indicadores" block of the daily report. */
+  readonly reportIndicators?: ReportIndicatorDto[];
 }
 
 export class MediaTypeDto {
