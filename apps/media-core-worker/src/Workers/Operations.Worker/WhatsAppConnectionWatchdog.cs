@@ -14,10 +14,15 @@ public sealed class WhatsAppConnectionWatchdog : BackgroundService
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan GracePeriod = TimeSpan.FromMinutes(3);
 
+    // /status answers in milliseconds when the sidecar is alive: waiting longer is just a slower way to learn it is not
+    // (the shared HttpClient's own limit is 100 s).
+    private static readonly TimeSpan DefaultStatusTimeout = TimeSpan.FromSeconds(5);
+
     private readonly OperationsWorkerOptions options;
     private readonly HttpClient httpClient;
     private readonly IPlatformErrorNotifier notifier;
     private readonly ILogger<WhatsAppConnectionWatchdog> logger;
+    private readonly TimeSpan statusTimeout;
     private DateTimeOffset? disconnectedSince;
     private bool alerted;
 
@@ -25,8 +30,10 @@ public sealed class WhatsAppConnectionWatchdog : BackgroundService
         OperationsWorkerOptions options,
         HttpClient httpClient,
         IPlatformErrorNotifier notifier,
-        ILogger<WhatsAppConnectionWatchdog> logger)
+        ILogger<WhatsAppConnectionWatchdog> logger,
+        TimeSpan? statusTimeout = null)
     {
+        this.statusTimeout = statusTimeout ?? DefaultStatusTimeout;
         this.options = options;
         this.httpClient = httpClient;
         this.notifier = notifier;
@@ -83,8 +90,12 @@ public sealed class WhatsAppConnectionWatchdog : BackgroundService
     {
         try
         {
+            // The watchdog's own limit; a stop of the worker still cancels through the same token.
+            using var limited = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limited.CancelAfter(statusTimeout);
+
             using var response = await httpClient
-                .GetAsync($"http://localhost:{options.WhatsAppSidecarPort}/status", cancellationToken)
+                .GetAsync($"http://localhost:{options.WhatsAppSidecarPort}/status", limited.Token)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
@@ -92,7 +103,7 @@ public sealed class WhatsAppConnectionWatchdog : BackgroundService
             }
 
             using var json = await JsonDocument
-                .ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false), cancellationToken: cancellationToken)
+                .ParseAsync(await response.Content.ReadAsStreamAsync(limited.Token).ConfigureAwait(false), cancellationToken: limited.Token)
                 .ConfigureAwait(false);
             return json.RootElement.TryGetProperty("status", out var status) && status.GetString() == "connected";
         }

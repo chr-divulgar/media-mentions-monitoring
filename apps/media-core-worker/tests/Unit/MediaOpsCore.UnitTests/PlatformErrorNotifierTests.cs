@@ -51,6 +51,30 @@ public sealed class PlatformErrorNotifierTests : IDisposable
         Assert.False(await sut.IsConnectedAsync(CancellationToken.None));
     }
 
+    // A sidecar that accepts the connection and never answers: only the watchdog's own limit ends the wait.
+    private sealed class SilentHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
+    }
+
+    [Fact]
+    public async Task Watchdog_gives_up_on_a_silent_sidecar_after_its_own_short_limit_not_the_clients_100_seconds()
+    {
+        var sut = new WhatsAppConnectionWatchdog(
+            new OperationsWorkerOptions(), new HttpClient(new SilentHandler()), new CountingNotifier(),
+            NullLogger<WhatsAppConnectionWatchdog>.Instance, statusTimeout: TimeSpan.FromMilliseconds(200));
+        var started = DateTime.UtcNow;
+
+        var connected = await sut.IsConnectedAsync(CancellationToken.None);
+
+        Assert.False(connected);
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public async Task Watchdog_still_stops_when_the_worker_is_stopping()
     {

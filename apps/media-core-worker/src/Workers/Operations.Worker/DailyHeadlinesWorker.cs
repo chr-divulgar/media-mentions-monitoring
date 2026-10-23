@@ -41,7 +41,9 @@ public sealed class DailyHeadlinesWorker : BackgroundService
             {
                 await RunOnceAsync(stoppingToken).ConfigureAwait(false);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            // Not "is not OperationCanceledException": an HttpClient timeout is a TaskCanceledException, and letting one out
+            // of a BackgroundService stops the whole host. Only a real shutdown leaves the loop.
+            catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.LogWarning(exception, "[DailyHeadlinesWorker] Digest pass failed; will retry next minute.");
             }

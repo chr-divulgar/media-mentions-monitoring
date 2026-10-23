@@ -34,6 +34,37 @@ public sealed class TvVideoRecorderWorkerTests
             Task.FromResult<IReadOnlyList<CaptureSource>>(Active.ToArray());
     }
 
+    private sealed class TimingOutProvider : ICaptureSourceProvider
+    {
+        public int Calls;
+
+        public Task<IReadOnlyList<CaptureSource>> ListActiveSourcesAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref Calls);
+            throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.");
+        }
+    }
+
+    [Fact]
+    public async Task The_worker_keeps_running_when_refreshing_the_sources_times_out()
+    {
+        var provider = new TimingOutProvider();
+        var (worker, _, _, root) = Build(["https://fresh.example/video.m3u8"], stopReason: null, provider);
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            await Task.Delay(300);
+
+            Assert.True(provider.Calls >= 1);
+            Assert.False(worker.ExecuteTask!.IsCompleted); // a timeout is a failed refresh, not the end of the worker
+            await worker.StopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static CaptureSource TvSource() =>
         new("noticias-caracol-live", "youtube", "Noticias Caracol", "television", "https://stale.example/live.m3u8");
 

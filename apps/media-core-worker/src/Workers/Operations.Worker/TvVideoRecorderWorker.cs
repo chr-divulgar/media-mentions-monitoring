@@ -88,7 +88,8 @@ public sealed class TvVideoRecorderWorker : BackgroundService
                 {
                     await ReconcileAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception exception) when (exception is not OperationCanceledException)
+                // A timeout is a TaskCanceledException: only a real shutdown may leave the loop.
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {
                     logger.LogWarning(exception, "[TvVideoRecorderWorker] Could not refresh the TV sources.");
                 }

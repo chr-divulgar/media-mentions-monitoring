@@ -115,7 +115,9 @@ public sealed class SourceAvailabilityReconciliationService : BackgroundService,
             {
                 await RecoverSilentlyStoppedSourcesAsync(stoppingToken).ConfigureAwait(false);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            // A timeout is a TaskCanceledException: only a real shutdown may leave the loop (anything else out of a
+            // BackgroundService stops the host and every capture with it).
+            catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.LogError(exception, "Check for silently stopped capture sessions failed.");
             }

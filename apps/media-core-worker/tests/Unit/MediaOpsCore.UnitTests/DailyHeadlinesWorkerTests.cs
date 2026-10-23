@@ -52,6 +52,35 @@ public sealed class DailyHeadlinesWorkerTests
         Assert.Empty(digest.Days);
     }
 
+    // The digest talks to WhatsApp and Mongo over HttpClient: its own timeout is a TaskCanceledException, which must not
+    // stop the worker (an exception that leaves a BackgroundService stops the whole host, and the capture with it).
+    private sealed class TimingOutDigest : IDailyHeadlinesDigestUseCase
+    {
+        public int Calls;
+
+        public Task<int> ExecuteAsync(DateOnly bogotaDay, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref Calls);
+            throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.");
+        }
+    }
+
+    [Fact]
+    public async Task The_worker_keeps_running_when_the_digest_times_out()
+    {
+        var digest = new TimingOutDigest();
+        var worker = new DailyHeadlinesWorker(
+            digest, new FakeLog(), new TimeOnly(7, 0), NullLogger<DailyHeadlinesWorker>.Instance,
+            () => new DateTimeOffset(2026, 10, 3, 7, 5, 0, Bogota));
+
+        await worker.StartAsync(CancellationToken.None);
+        await Task.Delay(300);
+
+        Assert.True(digest.Calls >= 1);
+        Assert.False(worker.ExecuteTask!.IsCompleted); // still waiting for the next minute, not faulted
+        await worker.StopAsync(CancellationToken.None);
+    }
+
     private sealed class FakeDigest : IDailyHeadlinesDigestUseCase
     {
         public List<DateOnly> Days { get; } = [];

@@ -21,6 +21,9 @@ DotEnvLoader.LoadIfPresent();
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(o => o.ServiceName = "MediaMentionsMonitoringWorker");
+// Stopping closes every recording (tens of audio sessions and the TV MP4s): the default 30 s is not enough, and when it ran out
+// the process died with an unhandled OperationCanceledException — a "crash" for Windows.
+builder.Services.Configure<HostOptions>(hostOptions => hostOptions.ShutdownTimeout = TimeSpan.FromSeconds(90));
 
 var options = OperationsWorkerOptionsLoader.Load();
 
@@ -328,4 +331,11 @@ catch (Exception ex)
 // After this point sessions are self-sustaining: failures trigger hot recovery,
 // recoveries call TriggerCaptureAsync — no periodic heartbeat required.
 await host.Services.GetRequiredService<IContinuousCaptureUseCase>().ExecuteAsync();
-await host.WaitForShutdownAsync();
+try
+{
+    await host.WaitForShutdownAsync();
+}
+catch (OperationCanceledException)
+{
+    // The stop took longer than the host allows: the process ends here, as a stop, not as an unhandled exception.
+}

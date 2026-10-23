@@ -133,7 +133,8 @@ public sealed class ConnectivityMonitor : BackgroundService, IConnectivityMonito
         {
             online = await probe(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        // A probe that times out throws TaskCanceledException: it is "offline", not an error to retry at once.
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
             logger.LogDebug(exception, "[ConnectivityMonitor] Probe threw; counting it as offline.");
             online = false;

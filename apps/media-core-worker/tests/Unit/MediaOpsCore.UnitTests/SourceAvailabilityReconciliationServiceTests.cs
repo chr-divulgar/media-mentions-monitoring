@@ -39,6 +39,48 @@ public sealed class SourceAvailabilityReconciliationServiceTests
             incidents);
     }
 
+    private sealed class TimingOutConnectivity : IConnectivityMonitor
+    {
+        public int Reads;
+
+        public bool IsOnline
+        {
+            get
+            {
+                Interlocked.Increment(ref Reads);
+                throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.");
+            }
+        }
+
+        public Task WaitUntilOnlineAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public event Action? CameOnline
+        {
+            add { }
+            remove { }
+        }
+    }
+
+    [Fact]
+    public async Task The_service_keeps_running_when_a_check_throws_a_timeout()
+    {
+        // A TaskCanceledException that is not a shutdown must not leave the loop: it would stop the host and every capture.
+        var connectivity = new TimingOutConnectivity();
+        var options = new OperationsWorkerOptions();
+        var sut = new SourceAvailabilityReconciliationService(
+            new StaticCaptureSourceProvider(options, new FakeCaptureSourceRepository([])),
+            new FakeStreamValidator(), new FakePluginResolver(), new ServiceCollection().BuildServiceProvider(),
+            new FakeLiveStreamUrlResolver(succeeds: true), new FakeAlertService(alertActive: false),
+            NullLogger<SourceAvailabilityReconciliationService>.Instance, null, connectivity);
+
+        await sut.StartAsync(CancellationToken.None);
+        await Task.Delay(300);
+
+        Assert.True(connectivity.Reads >= 1);
+        Assert.False(sut.ExecuteTask!.IsCompleted);
+        await sut.StopAsync(CancellationToken.None);
+    }
+
     [Fact]
     public async Task TriggerImmediateReconciliationAsync_records_why_a_youtube_source_could_not_be_recovered()
     {

@@ -20,6 +20,36 @@ public sealed class ConnectivityMonitorTests
         new(enabled, TimeSpan.FromMinutes(1), _ => Task.FromResult(online()), incidents ?? new Incidents(), NullLogger<ConnectivityMonitor>.Instance);
 
     [Fact]
+    public async Task A_probe_that_times_out_counts_as_offline_and_the_loop_waits_before_the_next_probe()
+    {
+        // HttpClient reports its timeout as a TaskCanceledException. Letting it out of the check made the loop log the error
+        // and probe again at once, without waiting for the interval: a hot loop for as long as the network was bad.
+        var probes = 0;
+        var waits = new List<TimeSpan>();
+        var monitor = new ConnectivityMonitor(
+            true, TimeSpan.FromMinutes(1),
+            _ =>
+            {
+                Interlocked.Increment(ref probes);
+                throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.");
+            },
+            new Incidents(), NullLogger<ConnectivityMonitor>.Instance,
+            async (interval, cancellationToken) =>
+            {
+                lock (waits) waits.Add(interval);
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            });
+
+        await monitor.StartAsync(CancellationToken.None);
+        await Task.Delay(300);
+
+        Assert.Equal(1, probes);
+        Assert.Equal([TimeSpan.FromMinutes(1)], waits);
+        Assert.False(monitor.IsOnline);
+        await monitor.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task WaitUntilOnlineAsync_waits_while_offline_and_completes_when_the_connection_comes()
     {
         var online = false;
