@@ -370,6 +370,8 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
               subsubtopicOptions={noteFields.subsubtopicOptions}
               disableSubtopic={noteFields.disableSubtopic}
               disableSubsubtopic={noteFields.disableSubsubtopic}
+              onAddSubtopic={noteFields.addSubtopic}
+              onAddSubsubtopic={noteFields.addSubsubtopic}
             />
             <Spin spinning={isLoadingSummary || isLoadingTranscription}>
               <Form.Item<FieldType>

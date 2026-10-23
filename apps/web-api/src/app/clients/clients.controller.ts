@@ -66,6 +66,38 @@ export class ClientsController {
     }
   }
 
+  // From the note editor: a new subtopic (or subsubtopic) for the client's topic, offered from then on to every note.
+  @Post(':id/subtopics')
+  async addSubtopic(
+    @Param('id') id: string,
+    @Body() body: { topic: string; name: string },
+  ) {
+    return this.topicItem(() => this.clientsService.addSubtopic(id, body?.topic, body?.name));
+  }
+
+  @Post(':id/subsubtopics')
+  async addSubsubtopic(
+    @Param('id') id: string,
+    @Body() body: { topic: string; subtopic: string; name: string },
+  ) {
+    return this.topicItem(() =>
+      this.clientsService.addSubsubtopic(id, body?.topic, body?.subtopic, body?.name),
+    );
+  }
+
+  // The messages of these errors are written for the user (Spanish): they are passed on as they are.
+  private async topicItem(action: () => Promise<{ name: string }>) {
+    try {
+      return await action();
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        { status: HttpStatus.INTERNAL_SERVER_ERROR, error: String(error) },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @Delete(':id')
   async deleteClient(@Param('id') id: string) {
     try {

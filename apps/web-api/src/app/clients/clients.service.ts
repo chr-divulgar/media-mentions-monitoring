@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ClientDto, MediaTypeDto } from '@repo/shared';
 import {
   ConfigDbService,
@@ -14,6 +14,10 @@ const DEFAULT_MEDIA: Array<Omit<MediaTypeDto, 'id'> & { order: number }> = [
   { name: 'prensa', label: 'Prensa', order: 3 },
   { name: 'redes', label: 'Redes Sociales', order: 4 },
 ];
+
+// Case and accents do not tell two names apart ("Inversión" is "inversion").
+const fold = (value?: string): string =>
+  (value ?? '').normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
 
 // Clients and media types live in the local MongoDB `config` database (collections `clients` and
 // `mediaTypes`); the worker reads the same `clients` documents.
@@ -80,6 +84,64 @@ export class ClientsService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Adds a subtopic to one of the client's topics from the note editor, so the next note can pick it. A name that
+   * already exists (any case or accents) is not added again: the existing one is answered, to be selected.
+   */
+  async addSubtopic(clientId: string, topicName: string, name: string): Promise<{ name: string }> {
+    return this.addTopicItem(clientId, topicName, undefined, name);
+  }
+
+  /** The same for a subsubtopic under one of that topic's subtopics. */
+  async addSubsubtopic(
+    clientId: string,
+    topicName: string,
+    subtopicName: string,
+    name: string,
+  ): Promise<{ name: string }> {
+    return this.addTopicItem(clientId, topicName, subtopicName, name);
+  }
+
+  private async addTopicItem(
+    clientId: string,
+    topicName: string,
+    subtopicName: string | undefined,
+    rawName: string,
+  ): Promise<{ name: string }> {
+    const name = (rawName ?? '').trim();
+    if (!name) throw new BadRequestException('Escribe el nombre.');
+    if (name.length > 120) throw new BadRequestException('El nombre es demasiado largo (máx. 120 caracteres).');
+
+    const objectId = toObjectId(clientId);
+    const doc = objectId && (await this.configDb.clients.findOne({ _id: objectId }));
+    if (!doc) throw new NotFoundException('Cliente no encontrado');
+
+    type Node = { name?: string; subtopics?: Node[]; subsubtopics?: Node[] };
+    const topics = ((doc.topics as Node[] | undefined) ?? []).map((topic) => ({ ...topic }));
+    const topic = topics.find((candidate) => candidate.name === topicName);
+    if (!topic) throw new NotFoundException(`El tema "${topicName}" no existe en este cliente`);
+
+    // The list the new name goes into: the topic's subtopics, or one subtopic's subsubtopics.
+    let list: Node[];
+    if (subtopicName === undefined) {
+      list = topic.subtopics = [...(topic.subtopics ?? [])];
+    } else {
+      const subtopics = (topic.subtopics = [...(topic.subtopics ?? [])]).map((item) => ({ ...item }));
+      topic.subtopics = subtopics;
+      const subtopic = subtopics.find((candidate) => candidate.name === subtopicName);
+      if (!subtopic) throw new NotFoundException(`El subtema "${subtopicName}" no existe en este tema`);
+      list = subtopic.subsubtopics = [...(subtopic.subsubtopics ?? [])];
+    }
+
+    const same = (a?: string, b?: string) => fold(a) === fold(b);
+    const existing = list.find((item) => same(item.name, name));
+    if (existing) return { name: existing.name as string };
+
+    list.push({ name });
+    await this.configDb.clients.findOneAndUpdate({ _id: objectId }, { $set: { topics } });
+    return { name };
   }
 
   async deleteClient(id: string): Promise<void> {

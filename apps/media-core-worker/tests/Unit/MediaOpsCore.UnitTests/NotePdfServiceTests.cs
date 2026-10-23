@@ -112,6 +112,47 @@ public sealed class NotePdfServiceTests
     }
 
     [Fact]
+    public async Task Preview_of_an_alert_with_a_stored_pdf_uses_it_instead_of_printing_the_page_again()
+    {
+        var printer = new FakePrinter();
+        var stored = Path.Combine(Path.GetTempPath(), $"stored-{Guid.NewGuid():N}.pdf");
+        File.WriteAllText(stored, "%PDF-made-when-the-note-was-taken");
+        try
+        {
+            var storage = new FakeStorage();
+            var sut = Build(printer, storage, findStored: id => id == "A1" ? stored : null);
+
+            var preview = await sut.PreviewAsync("Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol", alertId: "A1");
+
+            Assert.True(preview.Succeeded);
+            Assert.Null(printer.PrintedUrl); // the page was not loaded again
+            Assert.Equal("%PDF-made-when-the-note-was-taken", File.ReadAllText(sut.FindPreviewFile(preview.PreviewId!)!));
+            Assert.Null(storage.UploadedTo); // and nothing goes to the archive until the note is saved
+            Assert.True(File.Exists(stored)); // the stored copy stays for the next opening
+
+            var saved = await sut.CommitAsync(preview.PreviewId!);
+            Assert.True(saved.Succeeded);
+            Assert.True(File.Exists(stored));
+        }
+        finally
+        {
+            File.Delete(stored);
+        }
+    }
+
+    [Fact]
+    public async Task Preview_prints_the_page_when_the_alert_has_no_stored_pdf()
+    {
+        var printer = new FakePrinter();
+        var sut = Build(printer, new FakeStorage(), findStored: _ => null);
+
+        var preview = await sut.PreviewAsync("Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol", alertId: "A2");
+
+        Assert.True(preview.Succeeded);
+        Assert.Equal("https://site.co/a", printer.PrintedUrl);
+    }
+
+    [Fact]
     public async Task Preview_without_keywords_highlights_nothing()
     {
         var printer = new FakePrinter();
@@ -294,8 +335,8 @@ public sealed class NotePdfServiceTests
         Assert.Contains("numerar", preview.Error);
     }
 
-    private static NotePdfService Build(FakePrinter printer, FakeStorage storage) =>
-        new(printer, storage, "https://files.test", Path.Combine(Path.GetTempPath(), "note-pdf-tests"), NullLogger<NotePdfService>.Instance);
+    private static NotePdfService Build(FakePrinter printer, FakeStorage storage, Func<string, string?>? findStored = null) =>
+        new(printer, storage, "https://files.test", Path.Combine(Path.GetTempPath(), "note-pdf-tests"), NullLogger<NotePdfService>.Instance, findStored);
 
     private sealed class FakePrinter : IBrowserPagePrinter
     {

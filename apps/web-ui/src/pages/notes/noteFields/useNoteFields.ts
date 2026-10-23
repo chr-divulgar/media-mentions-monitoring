@@ -2,7 +2,7 @@ import React from "react";
 import { Form } from "antd";
 import type { FormInstance } from "antd";
 import dayjs from "dayjs";
-import { useQuery } from "react-query";
+import { useQuery, useQueryClient } from "react-query";
 import api from "../../../services/Agent";
 import type { MediaTypeDto, NoteDto, PlatformDto } from "@repo/shared/index";
 import {
@@ -172,9 +172,31 @@ export function useNoteFields(form: FormInstance, options: NoteFieldsOptions = {
     [selectedSubtopic],
   );
 
-  const disableSubtopic = !selectedTopicName || subtopicOptions.length === 0;
-  const disableSubsubtopic =
-    !selectedSubtopicName || subsubtopicOptions.length === 0;
+  // Enabled as soon as the level above is chosen, even if it has none yet: the first one can be added.
+  const disableSubtopic = !selectedTopicName;
+  const disableSubsubtopic = !selectedSubtopicName;
+
+  const queryClient = useQueryClient();
+
+  // Adds a subtopic (or subsubtopic) to the client's topic list, so it is offered to every later note, and selects it.
+  const addTopicItem = React.useCallback(
+    async (kind: "subtopic" | "subsubtopic", name: string) => {
+      if (!selectedClient?.id || !selectedTopicName) return;
+      const body =
+        kind === "subtopic"
+          ? { topic: selectedTopicName, name }
+          : { topic: selectedTopicName, subtopic: selectedSubtopicName, name };
+      const response = await api.post(
+        `/clients/${selectedClient.id}/${kind === "subtopic" ? "subtopics" : "subsubtopics"}`,
+        body,
+      );
+      await queryClient.refetchQueries(["clients"]);
+      form.setFieldValue(kind, (response.data as { name: string }).name);
+    },
+    [selectedClient?.id, selectedTopicName, selectedSubtopicName, queryClient, form],
+  );
+  const addSubtopic = React.useCallback((name: string) => addTopicItem("subtopic", name), [addTopicItem]);
+  const addSubsubtopic = React.useCallback((name: string) => addTopicItem("subsubtopic", name), [addTopicItem]);
 
   const toMinutes = React.useCallback((value?: string): number => {
     if (!value || !/^\d{2}:\d{2}$/.test(value)) return -1;
@@ -638,6 +660,8 @@ export function useNoteFields(form: FormInstance, options: NoteFieldsOptions = {
     subsubtopicOptions,
     disableSubtopic,
     disableSubsubtopic,
+    addSubtopic,
+    addSubsubtopic,
     programOptions,
     canSelectTime,
     getFileDurationInSeconds,

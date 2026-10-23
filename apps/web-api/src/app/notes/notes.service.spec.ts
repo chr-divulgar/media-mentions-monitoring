@@ -68,6 +68,8 @@ describe('internet notes', () => {
         client: 'Ecopetrol',
         // The words the alert matched come out highlighted in yellow in the PDF.
         keywords: ['Ecopetrol', 'Cenit'],
+        // So the worker can use the PDF it made when the alert was created, instead of printing the page again.
+        alertId: ALERT_ID,
       });
       expect(preview).toMatchObject({
         previewId: 'p1',

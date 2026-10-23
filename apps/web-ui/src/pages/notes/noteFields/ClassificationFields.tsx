@@ -1,6 +1,7 @@
 import React from "react";
-import { Col, Form, Radio, Row, Select } from "antd";
+import { Col, Form, Radio, Row } from "antd";
 import { NoteOrigin, NoteSentiment } from "@repo/shared/index";
+import TopicSelect from "./TopicSelect";
 
 interface Option {
   value?: string;
@@ -13,32 +14,38 @@ interface ClassificationFieldsProps {
   subsubtopicOptions: Option[];
   disableSubtopic: boolean;
   disableSubsubtopic: boolean;
+  // Add a subtopic / subsubtopic that is not in the client's list yet (it is kept for the next notes).
+  onAddSubtopic?: (name: string) => Promise<void>;
+  onAddSubsubtopic?: (name: string) => Promise<void>;
 }
 
 // Tema → Subtema → Subsubtema (the client's own topics; the cascade is kept consistent by
-// useNoteFields) plus the note's Origen and Sentimiento.
+// useNoteFields) plus the note's Origen and Sentimiento. Each of the three can be searched by any part of
+// the word, and the subtopics can be added to.
 const ClassificationFields: React.FC<ClassificationFieldsProps> = ({
   topicOptions,
   subtopicOptions,
   subsubtopicOptions,
   disableSubtopic,
   disableSubsubtopic,
+  onAddSubtopic,
+  onAddSubsubtopic,
 }) => (
   <>
     <Row gutter={12}>
       <Col span={8}>
         <Form.Item name="topic" label="Tema">
-          <Select allowClear placeholder="Tema" options={topicOptions} />
+          <TopicSelect placeholder="Tema" options={topicOptions} />
         </Form.Item>
       </Col>
       <Col span={8}>
         <Form.Item name="subtopic" label="Subtema">
-          <Select allowClear placeholder="Subtema" options={subtopicOptions} disabled={disableSubtopic} />
+          <TopicSelect placeholder="Subtema" options={subtopicOptions} disabled={disableSubtopic} onAdd={onAddSubtopic} />
         </Form.Item>
       </Col>
       <Col span={8}>
         <Form.Item name="subsubtopic" label="Subsubtema">
-          <Select allowClear placeholder="Subsubtema" options={subsubtopicOptions} disabled={disableSubsubtopic} />
+          <TopicSelect placeholder="Subsubtema" options={subsubtopicOptions} disabled={disableSubsubtopic} onAdd={onAddSubsubtopic} />
         </Form.Item>
       </Col>
     </Row>

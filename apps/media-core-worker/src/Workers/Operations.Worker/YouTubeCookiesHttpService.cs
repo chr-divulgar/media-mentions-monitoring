@@ -537,7 +537,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         }
 
         var result = await notePdfService!.PreviewAsync(
-            request.Outlet, request.Title, uri.ToString(), request.Date, request.Client, request.Country, request.Keywords).ConfigureAwait(false);
+            request.Outlet, request.Title, uri.ToString(), request.Date, request.Client, request.Country, request.Keywords, request.AlertId).ConfigureAwait(false);
         if (!result.Succeeded)
         {
             await SendJsonResponse(context, 502, new AudioSegmentErrorResponse { Message = result.Error ?? "No se pudo generar el PDF." }).ConfigureAwait(false);

@@ -101,6 +101,30 @@ public sealed class RetentionPurgeWorkerTests
     }
 
     [Fact]
+    public void Tick_clears_the_stored_note_pdfs_with_the_bogota_day()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-worker-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var days = new List<DateOnly>();
+            var worker = new RetentionPurgeWorker(
+                new OperationsWorkerOptions { AudioOutputRootPath = root, MinFreeDiskGb = 0 },
+                new FakeIncidentRecorder(), NullLogger<RetentionPurgeWorker>.Instance,
+                () => new DateTimeOffset(2026, 10, 22, 23, 30, 0, TimeSpan.FromHours(-5)),
+                purgeNotePdfs: days.Add);
+
+            worker.Tick();
+
+            Assert.Equal([new DateOnly(2026, 10, 22)], days);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Tick_records_a_disk_low_incident_once_and_a_recovered_incident_once_space_is_freed()
     {
         var root = Path.Combine(Path.GetTempPath(), $"retention-worker-{Guid.NewGuid():N}");

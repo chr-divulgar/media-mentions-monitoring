@@ -72,6 +72,12 @@ if (options.HeadlessBrowserEnabled)
 	builder.Services.AddSingleton(sp => new HeadlessBrowser(
 		options.HeadlessBrowserPath,
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HeadlessBrowser>>()));
+	// The PDF of every web note is made when its alert is created and kept for the day and the one before.
+	builder.Services.AddSingleton(sp => new LocalNotePdfStore(
+		sp.GetRequiredService<HeadlessBrowser>(),
+		Path.Combine(options.StageFilesystemRootPath, "note-pdfs"),
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LocalNotePdfStore>>()));
+	builder.Services.AddSingleton<IWebNotePdfPrefetcher>(sp => sp.GetRequiredService<LocalNotePdfStore>());
 }
 // PDF copy of a web note (RQ-014): needs the archive, its public https base URL and the browser.
 if (options.IsArchiveActive && options.CredentialsFor(ArchiveMedia.Press) is not null
@@ -82,13 +88,15 @@ if (options.IsArchiveActive && options.CredentialsFor(ArchiveMedia.Press) is not
 		sp.GetRequiredService<IArchiveStorageProvider>().For(ArchiveMedia.Press)!,
 		options.PublicBaseUrlFor(ArchiveMedia.Press)!,
 		Path.Combine(options.StageFilesystemRootPath, "note-pdf"),
-		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<NotePdfService>>()));
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<NotePdfService>>(),
+		sp.GetService<LocalNotePdfStore>() is { } notePdfs ? (Func<string, string?>)notePdfs.Find : null));
 }
 builder.Services.AddHostedService(sp => new RetentionPurgeWorker(
 	options,
 	sp.GetRequiredService<ISourceIncidentRecorder>(),
 	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RetentionPurgeWorker>>(),
-	archiveLedger: sp.GetService<ArchiveLedger>()));
+	archiveLedger: sp.GetService<ArchiveLedger>(),
+	purgeNotePdfs: sp.GetService<LocalNotePdfStore>() is { } notePdfs ? (Action<DateOnly>)notePdfs.PurgeOld : null));
 builder.Services.AddSingleton<InMemoryMonitoringArtifactRepository>();
 builder.Services.AddSingleton<StageMirrorMonitoringArtifactRepository>();
 builder.Services.AddSingleton<IMonitoringArtifactRepository>(

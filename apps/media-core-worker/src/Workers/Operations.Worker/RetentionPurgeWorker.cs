@@ -29,6 +29,8 @@ public sealed class RetentionPurgeWorker : BackgroundService
     // Set when archiving is on (see PurgeArchivedFiles): then an .mp4 is deleted only once the
     // archive has verified it.
     private readonly ArchiveLedger? archiveLedger;
+    // The stored PDFs of web notes keep the current day and the one before (LocalNotePdfStore.PurgeOld).
+    private readonly Action<DateOnly>? purgeNotePdfs;
     private bool diskWasLow;
     private bool backlogReported;
 
@@ -38,8 +40,10 @@ public sealed class RetentionPurgeWorker : BackgroundService
         ILogger<RetentionPurgeWorker> logger,
         Func<DateTimeOffset>? clock = null,
         Func<double?>? freeDiskGbReader = null,
-        ArchiveLedger? archiveLedger = null)
+        ArchiveLedger? archiveLedger = null,
+        Action<DateOnly>? purgeNotePdfs = null)
     {
+        this.purgeNotePdfs = purgeNotePdfs;
         this.archiveLedger = archiveLedger;
         this.options = options;
         this.incidentRecorder = incidentRecorder;
@@ -69,6 +73,7 @@ public sealed class RetentionPurgeWorker : BackgroundService
     // Internal so a test can drive one pass without waiting on the timer.
     internal void Tick()
     {
+        purgeNotePdfs?.Invoke(DateOnly.FromDateTime(clock().ToOffset(BogotaOffset).DateTime));
         PurgeOldDays();
         CheckDiskSpace();
     }

@@ -219,6 +219,8 @@ const InternetNoteModal: React.FC<InternetNoteModalProps> = ({ visible, onClose 
                 subsubtopicOptions={noteFields.subsubtopicOptions}
                 disableSubtopic={noteFields.disableSubtopic}
                 disableSubsubtopic={noteFields.disableSubsubtopic}
+              onAddSubtopic={noteFields.addSubtopic}
+              onAddSubsubtopic={noteFields.addSubsubtopic}
               />
               <Form.Item label="Titular" name="title" rules={[{ required: true }]}>
                 <Input />

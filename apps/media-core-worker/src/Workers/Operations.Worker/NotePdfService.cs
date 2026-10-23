@@ -28,6 +28,9 @@ public sealed class NotePdfPreviewRequest
 
     // The words the alert matched: they come out highlighted in yellow in the PDF.
     public List<string>? Keywords { get; set; }
+
+    // The alert the note is of: when its PDF was already made (LocalNotePdfStore) that one is used.
+    public string? AlertId { get; set; }
 }
 
 /// <summary>200 body of POST /notes/pdf/preview.</summary>
@@ -82,6 +85,7 @@ public sealed partial class NotePdfService
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromHours(2);
 
     private readonly IBrowserPagePrinter printer;
+    private readonly Func<string, string?> findStored;
     private readonly IArchiveStorage storage;
     private readonly string publicBaseUrl;
     private readonly string scratchDirectory;
@@ -96,8 +100,10 @@ public sealed partial class NotePdfService
         IArchiveStorage storage,
         string publicBaseUrl,
         string scratchDirectory,
-        ILogger<NotePdfService> logger)
+        ILogger<NotePdfService> logger,
+        Func<string, string?>? findStored = null)
     {
+        this.findStored = findStored ?? (_ => null);
         this.printer = printer;
         this.storage = storage;
         this.publicBaseUrl = publicBaseUrl;
@@ -110,12 +116,27 @@ public sealed partial class NotePdfService
 
     public async Task<NotePdfPreviewResult> PreviewAsync(
         string outlet, string title, string url, DateTimeOffset date, string? client = null, string? country = null,
-        IEnumerable<string>? keywords = null, CancellationToken cancellationToken = default)
+        IEnumerable<string>? keywords = null, string? alertId = null, CancellationToken cancellationToken = default)
     {
         PurgeExpired();
 
         var previewId = Guid.NewGuid().ToString("N");
         var localPath = Path.Combine(scratchDirectory, $"{previewId}.pdf");
+
+        // Made when the alert was created, with the words highlighted: the page is not loaded again (it may have changed).
+        if (!string.IsNullOrEmpty(alertId) && findStored(alertId) is { } stored)
+        {
+            try
+            {
+                Directory.CreateDirectory(scratchDirectory);
+                File.Copy(stored, localPath, overwrite: true);
+                return await RegisterPreviewAsync(previewId, localPath, outlet, title, date, client, country, cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException exception)
+            {
+                logger.LogWarning(exception, "[NotePdfService] Could not use the stored PDF of alert {AlertId}; printing the page.", alertId);
+            }
+        }
 
         // Blank words and repeats (in any case) would only mark twice, or everything.
         var highlight = (keywords ?? [])

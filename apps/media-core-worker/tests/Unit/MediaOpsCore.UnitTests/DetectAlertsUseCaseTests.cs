@@ -316,6 +316,54 @@ public sealed class DetectAlertsUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteWebArticleAsync_asks_for_the_pdf_of_each_alert_with_the_words_that_alert_matched()
+    {
+        // The PDF is made when the note is taken (the page may change or disappear), for the alert's own client and words.
+        var repository = new InMemoryAlertRepository();
+        var prefetcher = new FakePrefetcher();
+        var client = new ClientKeywordConfig(
+            "Ecopetrol",
+            new[] { new KeywordConfig("petroleo", Array.Empty<KeywordAdContext>()), new KeywordConfig("cenit", Array.Empty<KeywordAdContext>()) },
+            new Dictionary<string, IReadOnlyList<string>>());
+        var useCase = CreateUseCase(repository, client, notifier: null, prefetcher);
+
+        await useCase.ExecuteWebArticleAsync("El Tiempo", "https://eltiempo.com/nota", "Sube el petroleo", "El barril subió.", PublishedAt);
+
+        var request = Assert.Single(prefetcher.Requests);
+        Assert.Equal(Assert.Single(repository.Inserted).Id, request.AlertId);
+        Assert.Equal("https://eltiempo.com/nota", request.Url);
+        Assert.Equal(new[] { "petroleo" }, request.Words);
+    }
+
+    [Fact]
+    public async Task ExecuteWebArticleAsync_still_alerts_when_the_pdf_cannot_be_requested()
+    {
+        var repository = new InMemoryAlertRepository();
+        var notifier = new FakeAlertNotifier();
+        var client = new ClientKeywordConfig(
+            "Ecopetrol",
+            new[] { new KeywordConfig("petroleo", Array.Empty<KeywordAdContext>()) },
+            new Dictionary<string, IReadOnlyList<string>> { ["internet"] = new[] { "573000000000" } });
+        var useCase = CreateUseCase(repository, client, notifier, new FakePrefetcher(throws: true));
+
+        var outcome = await useCase.ExecuteWebArticleAsync("El Tiempo", "https://eltiempo.com/nota", "Sube el petroleo", "El barril subió.", PublishedAt);
+
+        Assert.Equal(1, outcome.NotifiedCount);
+        Assert.Single(repository.Inserted);
+    }
+
+    [Fact]
+    public async Task ExecuteUnreadableWebArticleAsync_asks_for_no_pdf_the_page_could_not_be_read()
+    {
+        var prefetcher = new FakePrefetcher();
+        var useCase = CreateUseCase(new InMemoryAlertRepository(), ClientConfig("Ecopetrol", "ecopetrol"), notifier: null, prefetcher);
+
+        await useCase.ExecuteUnreadableWebArticleAsync("El Tiempo", "https://eltiempo.com/x", "Ecopetrol firma", "HTTP 403");
+
+        Assert.Empty(prefetcher.Requests);
+    }
+
+    [Fact]
     public async Task ExecuteUnreadableWebArticleAsync_saves_a_review_alert_with_title_and_link_for_the_client_named_in_the_title()
     {
         var repository = new InMemoryAlertRepository();
@@ -518,12 +566,30 @@ public sealed class DetectAlertsUseCaseTests
         InMemoryAlertRepository repository,
         ClientKeywordConfig client,
         FakeAlertNotifier? notifier,
+        params string[] platforms) => CreateUseCase(repository, client, notifier, null, platforms);
+
+    private static DetectAlertsUseCase CreateUseCase(
+        InMemoryAlertRepository repository,
+        ClientKeywordConfig client,
+        FakeAlertNotifier? notifier,
+        IWebNotePdfPrefetcher? prefetcher,
         params string[] platforms)
     {
         var configRepository = new InMemoryClientConfigRepository(
             new[] { client },
             platforms.Length > 0 ? platforms : new[] { "CaracolTV" });
-        return new DetectAlertsUseCase(configRepository, repository, notifier ?? new FakeAlertNotifier());
+        return new DetectAlertsUseCase(configRepository, repository, notifier ?? new FakeAlertNotifier(), prefetcher);
+    }
+
+    private sealed class FakePrefetcher(bool throws = false) : IWebNotePdfPrefetcher
+    {
+        public List<WebNotePdfRequest> Requests { get; } = [];
+
+        public void Request(WebNotePdfRequest request)
+        {
+            Requests.Add(request);
+            if (throws) throw new InvalidOperationException("the browser is not available");
+        }
     }
 
     private static ClientKeywordConfig ClientConfig(string name, string keyword)

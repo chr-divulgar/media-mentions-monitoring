@@ -63,6 +63,7 @@ export class NotesService {
         client: alert.clientName,
         // Marked in yellow in the PDF, as when searching the page in a browser.
         keywords: await this.highlightTerms(alert),
+        alertId,
       },
     );
 

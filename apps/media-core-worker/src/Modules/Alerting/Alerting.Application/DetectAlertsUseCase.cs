@@ -21,12 +21,15 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
     private readonly IClientConfigRepository clientConfigRepository;
     private readonly IAlertRepository alertRepository;
     private readonly IAlertNotifier alertNotifier;
+    private readonly IWebNotePdfPrefetcher? pdfPrefetcher;
 
     public DetectAlertsUseCase(
         IClientConfigRepository clientConfigRepository,
         IAlertRepository alertRepository,
-        IAlertNotifier alertNotifier)
+        IAlertNotifier alertNotifier,
+        IWebNotePdfPrefetcher? pdfPrefetcher = null)
     {
+        this.pdfPrefetcher = pdfPrefetcher;
         this.clientConfigRepository = clientConfigRepository;
         this.alertRepository = alertRepository;
         this.alertNotifier = alertNotifier;
@@ -143,6 +146,16 @@ public sealed class DetectAlertsUseCase : IDetectAlertsUseCase
                 capturedAt: DateTimeOffset.UtcNow);
             var recipients = ResolveRecipients(client, "internet", alert);
             var alertId = await alertRepository.InsertAsync(alert, recipients, cancellationToken).ConfigureAwait(false);
+
+            // The PDF of the note is made now, in the background, for this alert's own words: never a reason to hold the alert.
+            try
+            {
+                pdfPrefetcher?.Request(new WebNotePdfRequest(alertId, url, clientMatchedWords, alert.CapturedAt));
+            }
+            catch (Exception)
+            {
+                // Without it the PDF is simply made when the note is opened.
+            }
 
             recipientCount += recipients.Count;
             notifiedCount += (await NotifyAsync(alertId, alert, recipients, cancellationToken).ConfigureAwait(false)).Count;

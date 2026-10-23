@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ClientsService } from '../clients/clients.service';
 import { SettingsService, buildPlatformUpdate } from '../settings/settings.service';
 import { FakeCollection } from './fake-collection';
@@ -95,6 +95,68 @@ describe('ClientsService (MongoDB)', () => {
     const created = await service.createClient({ name: 'Alfa' });
 
     expect(await service.updateClient(created.id as string, {} as never)).toMatchObject({ name: 'Alfa' });
+  });
+
+  describe('adding a subtopic or subsubtopic from the note editor', () => {
+    async function clientWithTopics() {
+      const service = new ClientsService(buildDb() as never);
+      const client = await service.createClient({
+        name: 'Alfa',
+        topics: [
+          { name: 'Gestión', subtopics: [{ name: 'Inversión', subsubtopics: [{ name: 'Nacional' }] }] },
+          { name: 'Reputación' },
+        ],
+      });
+      return { service, id: client.id as string };
+    }
+
+    it('adds a subtopic to the topic and keeps what was there', async () => {
+      const { service, id } = await clientWithTopics();
+
+      const added = await service.addSubtopic(id, 'Gestión', '  Alianzas  ');
+
+      expect(added).toEqual({ name: 'Alianzas' });
+      const topics = (await service.getClient(id)).topics!;
+      expect(topics[0].subtopics!.map((subtopic) => subtopic.name)).toEqual(['Inversión', 'Alianzas']);
+      expect(topics[0].subtopics![0].subsubtopics).toEqual([{ name: 'Nacional' }]);
+      expect(topics[1]).toEqual({ name: 'Reputación' });
+    });
+
+    it('creates the list of subtopics of a topic that had none', async () => {
+      const { service, id } = await clientWithTopics();
+
+      await service.addSubtopic(id, 'Reputación', 'Crisis');
+
+      expect((await service.getClient(id)).topics![1].subtopics).toEqual([{ name: 'Crisis' }]);
+    });
+
+    it('does not repeat one that exists, whatever its case or accents, and answers with the existing name', async () => {
+      const { service, id } = await clientWithTopics();
+
+      expect(await service.addSubtopic(id, 'Gestión', 'inversion')).toEqual({ name: 'Inversión' });
+
+      expect((await service.getClient(id)).topics![0].subtopics).toHaveLength(1);
+    });
+
+    it('adds a subsubtopic under its subtopic', async () => {
+      const { service, id } = await clientWithTopics();
+
+      expect(await service.addSubsubtopic(id, 'Gestión', 'Inversión', 'Internacional')).toEqual({ name: 'Internacional' });
+      expect(await service.addSubsubtopic(id, 'Gestión', 'Inversión', 'NACIONAL')).toEqual({ name: 'Nacional' });
+
+      const subsubtopics = (await service.getClient(id)).topics![0].subtopics![0].subsubtopics!;
+      expect(subsubtopics.map((item) => item.name)).toEqual(['Nacional', 'Internacional']);
+    });
+
+    it('says what is missing: the client, the topic, the subtopic, or the name', async () => {
+      const { service, id } = await clientWithTopics();
+
+      await expect(service.addSubtopic('507f1f77bcf86cd799439011', 'Gestión', 'X')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.addSubtopic(id, 'No existe', 'X')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.addSubsubtopic(id, 'Gestión', 'No existe', 'X')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.addSubtopic(id, 'Gestión', '   ')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.addSubtopic(id, 'Gestión', 'x'.repeat(121))).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   it('refuses two clients with the same name', async () => {
