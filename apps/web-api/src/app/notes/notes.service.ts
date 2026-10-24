@@ -548,6 +548,37 @@ export class NotesService {
   }
 
   /**
+   * Deletes a note and, first, the file it has in the archive (the PDF of a web note, the clip of a radio or TV
+   * note): the worker deletes whichever of the note's links is its own file there and leaves the rest alone. When
+   * that file cannot be deleted the note stays, so deleting can be tried again without leaving the file behind.
+   */
+  async deleteNote(id: string): Promise<void> {
+    const note = ObjectId.isValid(id)
+      ? await this.noteRepo.findOneBy({ _id: new ObjectId(id) } as never)
+      : null;
+    if (!note) {
+      throw new Error('La nota no existe.');
+    }
+
+    const links = [note.attachment, note.link].filter(
+      (value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value),
+    );
+    if (links.length > 0) {
+      const result = await this.callWorker<{ deleted: string[]; failed: string[] }>(
+        '/notes/archive/delete',
+        { links },
+      );
+      if (result.failed?.length) {
+        throw new Error(
+          'No se pudo eliminar el archivo de la nota en el servidor de archivo. Intenta de nuevo en unos minutos.',
+        );
+      }
+    }
+
+    await this.noteRepo.delete(id);
+  }
+
+  /**
    * The daily news report of a client (Word): its internet notes of the range, grouped by subtopic, with the
    * client's logo and indicators. Throws when there is no note to report (the message is for the user).
    */

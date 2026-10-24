@@ -61,6 +61,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     // Null when the archive, its public URL or the headless browser is not configured.
     private readonly NotePdfService? notePdfService;
     private readonly NoteClipService? noteClipService;
+    private readonly NoteArchiveRemover? noteArchiveRemover;
     private readonly HttpClient httpClient;
     private readonly int whatsAppSidecarPort;
     private HttpListener? httpListener;
@@ -78,8 +79,10 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         VideoSegmentService videoSegmentService,
         HttpClient httpClient,
         NotePdfService? notePdfService = null,
-        NoteClipService? noteClipService = null)
+        NoteClipService? noteClipService = null,
+        NoteArchiveRemover? noteArchiveRemover = null)
     {
+        this.noteArchiveRemover = noteArchiveRemover;
         this.notePdfService = notePdfService;
         this.noteClipService = noteClipService;
         this.logger = logger;
@@ -207,6 +210,12 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "POST" && path == "/notes/pdf/preview")
             {
                 await HandleNotePdfPreviewRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "POST" && path == "/notes/archive/delete")
+            {
+                await HandleNoteArchiveDeleteRequestAsync(context).ConfigureAwait(false);
                 return;
             }
 
@@ -545,6 +554,20 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         }
 
         await SendJsonResponse(context, 200, new NotePdfPreviewResponse { PreviewId = result.PreviewId!, Link = result.Link! }).ConfigureAwait(false);
+    }
+
+    // A deleted note's file in the archive: its links come in the body, what was deleted (and what could not be) goes back.
+    private async Task HandleNoteArchiveDeleteRequestAsync(HttpListenerContext context)
+    {
+        if (noteArchiveRemover is null)
+        {
+            await SendJsonResponse(context, 503, new AudioSegmentErrorResponse { Message = "El archivo de notas no está configurado." }).ConfigureAwait(false);
+            return;
+        }
+
+        var request = await ReadJsonBodyAsync<NoteArchiveDeleteRequest>(context).ConfigureAwait(false);
+        var result = await noteArchiveRemover.DeleteAsync(request?.Links ?? []).ConfigureAwait(false);
+        await SendJsonResponse(context, 200, new { deleted = result.Deleted, failed = result.Failed }).ConfigureAwait(false);
     }
 
     // A PDF the user made by hand: the bytes are the body, what the note is about is in the query.

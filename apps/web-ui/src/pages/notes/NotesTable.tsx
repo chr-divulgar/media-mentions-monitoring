@@ -1,14 +1,15 @@
 import React, { useRef, useState } from "react";
 import dayjs from "dayjs";
 import { NoteDto } from "@repo/shared/index";
-import { SearchOutlined, EditOutlined } from "@ant-design/icons";
+import { SearchOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
+import { useQueryClient } from "react-query";
 import type {
   InputRef,
   TableColumnsType,
   TableColumnType,
   TableProps,
 } from "antd";
-import { Button, Input, Space, Table, message } from "antd";
+import { Button, Input, Popconfirm, Space, Table, message } from "antd";
 import type { FilterDropdownProps } from "antd/es/table/interface";
 import Highlighter from "react-highlight-words";
 import NoteEditModal from "./NoteEditModal";
@@ -25,6 +26,25 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
   const [searchText, setSearchText] = useState("");
   const [searchedColumn, setSearchedColumn] = useState("");
   const searchInput = useRef<InputRef>(null);
+  const queryClient = useQueryClient();
+  const [deletingId, setDeletingId] = useState<string>();
+
+  // The note goes, and with it its file in the archive (the PDF or the clip); the alert it came from stays.
+  const handleDelete = async (record: NoteDto) => {
+    if (!record.id) return;
+    setDeletingId(record.id);
+    try {
+      await api.delete(`/notes/${record.id}`);
+      message.success("Nota eliminada");
+      queryClient.invalidateQueries(["notes"]);
+    } catch (error) {
+      message.error(
+        (error as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "No se pudo eliminar la nota",
+      );
+    } finally {
+      setDeletingId(undefined);
+    }
+  };
 
   const handleSearch = (
     selectedKeys: string[],
@@ -224,16 +244,29 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       width: "80px",
     },
     {
-      title: "Editar",
+      title: "Acciones",
       key: "editar",
       render: (_, record) => (
-        <Button
-          icon={<EditOutlined />}
-          onClick={() => handleEdit(record)}
-          type="default"
-        />
+        <Space size={4}>
+          <Button
+            icon={<EditOutlined />}
+            onClick={() => handleEdit(record)}
+            type="default"
+            title="Editar"
+          />
+          <Popconfirm
+            title="¿Eliminar la nota?"
+            description="También se borra su archivo (PDF o clip) del servidor de archivo."
+            okText="Eliminar"
+            okButtonProps={{ danger: true }}
+            cancelText="Cancelar"
+            onConfirm={() => handleDelete(record)}
+          >
+            <Button icon={<DeleteOutlined />} danger loading={deletingId === record.id} title="Eliminar" />
+          </Popconfirm>
+        </Space>
       ),
-      width: "80px",
+      width: "100px",
       fixed: "right",
     },
   ];

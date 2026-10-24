@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Query,
+  Delete,
   Header,
   Res,
   StreamableFile,
@@ -93,6 +94,17 @@ export class NotesController {
         { status: HttpStatus.NOT_FOUND, error: error instanceof Error ? error.message : String(error) },
         HttpStatus.NOT_FOUND,
       );
+    }
+  }
+
+  // Deletes the note and its file in the archive (PDF or clip).
+  @Delete(':id')
+  async deleteNote(@Param('id') id: string) {
+    try {
+      await this.notesService.deleteNote(id);
+      return { success: true };
+    } catch (error) {
+      throw this.internetNoteError(error);
     }
   }
 

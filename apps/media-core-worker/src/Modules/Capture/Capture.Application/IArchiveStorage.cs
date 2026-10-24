@@ -54,6 +54,10 @@ public interface IArchiveStorage
     // refuses the obviously wrong (empty, rooted, or going up a level). Throws on operational failures.
     Task DeleteDirectoryAsync(string relativeDirectory, CancellationToken cancellationToken = default);
 
+    // Deletes one file (the file of a deleted note). True once it is not there any more, also when it never was; false when
+    // this storage cannot delete files. Throws on operational failures, like DeleteDirectoryAsync.
+    Task<bool> DeleteFileAsync(string relativePath, CancellationToken cancellationToken = default) => Task.FromResult(false);
+
     // Copies relativePath to localPath and returns true only once the local copy has the remote size.
     Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default);
 }

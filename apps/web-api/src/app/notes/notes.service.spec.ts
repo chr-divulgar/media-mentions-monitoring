@@ -9,6 +9,7 @@ function build(
 ) {
   const saved: Record<string, unknown>[] = [];
   const noteRepo = {
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
     find: jest.fn().mockResolvedValue(existingNote ? [existingNote] : []),
     findOne: jest.fn().mockResolvedValue(existingNote),
     findOneBy: jest.fn().mockResolvedValue(existingNote),
@@ -423,5 +424,55 @@ describe('NotesService.dailyReport', () => {
     await expect(service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23')).rejects.toThrow('No hay notas de internet de Ecopetrol');
     await expect(service.dailyReport('', '2026-10-22', '2026-10-23')).rejects.toThrow('Elige el cliente');
     await expect(service.dailyReport('Ecopetrol', '2026-10-24', '2026-10-23')).rejects.toThrow('Elige el cliente');
+  });
+});
+
+describe('NotesService.deleteNote', () => {
+  const fetchMock = jest.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    global.fetch = fetchMock as never;
+  });
+
+  const webNote = {
+    id: ALERT_ID,
+    media: 'internet',
+    attachment: 'https://chrdivulgar.org/colombia/ecopetrol/2026/10/23/infobae-01-x.pdf',
+    link: 'https://www.infobae.com/nota',
+  };
+
+  it('deletes the archived file of the note through the worker, then the note', async () => {
+    fetchMock.mockResolvedValue(workerReply({ deleted: ['colombia/ecopetrol/2026/10/23/infobae-01-x.pdf'], failed: [] }));
+    const { service } = build(null, webNote);
+
+    await service.deleteNote(ALERT_ID);
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/notes\/archive\/delete$/);
+    // Every link of the note goes: the worker only deletes the ones that are the note's own file in the archive.
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ links: [webNote.attachment, webNote.link] });
+    expect(service.noteRepo.delete).toHaveBeenCalledWith(ALERT_ID);
+  });
+
+  it('keeps the note when its file could not be deleted from the archive, so it can be tried again', async () => {
+    fetchMock.mockResolvedValue(workerReply({ deleted: [], failed: [webNote.attachment] }));
+    const { service } = build(null, webNote);
+
+    await expect(service.deleteNote(ALERT_ID)).rejects.toThrow('servidor de archivo');
+    expect(service.noteRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes a note that has nothing archived without asking the worker', async () => {
+    const { service } = build(null, { id: ALERT_ID, media: 'prensa' });
+
+    await service.deleteNote(ALERT_ID);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(service.noteRepo.delete).toHaveBeenCalledWith(ALERT_ID);
+  });
+
+  it('says so when the note does not exist', async () => {
+    const { service } = build(null, null);
+
+    await expect(service.deleteNote(ALERT_ID)).rejects.toThrow('no existe');
   });
 });

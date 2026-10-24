@@ -40,6 +40,12 @@ builder.Services.AddSingleton(sp => new NoteClipService(
 	sp.GetRequiredService<ILogger<NoteClipService>>(),
 	options.PublicBaseUrlFor));
 
+// A deleted note's file (its PDF or clip) goes from the archive too (POST /notes/archive/delete).
+builder.Services.AddSingleton(sp => new NoteArchiveRemover(
+	sp.GetRequiredService<IArchiveStorageProvider>(),
+	options.PublicBaseUrlFor,
+	sp.GetRequiredService<ILogger<NoteArchiveRemover>>()));
+
 // Add hosted service for YouTube cookies HTTP endpoint
 builder.Services.AddSingleton(sp => new VideoSegmentService(
 	options,

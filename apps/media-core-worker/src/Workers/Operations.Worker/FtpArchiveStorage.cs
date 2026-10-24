@@ -112,6 +112,27 @@ public sealed class FtpArchiveStorage : IArchiveStorage
         }
     }
 
+    public async Task<bool> DeleteFileAsync(string relativePath, CancellationToken cancellationToken = default)
+    {
+        var clean = relativePath.Trim('/');
+        if (clean.Length == 0 || relativePath.Contains(':') || clean.Split('/').Any(segment => segment is "" or "." or ".."))
+        {
+            throw new ArgumentException($"Refusing to delete '{relativePath}'.", nameof(relativePath));
+        }
+
+        var (client, basePath) = CreateClient();
+        await using var _ = client;
+        await client.Connect(cancellationToken).ConfigureAwait(false);
+
+        var remotePath = $"{basePath}/{clean}";
+        if (await client.FileExists(remotePath, cancellationToken).ConfigureAwait(false))
+        {
+            await client.DeleteFile(remotePath, cancellationToken).ConfigureAwait(false);
+        }
+
+        return !await client.FileExists(remotePath, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<bool> DownloadAsync(string relativePath, string localPath, CancellationToken cancellationToken = default)
     {
         var (client, basePath) = CreateClient();
