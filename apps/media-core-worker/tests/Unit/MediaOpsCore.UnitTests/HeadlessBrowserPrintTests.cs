@@ -91,6 +91,22 @@ public sealed class HeadlessBrowserPrintTests : IAsyncLifetime
                     "/known" => $"<html><body>{Article}<div id=\"didomi-popup\" style=\"position:fixed;inset:0;background:#000;z-index:99999\">" +
                                 "<button id=\"didomi-notice-agree-button\" onclick=\"document.getElementById('didomi-popup').remove()\">Agree and close</button></div></body></html>",
                     "/unknown" => $"<html><body style=\"overflow:hidden\">{Article}<div class=\"x\" style=\"position:fixed;inset:0;background:#000;z-index:99999\">Aceptas las cookies de 1044 socios</div></body></html>",
+                    // A newsletter window with its own <h1> (Elementor popups do this), before the note in the page, over a veil.
+                    "/popup" => "<html><head><title>Titulo de la nota | Medio</title></head><body>" +
+                                "<div id=\"veil\" style=\"position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998\"></div>" +
+                                "<div id=\"pop\" style=\"position:fixed;left:0;bottom:0;width:300px;height:300px;background:#013;z-index:9999\"><h1>Inscríbete a nuestro boletín diario</h1><form><input name=\"email\"></form></div>" +
+                                $"{Article}</body></html>",
+                    // The whole page inside a fixed container: that one is the page, not a window.
+                    "/fixedpage" => $"<html><body><div style=\"position:fixed;inset:0;overflow:auto\">{Article}</div></body></html>",
+                    "/dialog" => $"<html><body>{Article}<dialog id=\"d\"><h1>Suscríbete a las notificaciones</h1><p>Texto del aviso</p></dialog><script>document.getElementById('d').showModal()</script></body></html>",
+                    // Taboola's "Read More": the article in a box with a height limit and a button that opens the rest.
+                    "/clipped" => "<html><body><main class=\"tbl-forkorts-article\" style=\"max-height:150px;overflow:hidden\"><article id=\"nota\"><h1>Titulo de la nota</h1>" +
+                                  string.Concat(Enumerable.Range(1, 12).Select(i => $"<p>Parrafo {i}: " + new string('x', 160) + "</p>")) +
+                                  "<p id=\"last\">Ultimo parrafo del articulo</p></article></main><div class=\"tbl-read-more-box\"><a class=\"tbl-read-more-btn\">Leer Más</a></div></body></html>",
+                    // The same with other class names and a "Seguir leyendo" link of the site's own.
+                    "/clipped2" => "<html><body><div class=\"caja\" style=\"height:120px;overflow:hidden\"><article id=\"nota\"><h1>Titulo de la nota</h1>" +
+                                   string.Concat(Enumerable.Range(1, 12).Select(i => $"<p>Parrafo {i}: " + new string('y', 160) + "</p>")) +
+                                   "<p id=\"last\">Ultimo parrafo del articulo</p></article></div><a id=\"more\" href=\"#\">Seguir leyendo</a></body></html>",
                     "/words" => "<html><body><article id=\"nota\"><h1>Ecopetrol y el árbol</h1><p>El ARBOL de Ecopetrol S.A. creció, dijo la ecopetrolera.</p>" +
                                 "<script id=\"s\">var ecopetrol = 'arbol';</script></article></body></html>",
                     "/hang" => $"<html><body>{Article}<img src=\"/slow\"></body></html>",
@@ -152,6 +168,58 @@ public sealed class HeadlessBrowserPrintTests : IAsyncLifetime
         Assert.Contains("S.A.|rgb(255, 255, 0)", result.marks);
         // The text of the page is the same and the script was left alone.
         Assert.Equal("var ecopetrol = 'arbol';", result.script);
+    }
+
+    // Is the element showing, and is it the page's own (not covered)? What the tests below ask of a prepared page.
+    private async Task<T?> InPreparedPageAsync<T>(string route, string script) =>
+        await browser!.WithPreparedPageAsync(baseUrl + route, page => page.EvaluateAsync<T>(script), CancellationToken.None);
+
+    private const string IsHidden = "(id) => { const e = document.getElementById(id); return !e || getComputedStyle(e).display === 'none'; }";
+
+    [Fact]
+    public async Task A_newsletter_window_with_its_own_h1_is_hidden_and_the_note_is_not()
+    {
+        if (browser is null) return;
+
+        // The window is before the note and has an <h1> of its own: it used to count as "the page" and stay.
+        Assert.Equal("article", await CenterOfPageAsync("/popup"));
+        Assert.True(await InPreparedPageAsync<bool>("/popup", "() => ['pop', 'veil'].every(id => getComputedStyle(document.getElementById(id)).display === 'none')"));
+    }
+
+    [Fact]
+    public async Task A_fixed_container_that_holds_the_note_stays()
+    {
+        if (browser is null) return;
+
+        Assert.Equal("article", await CenterOfPageAsync("/fixedpage"));
+    }
+
+    [Fact]
+    public async Task An_open_dialog_is_hidden()
+    {
+        if (browser is null) return;
+
+        Assert.True(await InPreparedPageAsync<bool>("/dialog", "() => getComputedStyle(document.getElementById('d')).display === 'none'"));
+    }
+
+    [Theory]
+    [InlineData("/clipped")]
+    [InlineData("/clipped2")]
+    public async Task An_article_cut_short_with_a_read_more_button_is_shown_whole_and_the_button_is_gone(string route)
+    {
+        if (browser is null) return;
+
+        // The last paragraph is inside the page (not hidden by the box's height limit)...
+        var visible = await InPreparedPageAsync<bool>(
+            route,
+            "() => { const last = document.getElementById('last').getBoundingClientRect(); let box = document.getElementById('last').parentElement; " +
+            "while (box && getComputedStyle(box).overflow !== 'hidden') box = box.parentElement; " +
+            "return !box || box.getBoundingClientRect().bottom >= last.bottom - 1; }");
+        Assert.True(visible);
+        // ...and the button that was to open the rest is not printed.
+        Assert.True(await InPreparedPageAsync<bool>(
+            route,
+            "() => [...document.querySelectorAll('a')].filter(a => /leer m|seguir leyendo/i.test(a.textContent)).every(a => a.offsetParent === null)"));
     }
 
     [Fact]

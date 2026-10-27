@@ -52,24 +52,62 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
     private const string HideConsentCss = @"
         #didomi-host, #didomi-popup, #onetrust-consent-sdk, #acceptationCMPWall, .cmp-overlay, .blockNavigation { display: none !important; }
         html, body { overflow: visible !important; position: static !important; }
+        dialog[open], [popover], [role=dialog], [aria-modal=true], .elementor-popup-modal, .dialog-widget, .pum-overlay, .om-holder { display: none !important; }
+        .tbl-read-more-box { display: none !important; }
+        .tbl-forkorts-article { max-height: none !important; height: auto !important; overflow: visible !important; }
         ";
 
     // Windows, banners, a player stuck to the bottom, an ad that pops up (Google's vignette arrives seconds after the
-    // page): whatever is fixed to the screen is not part of the note and would print over it. A fixed container that
-    // holds the article itself stays. It runs now and then every quarter second for as long as the page is open, so
-    // what appears late (even while the PDF is being drawn) is hidden too.
+    // page): whatever is fixed to the screen is not part of the note and would print over it. The one fixed container
+    // that stays is the one holding the note's own title — a site whose whole page sits in a fixed box — and that is
+    // the <h1> that matches the page's title, not just any <h1>: a newsletter window brings its own ("Inscríbete a
+    // nuestro boletín"), and treating that as "the page" is what let it print over the note. It runs now and then every
+    // quarter second for as long as the page is open, so what appears late (even while the PDF is being drawn) is
+    // hidden too.
     private const string HidePinnedScript = @"
         () => {
           if (window.__hidePinned) { window.__hidePinned(); return; }
+          const fold = t => (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+          const noteHeading = () => {
+            const heads = [...document.querySelectorAll('h1')].filter(h => !h.closest('form, dialog, [role=dialog], [aria-modal=true], [popover]'));
+            const title = fold(document.querySelector('meta[property=""og:title""]')?.content || document.title);
+            const matches = h => { const t = fold(h.textContent); return t.length > 8 && title.length > 8 && (title.includes(t.slice(0, 40)) || t.includes(title.slice(0, 40))); };
+            return heads.find(matches) || heads[0] || null;
+          };
           window.__hidePinned = () => {
+            const note = noteHeading();
             for (const el of document.querySelectorAll('body *')) {
-              if (getComputedStyle(el).position === 'fixed' && !el.matches('h1, article') && !el.querySelector('h1, article')) {
-                el.style.setProperty('display', 'none', 'important');
-              }
+              if (getComputedStyle(el).position !== 'fixed') continue;
+              const holdsNote = note ? (el === note || el.contains(note)) : (el.matches('article') || !!el.querySelector('article'));
+              if (!holdsNote) el.style.setProperty('display', 'none', 'important');
             }
           };
           window.__hidePinned();
           setInterval(window.__hidePinned, 250);
+        }
+        ";
+
+    // A box that cuts the article short with a height limit and a ""Leer más"" button (Taboola's Read More on many outlets,
+    // or a site's own): the whole text is what has to be printed, so the limit goes and so does the button. It is not
+    // clicked: many of these buttons are links to another page. Only boxes that hide a good amount of real paragraph text
+    // are opened, so a carousel or a menu is left alone.
+    private const string ExpandClippedScript = @"
+        () => {
+          const readMore = /^(leer m[aá]s|seguir leyendo|continuar leyendo|ver m[aá]s|ver todo|read more)\s*[»>→↓⌄]*$/i;
+          for (const el of document.querySelectorAll('body *')) {
+            const cs = getComputedStyle(el);
+            if (el === document.body || el === document.documentElement || cs.position === 'fixed') continue;
+            const clipped = (cs.overflow === 'hidden' || cs.overflowY === 'hidden') && el.scrollHeight > el.clientHeight + 150;
+            if (!clipped) continue;
+            const text = [...el.querySelectorAll('p')].reduce((n, p) => n + p.textContent.trim().length, 0);
+            if (text < 400) continue;
+            for (const prop of ['max-height', 'height', 'min-height']) el.style.setProperty(prop, prop === 'min-height' ? '0' : 'none', 'important');
+            el.style.setProperty('height', 'auto', 'important');
+            el.style.setProperty('overflow', 'visible', 'important');
+          }
+          for (const el of document.querySelectorAll('a, button, [role=button], span, div')) {
+            if (el.children.length < 3 && readMore.test((el.textContent || '').trim())) el.style.setProperty('display', 'none', 'important');
+          }
         }
         ";
 
@@ -306,8 +344,16 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
 
             await page.AddStyleTagAsync(new PageAddStyleTagOptions { Content = HideConsentCss }).ConfigureAwait(false);
             await page.EvaluateAsync(HidePinnedScript).ConfigureAwait(false);
+            await page.EvaluateAsync(ExpandClippedScript).ConfigureAwait(false);
             await page.EvaluateAsync(ScrollThroughScript).ConfigureAwait(false);
             await page.WaitForTimeoutAsync(1000).ConfigureAwait(false); // what the scroll (or a late ad) brings up
+
+            // The last sweep is made as the page will be printed: a window that is only fixed (or only there) in the print
+            // style, or that came in after the first sweep, goes too; the page is then printed in that same style.
+            await page.EmulateMediaAsync(new PageEmulateMediaOptions { Media = Media.Print }).ConfigureAwait(false);
+            await page.EvaluateAsync(HidePinnedScript).ConfigureAwait(false);
+            await page.EvaluateAsync(ExpandClippedScript).ConfigureAwait(false);
+            await page.WaitForTimeoutAsync(300).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is PlaywrightException or TimeoutException)
         {
