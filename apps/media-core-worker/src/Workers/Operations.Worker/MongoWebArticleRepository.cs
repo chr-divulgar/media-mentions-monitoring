@@ -40,10 +40,16 @@ public sealed class MongoWebArticleRepository : IWebArticleRepository
                 Builders<BsonDocument>.Filter.Ne("status", WebArticleStatus.Failed),
                 Builders<BsonDocument>.Filter.Gte("attemptCount", maxFailedAttempts)));
 
-        var documents = await collection.Find(filter).Project(Builders<BsonDocument>.Projection.Include("googleId"))
+        var documents = await collection.Find(filter).Project(Builders<BsonDocument>.Projection.Include("googleId").Include("url"))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        return documents.Select(document => document["googleId"].AsString).ToHashSet(StringComparer.Ordinal);
+        // Direct search results are keyed "url:{address}": an address the News RSS already brought is seen too, so it is
+        // not read again (and not recorded as no-keyword because its alert already exists).
+        return documents
+            .SelectMany(document => document.TryGetValue("url", out var url) && url.IsString
+                ? new[] { document["googleId"].AsString, $"url:{url.AsString}" }
+                : new[] { document["googleId"].AsString })
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     public async Task<bool> SaveAsync(WebArticleRecord record, CancellationToken cancellationToken = default)
