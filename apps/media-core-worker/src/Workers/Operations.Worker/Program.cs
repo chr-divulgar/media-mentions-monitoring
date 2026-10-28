@@ -248,6 +248,17 @@ if (options.WebNewsEnabled)
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GoogleNewsRssSearchProvider>>()));
+	// Google's News tab through SerpApi for the main keyword of each client (only with its key in the environment).
+	var serpApiKey = Environment.GetEnvironmentVariable("SERPAPI_API_KEY");
+	if (options.SerpApiEnabled && !string.IsNullOrWhiteSpace(serpApiKey))
+	{
+		builder.Services.AddSingleton(sp => new SerpApiNewsProvider(
+			sp.GetRequiredService<HttpClient>(),
+			serpApiKey,
+			TimeSpan.FromMinutes(options.SerpApiIntervalMinutes),
+			options.WebNewsRequestTimeoutSeconds,
+			sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SerpApiNewsProvider>>()));
+	}
 	builder.Services.AddSingleton<INewsLinkResolver>(sp => new GoogleNewsLinkResolver(
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
@@ -269,7 +280,8 @@ if (options.WebNewsEnabled)
 		sp.GetRequiredService<IWebArticleRepository>(),
 		sp.GetRequiredService<ISourceIncidentRecorder>(),
 		options.WebNewsKeywordsPerQuery,
-		options.WebNewsMaxConcurrency));
+		options.WebNewsMaxConcurrency,
+		directSearchProvider: sp.GetService<SerpApiNewsProvider>()));
 }
 builder.Services.AddSingleton<IDiscreteIngestionOrchestrator>(sp => new DiscreteIngestionOrchestrator(
 	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DiscreteIngestionOrchestrator>>(),

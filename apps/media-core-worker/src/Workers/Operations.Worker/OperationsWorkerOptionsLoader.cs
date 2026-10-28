@@ -101,6 +101,8 @@ public static class OperationsWorkerOptionsLoader
         int? WebNewsMaxConcurrency,
         int? WebNewsRequestTimeoutSeconds,
         int? WebNewsMaxFailedAttempts,
+        bool? SerpApiEnabled,
+        int? SerpApiIntervalMinutes,
         bool? DailyHeadlinesEnabled,
         string? DailyHeadlinesTime,
         bool? ConnectivityCheckEnabled = null,
@@ -599,6 +601,16 @@ public static class OperationsWorkerOptionsLoader
         if (model.WebNewsRequestTimeoutSeconds.HasValue)
         {
             options.WebNewsRequestTimeoutSeconds = model.WebNewsRequestTimeoutSeconds.Value;
+        }
+
+        if (model.SerpApiEnabled.HasValue)
+        {
+            options.SerpApiEnabled = model.SerpApiEnabled.Value;
+        }
+
+        if (model.SerpApiIntervalMinutes is > 0)
+        {
+            options.SerpApiIntervalMinutes = model.SerpApiIntervalMinutes.Value;
         }
 
         if (model.WebNewsMaxFailedAttempts.HasValue)

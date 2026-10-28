@@ -261,5 +261,14 @@ public sealed class OperationsWorkerOptions
     // hammered for a full day. 5 attempts 15 minutes apart (one per cycle) give a transient failure about an hour
     // to clear on its own.
     public int WebNewsMaxFailedAttempts { get; set; } = 5;
+
+    // Google's News tab through SerpApi, next to the News RSS: the main keyword of each client, which finds stories that
+    // name the client only in their body (the RSS searches headlines and extracts). It needs SERPAPI_API_KEY in the
+    // environment; without it (or off) the web news search works as it always did.
+    public bool SerpApiEnabled { get; set; } = false;
+
+    // How often each client's keyword is asked: every search counts against the plan (the free one has 250 a month), so
+    // 180 minutes is 8 a day per client. A paid plan only needs a smaller number.
+    public int SerpApiIntervalMinutes { get; set; } = 180;
 }
 

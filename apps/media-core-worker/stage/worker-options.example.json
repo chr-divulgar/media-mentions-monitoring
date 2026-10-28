@@ -47,6 +47,8 @@
   "webNewsMaxConcurrency": 4,
   "webNewsRequestTimeoutSeconds": 20,
   "webNewsMaxFailedAttempts": 5,
+  "serpApiEnabled": false,
+  "serpApiIntervalMinutes": 180,
   "dailyHeadlinesEnabled": false,
   "dailyHeadlinesTime": "07:00",
   "connectivityCheckEnabled": true,
