@@ -1,5 +1,4 @@
 using MediaOpsCore.Modules.Alerting.Application;
-using MediaOpsCore.Modules.Alerting.Domain;
 
 namespace MediaOpsCore.Modules.Capture.Application;
 
@@ -73,8 +72,6 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
     private readonly IClientConfigRepository clientConfigRepository;
     private readonly IDetectAlertsUseCase detectAlertsUseCase;
     private readonly INewsSearchProvider newsSearchProvider;
-    // Optional second source: a search of the text of the pages (Google's official API) for the main keyword of each client.
-    private readonly INewsSearchProvider? directSearchProvider;
     private readonly INewsLinkResolver newsLinkResolver;
     private readonly IArticleReader articleReader;
     private readonly IWebArticleRepository webArticleRepository;
@@ -93,10 +90,8 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
         ISourceIncidentRecorder incidentRecorder,
         int keywordsPerQuery,
         int maxConcurrency,
-        Func<DateTimeOffset>? clock = null,
-        INewsSearchProvider? directSearchProvider = null)
+        Func<DateTimeOffset>? clock = null)
     {
-        this.directSearchProvider = directSearchProvider;
         this.clientConfigRepository = clientConfigRepository;
         this.detectAlertsUseCase = detectAlertsUseCase;
         this.newsSearchProvider = newsSearchProvider;
@@ -148,18 +143,8 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             }
         }
 
-        // The main keyword of each client, searched in the text of the pages. A failure here is not the cycle's: the RSS part
-        // above already ran, and the provider keeps its own quota.
-        var direct = await SearchDirectAsync(clients, cancellationToken).ConfigureAwait(false);
-        foreach (var item in direct)
-        {
-            found.TryAdd(item.GoogleId, item);
-        }
-
         var seenIds = await webArticleRepository.GetSeenGoogleIdsAsync(SeenLookback, cancellationToken).ConfigureAwait(false);
-        // Direct results first: they need no resolving, so when the same address also came by RSS it is that one that is skipped.
-        var newItems = found.Values.Where(item => !seenIds.Contains(item.GoogleId)).OrderByDescending(item => item.DirectLink).ToArray();
-        var processedUrls = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        var newItems = found.Values.Where(item => !seenIds.Contains(item.GoogleId)).ToArray();
 
         var alerted = 0;
         var rejected = 0;
@@ -171,7 +156,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                switch (await ProcessArticleAsync(item, processedUrls, cancellationToken).ConfigureAwait(false))
+                switch (await ProcessArticleAsync(item, cancellationToken).ConfigureAwait(false))
                 {
                     case ArticleOutcome.Alerted:
                         Interlocked.Increment(ref alerted);
@@ -203,37 +188,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
         Failed,
     }
 
-    // The first keyword of each client, quoted: what is searched in the text of the pages.
-    private async Task<IReadOnlyList<NewsSearchItem>> SearchDirectAsync(
-        IReadOnlyList<ClientKeywordConfig> clients, CancellationToken cancellationToken)
-    {
-        if (directSearchProvider is null)
-        {
-            return [];
-        }
-
-        var items = new List<NewsSearchItem>();
-        var terms = clients
-            .Select(client => client.Keywords.Select(keyword => keyword.Value).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)))
-            .Where(value => value is not null)
-            .Distinct(StringComparer.OrdinalIgnoreCase);
-        foreach (var term in terms)
-        {
-            try
-            {
-                items.AddRange(await directSearchProvider.SearchAsync($"\"{term!.Trim()}\"", cancellationToken).ConfigureAwait(false));
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                // Never the cycle's failure: the RSS search already ran.
-            }
-        }
-
-        return items;
-    }
-
-    private async Task<ArticleOutcome> ProcessArticleAsync(
-        NewsSearchItem item, System.Collections.Concurrent.ConcurrentDictionary<string, byte> processedUrls, CancellationToken cancellationToken)
+    private async Task<ArticleOutcome> ProcessArticleAsync(NewsSearchItem item, CancellationToken cancellationToken)
     {
         // The real article URL once resolved, or Google's own interstitial link as a fallback for
         // every message recorded before (or without) a successful resolution — an operator checking
@@ -242,9 +197,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
 
         try
         {
-            var linkResolution = item.DirectLink
-                ? new NewsLinkResolution(item.GoogleLink, null)
-                : await newsLinkResolver.ResolveAsync(item, cancellationToken).ConfigureAwait(false);
+            var linkResolution = await newsLinkResolver.ResolveAsync(item, cancellationToken).ConfigureAwait(false);
             if (!linkResolution.Succeeded)
             {
                 var final = await SaveAsync(item, item.GoogleLink, WebArticleStatus.Failed, item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
@@ -255,13 +208,6 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
 
             var url = linkResolution.Url!;
             linkForIncidents = url;
-            if (!processedUrls.TryAdd(url, 0))
-            {
-                // Also found by the other search in this cycle: that one is the note.
-                await SaveAsync(item, url, WebArticleStatus.Duplicate, item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
-                return ArticleOutcome.Rejected;
-            }
-
             var content = await articleReader.ReadAsync(url, cancellationToken).ConfigureAwait(false);
             if (content.Blocked)
             {

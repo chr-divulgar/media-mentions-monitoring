@@ -101,8 +101,6 @@ public static class OperationsWorkerOptionsLoader
         int? WebNewsMaxConcurrency,
         int? WebNewsRequestTimeoutSeconds,
         int? WebNewsMaxFailedAttempts,
-        bool? GoogleSearchEnabled,
-        int? GoogleSearchMaxDailyQueries,
         bool? DailyHeadlinesEnabled,
         string? DailyHeadlinesTime,
         bool? ConnectivityCheckEnabled = null,
@@ -601,16 +599,6 @@ public static class OperationsWorkerOptionsLoader
         if (model.WebNewsRequestTimeoutSeconds.HasValue)
         {
             options.WebNewsRequestTimeoutSeconds = model.WebNewsRequestTimeoutSeconds.Value;
-        }
-
-        if (model.GoogleSearchEnabled.HasValue)
-        {
-            options.GoogleSearchEnabled = model.GoogleSearchEnabled.Value;
-        }
-
-        if (model.GoogleSearchMaxDailyQueries is >= 0)
-        {
-            options.GoogleSearchMaxDailyQueries = model.GoogleSearchMaxDailyQueries.Value;
         }
 
         if (model.WebNewsMaxFailedAttempts.HasValue)

@@ -10,9 +10,6 @@ public static class WebArticleStatus
     // Final, unlike Failed: the outlet blocks automated access (e.g. a Cloudflare challenge), so
     // the retry of failed articles must not pick it up again.
     public const string Blocked = "blocked";
-    // The same address as another note of this cycle (found by the News RSS and by the direct search): that one is the
-    // note; this record only keeps the RSS item from being resolved again every cycle.
-    public const string Duplicate = "duplicate";
 }
 
 public sealed record WebArticleRecord(
