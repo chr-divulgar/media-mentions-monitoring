@@ -60,7 +60,7 @@ export class NotesService {
         title,
         url: alert.url,
         date: published.format(),
-        // The PDF is filed under the client's folder: {country}/{client}/{year}/{month}/{day}.
+        // The worker files the PDF under the day of the 6 a.m. report: {year}/{MONTH}/{day}.
         client: alert.clientName,
         // Marked in yellow in the PDF, as when searching the page in a browser.
         keywords: await this.highlightTerms(alert),

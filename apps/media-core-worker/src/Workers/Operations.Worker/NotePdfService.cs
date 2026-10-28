@@ -259,7 +259,7 @@ public sealed partial class NotePdfService
     private async Task<(string? RelativePath, string? Error)> ChooseTargetCoreAsync(
         string outletSlug, string titleSlug, DateTimeOffset date, string? client, string? country, CancellationToken cancellationToken)
     {
-        var directory = BuildDirectory(country, client, date);
+        var directory = BuildDirectory(date);
         try
         {
             var existing = await storage.ListAsync(directory, cancellationToken).ConfigureAwait(false);
@@ -348,9 +348,8 @@ public sealed partial class NotePdfService
         return slug.Length == 0 ? fallback : slug;
     }
 
-    // The notes' folder: {country}/{client}/{yyyy}/{MM}/{dd}, the same shape as the clips of radio and TV notes.
-    internal static string BuildDirectory(string? country, string? client, DateTimeOffset date) =>
-        ArchiveLayout.NoteDirectory(country, client, date);
+    // The web notes' folder: the day of the report they go in (see ArchiveLayout.WebNoteDirectory).
+    internal static string BuildDirectory(DateTimeOffset date) => ArchiveLayout.WebNoteDirectory(date);
 
     internal static string BuildPublicLink(string baseUrl, string relativePath) =>
         $"{baseUrl.TrimEnd('/')}/{string.Join('/', relativePath.Split('/').Select(Uri.EscapeDataString))}";

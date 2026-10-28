@@ -8,7 +8,8 @@ namespace MediaOpsCore.UnitTests;
 public sealed class NotePdfServiceTests
 {
     private static readonly DateTimeOffset Date = new(2026, 10, 6, 11, 41, 0, TimeSpan.FromHours(-5));
-    private const string Folder = "colombia/ecopetrol/2026/10/06";
+    // 11:41 is after the 6 a.m. cut: the note belongs to the report of the 7th.
+    private const string Folder = "2026/OCTUBRE/07";
 
     [Theory]
     [InlineData("Ecopetrol culmina su campaña exploratoria", "ecopetrol-culmina-su-campana-exploratoria")]
@@ -40,7 +41,7 @@ public sealed class NotePdfServiceTests
     }
 
     [Fact]
-    public async Task CommitAsync_files_the_pdf_under_the_notes_country_and_client()
+    public async Task CommitAsync_files_the_pdf_under_the_report_day_not_the_country_or_client()
     {
         var storage = new FakeStorage();
         var sut = Build(new FakePrinter(), storage);
@@ -48,7 +49,7 @@ public sealed class NotePdfServiceTests
         var preview = await sut.PreviewAsync("Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol S.A.", "México");
         await sut.CommitAsync(preview.PreviewId!);
 
-        Assert.Equal("mexico/ecopetrol-s-a/2026/10/06/forbes-01-titular.pdf", storage.UploadedTo);
+        Assert.Equal("2026/OCTUBRE/07/forbes-01-titular.pdf", storage.UploadedTo);
     }
 
     [Fact]
@@ -81,8 +82,8 @@ public sealed class NotePdfServiceTests
     public void BuildPublicLink_joins_the_base_url_and_escapes_each_segment()
     {
         Assert.Equal(
-            "https://server2.chrdivulgar.org/notas/colombia/ecopetrol/2026/10/06/forbes-01-ecopetrol-culmina.pdf",
-            NotePdfService.BuildPublicLink("https://server2.chrdivulgar.org/notas/", $"{NotePdfService.BuildDirectory(null, "Ecopetrol", Date)}/forbes-01-ecopetrol-culmina.pdf"));
+            "https://server2.chrdivulgar.org/notas/2026/OCTUBRE/07/forbes-01-ecopetrol-culmina.pdf",
+            NotePdfService.BuildPublicLink("https://server2.chrdivulgar.org/notas/", $"{NotePdfService.BuildDirectory(Date)}/forbes-01-ecopetrol-culmina.pdf"));
     }
 
     [Fact]
@@ -94,7 +95,7 @@ public sealed class NotePdfServiceTests
         var preview = await Build(printer, storage).PreviewAsync("Forbes", "Ecopetrol culmina su campaña", "https://site.co/a", Date, "Ecopetrol");
 
         Assert.True(preview.Succeeded);
-        Assert.Equal("https://files.test/colombia/ecopetrol/2026/10/06/forbes-02-ecopetrol-culmina-su-campana.pdf", preview.Link);
+        Assert.Equal("https://files.test/2026/OCTUBRE/07/forbes-02-ecopetrol-culmina-su-campana.pdf", preview.Link);
         Assert.Equal("https://site.co/a", printer.PrintedUrl);
         Assert.Null(storage.UploadedTo);
     }
@@ -258,7 +259,7 @@ public sealed class NotePdfServiceTests
         var preview = await sut.PreviewFromFileAsync(Pdf(), "Forbes", "Ecopetrol culmina", Date, "Ecopetrol");
 
         Assert.True(preview.Succeeded);
-        Assert.Equal("https://files.test/colombia/ecopetrol/2026/10/06/forbes-02-ecopetrol-culmina.pdf", preview.Link);
+        Assert.Equal("https://files.test/2026/OCTUBRE/07/forbes-02-ecopetrol-culmina.pdf", preview.Link);
         Assert.Null(printer.PrintedUrl);
         Assert.Null(storage.UploadedTo); // nothing reaches the archive until the note is saved
         Assert.True(File.Exists(sut.FindPreviewFile(preview.PreviewId!)!));

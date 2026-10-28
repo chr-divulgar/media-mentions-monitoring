@@ -43,4 +43,16 @@ public sealed class ArchiveLayoutTests
         Assert.Equal("colombia/sin-cliente/2026/10/14", ArchiveLayout.NoteDirectory("colombia", "  ", day));
         Assert.Equal("colombia/ecopetrol/2026/10/14", ArchiveLayout.NoteDirectory("colombia", "Ecopetrol", new DateOnly(2026, 10, 14)));
     }
+
+    // The report is cut at 6 a.m. Bogota: a web note belongs to the day of the report it goes in.
+    [Theory]
+    [InlineData("2026-10-27T06:00:00-05:00", "2026/OCTUBRE/28")] // the cut itself opens the next report
+    [InlineData("2026-10-27T23:30:00-05:00", "2026/OCTUBRE/28")]
+    [InlineData("2026-10-28T05:59:00-05:00", "2026/OCTUBRE/28")]
+    [InlineData("2026-10-28T06:00:00-05:00", "2026/OCTUBRE/29")]
+    [InlineData("2026-10-28T10:00:00Z", "2026/OCTUBRE/28")] // 05:00 in Bogota
+    [InlineData("2026-12-31T08:00:00-05:00", "2027/ENERO/01")]
+    [InlineData("2026-09-15T12:00:00-05:00", "2026/SEPTIEMBRE/16")]
+    public void WebNoteDirectory_is_the_report_day_with_the_month_in_capitals(string moment, string expected) =>
+        Assert.Equal(expected, ArchiveLayout.WebNoteDirectory(DateTimeOffset.Parse(moment, System.Globalization.CultureInfo.InvariantCulture)));
 }

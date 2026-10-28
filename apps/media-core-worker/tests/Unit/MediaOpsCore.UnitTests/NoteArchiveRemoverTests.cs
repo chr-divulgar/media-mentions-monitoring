@@ -55,6 +55,18 @@ public sealed class NoteArchiveRemoverTests
     }
 
     [Fact]
+    public async Task Deletes_the_pdf_of_a_web_note_filed_by_report_day()
+    {
+        var press = new FakeStorage();
+        var remover = Remover(press, new FakeStorage(), new FakeStorage());
+
+        var result = await remover.DeleteAsync(["https://chrdivulgar.org/2026/OCTUBRE/29/infobae-01-x.pdf"]);
+
+        Assert.Equal(["2026/OCTUBRE/29/infobae-01-x.pdf"], press.Deleted);
+        Assert.Empty(result.Failed);
+    }
+
+    [Fact]
     public async Task Deletes_a_radio_or_tv_clip_from_its_own_medium_account()
     {
         var radio = new FakeStorage();

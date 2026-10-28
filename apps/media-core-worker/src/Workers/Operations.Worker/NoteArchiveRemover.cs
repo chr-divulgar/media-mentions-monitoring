@@ -95,7 +95,8 @@ public sealed partial class NoteArchiveRemover
         return null;
     }
 
-    // {country}/{client}/{yyyy}/{MM}/{dd}/{file}.pdf|.mp3|.mp4 — what ArchiveLayout.NoteDirectory files the notes under.
-    [GeneratedRegex(@"^(?!backup/)[a-z0-9-]{1,30}/[a-z0-9-]{1,60}/\d{4}/\d{2}/\d{2}/[^/\\]+\.(pdf|mp3|mp4)$", RegexOptions.IgnoreCase)]
+    // {country}/{client}/{yyyy}/{MM}/{dd}/{file}.pdf|.mp3|.mp4 — what ArchiveLayout.NoteDirectory files the notes under —
+    // or {yyyy}/{MONTH}/{dd}/{file}.pdf, the web notes' ArchiveLayout.WebNoteDirectory.
+    [GeneratedRegex(@"^((?!backup/)[a-z0-9-]{1,30}/[a-z0-9-]{1,60}/\d{4}/\d{2}/\d{2}/[^/\\]+\.(pdf|mp3|mp4)|\d{4}/[A-Z]{4,10}/\d{2}/[^/\\]+\.pdf)$", RegexOptions.IgnoreCase)]
     private static partial Regex NoteFilePath();
 }
