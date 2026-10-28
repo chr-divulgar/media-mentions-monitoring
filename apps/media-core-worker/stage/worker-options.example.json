@@ -47,6 +47,8 @@
   "webNewsMaxConcurrency": 4,
   "webNewsRequestTimeoutSeconds": 20,
   "webNewsMaxFailedAttempts": 5,
+  "googleSearchEnabled": false,
+  "googleSearchMaxDailyQueries": 100,
   "dailyHeadlinesEnabled": false,
   "dailyHeadlinesTime": "07:00",
   "connectivityCheckEnabled": true,

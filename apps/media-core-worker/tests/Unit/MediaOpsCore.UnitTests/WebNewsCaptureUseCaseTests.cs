@@ -447,6 +447,105 @@ public sealed class WebNewsCaptureUseCaseTests
         Assert.Single(alerts.Unreadable);
     }
 
+    private static NewsSearchItem DirectItem(string url, string outlet = "La Silla Vacía") =>
+        new($"url:{url}", "Titulo", outlet, url, Now, DirectLink: true);
+
+    [Fact]
+    public async Task ExecuteCycleAsync_asks_the_direct_search_for_the_first_keyword_of_each_client_only()
+    {
+        var direct = new FakeNewsSearchProvider();
+        var sut = Build(
+            clients:
+            [
+                new ClientKeywordConfig("Ecopetrol", [new KeywordConfig("ecopetrol", []), new KeywordConfig("reficar", []), new KeywordConfig("cenit", [])],
+                    new Dictionary<string, IReadOnlyList<string>>()),
+                ClientWithKeyword("Otro", "Nada"),
+            ],
+            directSearch: direct);
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Equal(["\"ecopetrol\"", "\"Nada\""], direct.Queries);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_alerts_a_note_that_only_the_direct_search_found_without_resolving_its_link()
+    {
+        // The keyword is in the body of the page, not in the headline: only a search of the text offers it.
+        var resolver = new FakeNewsLinkResolver();
+        var repository = new FakeWebArticleRepository();
+        var alertUseCase = new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["ecopetrol"], 1, 1) };
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            resolver: resolver,
+            reader: new FakeArticleReader { Content = new ArticleContent("La rosca de De la Espriella", "Ecopetrol transfirió", PublishedToday, null) },
+            repository: repository,
+            detectAlertsUseCase: alertUseCase,
+            directSearch: new FakeNewsSearchProvider { Items = [DirectItem("https://www.lasillavacia.com/silla-nacional/la-rosca/")] });
+
+        await sut.ExecuteCycleAsync();
+
+        var saved = Assert.Single(repository.Saved);
+        Assert.Equal(WebArticleStatus.Alerted, saved.Status);
+        Assert.Equal("https://www.lasillavacia.com/silla-nacional/la-rosca/", saved.Url);
+        Assert.False(resolver.WasCalled); // it is already the real address
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_processes_once_a_note_that_both_searches_found()
+    {
+        var repository = new FakeWebArticleRepository();
+        var alertUseCase = new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["ecopetrol"], 1, 1) };
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/x" },
+            reader: new FakeArticleReader { Content = new ArticleContent("Titulo", "Texto", PublishedToday, null) },
+            repository: repository,
+            detectAlertsUseCase: alertUseCase,
+            directSearch: new FakeNewsSearchProvider { Items = [DirectItem("https://eltiempo.com/x")] });
+
+        await sut.ExecuteCycleAsync();
+
+        // One by RSS (resolved to the same address) and one by the direct search: the alert use case sees the address once.
+        Assert.Equal(1, alertUseCase.Calls.Count(call => call == "https://eltiempo.com/x"));
+        Assert.Equal(1, repository.Saved.Count(record => record.Url == "https://eltiempo.com/x" && record.Status == WebArticleStatus.Alerted));
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_skips_a_direct_note_already_seen()
+    {
+        var repository = new FakeWebArticleRepository();
+        repository.SeenIds.Add("url:https://www.lasillavacia.com/x");
+        var reader = new FakeArticleReader { Content = new ArticleContent("T", "P", PublishedToday, null) };
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")], reader: reader, repository: repository,
+            directSearch: new FakeNewsSearchProvider { Items = [DirectItem("https://www.lasillavacia.com/x")] });
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Empty(repository.Saved);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_keeps_going_when_the_direct_search_fails()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/x" },
+            reader: new FakeArticleReader { Content = new ArticleContent("T", "P", PublishedToday, null) },
+            recorder: recorder,
+            directSearch: new FakeNewsSearchProvider { Exception = new HttpRequestException("api down") });
+
+        await sut.ExecuteCycleAsync();
+
+        // The RSS part ran and the cycle counts as good: the API is an extra, not the way in.
+        Assert.Contains(recorder.Records, r => r.Kind == IncidentKinds.CycleOk);
+        Assert.DoesNotContain(recorder.Records, r => r.Kind == IncidentKinds.CycleFailed);
+    }
+
     private static ClientKeywordConfig ClientWithKeyword(string name, string keyword) =>
         new(name, [new KeywordConfig(keyword, [])], new Dictionary<string, IReadOnlyList<string>>());
 
@@ -457,7 +556,8 @@ public sealed class WebNewsCaptureUseCaseTests
         FakeArticleReader? reader = null,
         FakeWebArticleRepository? repository = null,
         FakeDetectAlertsUseCase? detectAlertsUseCase = null,
-        FakeIncidentRecorder? recorder = null) =>
+        FakeIncidentRecorder? recorder = null,
+        INewsSearchProvider? directSearch = null) =>
         new(
             new FakeClientConfigRepository(clients),
             detectAlertsUseCase ?? new FakeDetectAlertsUseCase(),
@@ -468,7 +568,8 @@ public sealed class WebNewsCaptureUseCaseTests
             recorder ?? new FakeIncidentRecorder(),
             keywordsPerQuery: 8,
             maxConcurrency: 4,
-            clock: () => Now);
+            clock: () => Now,
+            directSearchProvider: directSearch);
 
     private sealed class FakeClientConfigRepository(IReadOnlyList<ClientKeywordConfig> clients) : IClientConfigRepository
     {
@@ -483,9 +584,13 @@ public sealed class WebNewsCaptureUseCaseTests
     {
         public IReadOnlyList<NewsSearchItem> Items { get; set; } = [];
         public Exception? Exception { get; set; }
+        public List<string> Queries { get; } = [];
 
-        public Task<IReadOnlyList<NewsSearchItem>> SearchAsync(string query, CancellationToken cancellationToken = default) =>
-            Exception is not null ? throw Exception : Task.FromResult(Items);
+        public Task<IReadOnlyList<NewsSearchItem>> SearchAsync(string query, CancellationToken cancellationToken = default)
+        {
+            Queries.Add(query);
+            return Exception is not null ? throw Exception : Task.FromResult(Items);
+        }
     }
 
     private sealed class FakeNewsLinkResolver : INewsLinkResolver
@@ -545,6 +650,7 @@ public sealed class WebNewsCaptureUseCaseTests
     {
         public WebArticleAlertOutcome Outcome { get; set; } = new([], [], 0, 0);
         public string? LastMatchText { get; private set; }
+        public List<string> Calls { get; } = [];
         public List<(string Outlet, string Url, string Title, string Reason, string? FirstParagraph, string? MatchText)> Unreadable { get; } = [];
 
         public Task ExecuteAsync(string platform, string media, string filePath, string text, DateTimeOffset startTime, DateTimeOffset endTime, CancellationToken cancellationToken = default) =>
@@ -555,6 +661,7 @@ public sealed class WebNewsCaptureUseCaseTests
         public Task<WebArticleAlertOutcome> ExecuteWebArticleAsync(string outlet, string url, string title, string firstParagraph, DateTimeOffset publishedAt, string? matchText = null, CancellationToken cancellationToken = default)
         {
             LastMatchText = matchText;
+            Calls.Add(url);
             return Task.FromResult(Outcome);
         }
 

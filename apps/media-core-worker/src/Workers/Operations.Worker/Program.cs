@@ -248,6 +248,19 @@ if (options.WebNewsEnabled)
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
 		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GoogleNewsRssSearchProvider>>()));
+	// Google's official search API for the main keyword of each client (only with its key and engine in the environment).
+	var googleSearchKey = Environment.GetEnvironmentVariable("GOOGLE_SEARCH_API_KEY");
+	var googleSearchEngine = Environment.GetEnvironmentVariable("GOOGLE_SEARCH_CX");
+	if (options.GoogleSearchEnabled && !string.IsNullOrWhiteSpace(googleSearchKey) && !string.IsNullOrWhiteSpace(googleSearchEngine))
+	{
+		builder.Services.AddSingleton(sp => new GoogleCustomSearchProvider(
+			sp.GetRequiredService<HttpClient>(),
+			googleSearchKey,
+			googleSearchEngine,
+			options.GoogleSearchMaxDailyQueries,
+			options.WebNewsRequestTimeoutSeconds,
+			sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GoogleCustomSearchProvider>>()));
+	}
 	builder.Services.AddSingleton<INewsLinkResolver>(sp => new GoogleNewsLinkResolver(
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
@@ -269,7 +282,8 @@ if (options.WebNewsEnabled)
 		sp.GetRequiredService<IWebArticleRepository>(),
 		sp.GetRequiredService<ISourceIncidentRecorder>(),
 		options.WebNewsKeywordsPerQuery,
-		options.WebNewsMaxConcurrency));
+		options.WebNewsMaxConcurrency,
+		directSearchProvider: sp.GetService<GoogleCustomSearchProvider>()));
 }
 builder.Services.AddSingleton<IDiscreteIngestionOrchestrator>(sp => new DiscreteIngestionOrchestrator(
 	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DiscreteIngestionOrchestrator>>(),

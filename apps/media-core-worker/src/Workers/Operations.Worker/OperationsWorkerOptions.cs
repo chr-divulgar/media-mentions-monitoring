@@ -261,5 +261,14 @@ public sealed class OperationsWorkerOptions
     // hammered for a full day. 5 attempts 15 minutes apart (one per cycle) give a transient failure about an hour
     // to clear on its own.
     public int WebNewsMaxFailedAttempts { get; set; } = 5;
+
+    // Google's official search API (Programmable Search), next to the News RSS: the main keyword of each client searched in
+    // the text of the pages, which finds what the RSS (headlines and extracts) never offers. It needs GOOGLE_SEARCH_API_KEY
+    // and GOOGLE_SEARCH_CX in the environment; without them (or off) the web news search works as it always did.
+    // One query per client per cycle: every 15 minutes is 96 a day per client, inside the 100 a day that are free.
+    public bool GoogleSearchEnabled { get; set; } = false;
+
+    // The most queries a day (Bogota) the program makes: the free 100, so no charge ever comes by surprise.
+    public int GoogleSearchMaxDailyQueries { get; set; } = 100;
 }
 
