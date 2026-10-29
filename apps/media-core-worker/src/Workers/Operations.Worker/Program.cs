@@ -305,6 +305,8 @@ if (options.ArchiveEnabled && !options.IsArchiveActive)
 }
 host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(
     () => incidentRecorder.Record(IncidentKinds.WorkerSourceId, IncidentKinds.WorkerStopped));
+// Made now, not on the first note: the PDFs a stop left waiting go up to the archive right away.
+_ = host.Services.GetService<NotePdfService>();
 
 // host.StartAsync() runs every registered IHostedService.StartAsync() (in registration order —
 // YouTubeCookiesHttpService and WhatsAppSidecarProcessSupervisor among them, so NestJS can reach

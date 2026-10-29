@@ -48,6 +48,7 @@ public sealed class NotePdfServiceTests
 
         var preview = await sut.PreviewAsync("Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol S.A.", "México");
         await sut.CommitAsync(preview.PreviewId!);
+        await sut.WhenUploadedAsync();
 
         Assert.Equal("2026/OCTUBRE/07/forbes-01-titular.pdf", storage.UploadedTo);
     }
@@ -185,6 +186,7 @@ public sealed class NotePdfServiceTests
         var scratch = sut.FindPreviewFile(preview.PreviewId!)!;
 
         var result = await sut.CommitAsync(preview.PreviewId!);
+        await sut.WhenUploadedAsync();
 
         Assert.True(result.Succeeded);
         Assert.Equal(preview.Link, result.Link);
@@ -223,17 +225,67 @@ public sealed class NotePdfServiceTests
     }
 
     [Fact]
-    public async Task Commit_keeps_the_preview_when_the_upload_fails_so_saving_can_be_retried()
+    public async Task Commit_answers_without_waiting_for_the_upload()
     {
-        var storage = new FakeStorage { Succeeds = false };
+        // A PDF is several MB: saving the note must not wait for it to reach the archive.
+        var storage = new FakeStorage { UploadGate = new TaskCompletionSource() };
+        var sut = Build(new FakePrinter(), storage);
+        var preview = await sut.PreviewAsync("Forbes", "Titular", "https://site.co/a", Date, "Ecopetrol");
+
+        var result = await sut.CommitAsync(preview.PreviewId!).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(preview.Link, result.Link);
+        Assert.Null(storage.UploadedTo); // still on its way
+        storage.UploadGate.SetResult();
+        await sut.WhenUploadedAsync();
+        Assert.Equal($"{Folder}/forbes-01-titular.pdf", storage.UploadedTo);
+    }
+
+    [Fact]
+    public async Task A_note_saved_while_another_is_uploading_takes_the_next_number()
+    {
+        // The first file is not in the archive's listing yet: its number is still taken.
+        var storage = new FakeStorage { UploadGate = new TaskCompletionSource() };
+        var sut = Build(new FakePrinter(), storage);
+
+        var first = await sut.CommitAsync((await sut.PreviewAsync("Forbes", "Primera", "https://site.co/a", Date, "Ecopetrol")).PreviewId!);
+        var second = await sut.CommitAsync((await sut.PreviewAsync("Forbes", "Segunda", "https://site.co/b", Date, "Ecopetrol")).PreviewId!);
+
+        Assert.Contains("forbes-01-primera.pdf", first.Link);
+        Assert.Contains("forbes-02-segunda.pdf", second.Link);
+        storage.UploadGate.SetResult();
+        await sut.WhenUploadedAsync();
+    }
+
+    [Fact]
+    public async Task A_failed_upload_is_retried_until_it_reaches_the_archive()
+    {
+        var storage = new FakeStorage { FailuresBeforeSuccess = 2 };
         var sut = Build(new FakePrinter(), storage);
         var preview = await sut.PreviewAsync("Forbes", "T", "https://site.co/a", Date, "Ecopetrol");
 
         var result = await sut.CommitAsync(preview.PreviewId!);
+        await sut.WhenUploadedAsync();
 
-        Assert.False(result.Succeeded);
-        Assert.Contains("servidor", result.Error);
-        Assert.NotNull(sut.FindPreviewFile(preview.PreviewId!));
+        Assert.True(result.Succeeded);
+        Assert.Equal(3, storage.UploadAttempts);
+        Assert.Equal($"{Folder}/forbes-01-t.pdf", storage.UploadedTo);
+    }
+
+    [Fact]
+    public async Task A_pdf_not_uploaded_before_a_restart_is_uploaded_by_the_next_start()
+    {
+        var scratch = NewScratch();
+        var failing = new FakeStorage { Succeeds = false };
+        var before = Build(new FakePrinter(), failing, scratch: scratch, retryDelay: TimeSpan.FromHours(1));
+        await before.CommitAsync((await before.PreviewAsync("Forbes", "T", "https://site.co/a", Date, "Ecopetrol")).PreviewId!);
+
+        var storage = new FakeStorage();
+        var after = Build(new FakePrinter(), storage, scratch: scratch); // the worker started again
+        await after.WhenUploadedAsync();
+
+        Assert.Equal($"{Folder}/forbes-01-t.pdf", storage.UploadedTo);
     }
 
     [Fact]
@@ -265,6 +317,7 @@ public sealed class NotePdfServiceTests
         Assert.True(File.Exists(sut.FindPreviewFile(preview.PreviewId!)!));
 
         var saved = await sut.CommitAsync(preview.PreviewId!);
+        await sut.WhenUploadedAsync();
 
         Assert.Equal(preview.Link, saved.Link);
         Assert.Equal($"{Folder}/forbes-02-ecopetrol-culmina.pdf", storage.UploadedTo);
@@ -336,8 +389,12 @@ public sealed class NotePdfServiceTests
         Assert.Contains("numerar", preview.Error);
     }
 
-    private static NotePdfService Build(FakePrinter printer, FakeStorage storage, Func<string, string?>? findStored = null) =>
-        new(printer, storage, "https://files.test", Path.Combine(Path.GetTempPath(), "note-pdf-tests"), NullLogger<NotePdfService>.Instance, findStored);
+    private static string NewScratch() => Path.Combine(Path.GetTempPath(), "note-pdf-tests", Guid.NewGuid().ToString("N"));
+
+    private static NotePdfService Build(
+        FakePrinter printer, FakeStorage storage, Func<string, string?>? findStored = null, string? scratch = null, TimeSpan? retryDelay = null) =>
+        new(printer, storage, "https://files.test", scratch ?? NewScratch(), NullLogger<NotePdfService>.Instance, findStored,
+            retryDelay ?? TimeSpan.FromMilliseconds(10));
 
     private sealed class FakePrinter : IBrowserPagePrinter
     {
@@ -370,9 +427,25 @@ public sealed class NotePdfServiceTests
         public bool ListFails { get; init; }
         public List<string> Existing { get; init; } = [];
         public string? UploadedTo { get; private set; }
+        // Holds every upload until it is set: the archive is slow.
+        public TaskCompletionSource? UploadGate { get; init; }
+        public int FailuresBeforeSuccess { get; set; }
+        public int UploadAttempts { get; private set; }
 
-        public Task<bool> UploadAsync(string localPath, string relativePath, CancellationToken cancellationToken = default)
+        public async Task<bool> UploadAsync(string localPath, string relativePath, CancellationToken cancellationToken = default)
         {
+            if (UploadGate is not null)
+            {
+                await UploadGate.Task.ConfigureAwait(false);
+            }
+
+            UploadAttempts++;
+            if (FailuresBeforeSuccess > 0)
+            {
+                FailuresBeforeSuccess--;
+                return false;
+            }
+
             if (Succeeds)
             {
                 UploadedTo = relativePath;
@@ -383,7 +456,7 @@ public sealed class NotePdfServiceTests
                 }
             }
 
-            return Task.FromResult(Succeeds);
+            return Succeeds;
         }
 
         public Task<IReadOnlyList<string>> ListAsync(string relativeDirectory, CancellationToken cancellationToken = default) =>

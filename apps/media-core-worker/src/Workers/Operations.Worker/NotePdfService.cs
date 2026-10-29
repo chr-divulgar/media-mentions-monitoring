@@ -74,6 +74,10 @@ public sealed record NotePdfResult(string? Link, string? Error)
 /// The file is named {outlet}-{NN}-{title}.pdf inside the day's folder: NN counts that outlet's
 /// notes of the day (01, 02...), so no two notes ever share a file. A note that already has its
 /// file keeps its number and overwrites it in place, so saving again is idempotent.
+///
+/// Saving does not wait for the upload: a PDF is several MB, seconds over the office's line. The name is chosen (and
+/// held, so the next note of the outlet takes the next number) and the file waits in {scratch}/pending until it is in
+/// the archive, retried as long as it takes and picked up again after a restart.
 /// </summary>
 public sealed partial class NotePdfService
 {
@@ -83,6 +87,7 @@ public sealed partial class NotePdfService
     private const int MaxSlugLength = 120;
     private const int MaxOutletSlugLength = 40;
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromHours(2);
+    private const int MaxRetryFactor = 30;
 
     private readonly IBrowserPagePrinter printer;
     private readonly Func<string, string?> findStored;
@@ -94,6 +99,11 @@ public sealed partial class NotePdfService
     // both take the same NN.
     private readonly SemaphoreSlim numberingGate = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingPreview> previews = new();
+    private readonly string pendingDirectory;
+    private readonly TimeSpan retryDelay;
+    // Archive path -> the local file waiting to go there (the latest one, when a note is saved again meanwhile).
+    private readonly ConcurrentDictionary<string, string> pendingUploads = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Task> uploadLoops = new(StringComparer.Ordinal);
 
     public NotePdfService(
         IBrowserPagePrinter printer,
@@ -101,7 +111,8 @@ public sealed partial class NotePdfService
         string publicBaseUrl,
         string scratchDirectory,
         ILogger<NotePdfService> logger,
-        Func<string, string?>? findStored = null)
+        Func<string, string?>? findStored = null,
+        TimeSpan? retryDelay = null)
     {
         this.findStored = findStored ?? (_ => null);
         this.printer = printer;
@@ -109,6 +120,9 @@ public sealed partial class NotePdfService
         this.publicBaseUrl = publicBaseUrl;
         this.scratchDirectory = scratchDirectory;
         this.logger = logger;
+        this.retryDelay = retryDelay ?? TimeSpan.FromMinutes(1);
+        pendingDirectory = Path.Combine(scratchDirectory, "pending");
+        ResumePendingUploads();
     }
 
     private sealed record PendingPreview(
@@ -225,14 +239,12 @@ public sealed partial class NotePdfService
                 return new NotePdfResult(null, target.Error);
             }
 
-            if (!await storage.UploadAsync(preview.LocalPath, target.RelativePath!, cancellationToken).ConfigureAwait(false))
-            {
-                // The preview stays, so saving can simply be retried.
-                return new NotePdfResult(null, "No se pudo subir el PDF al servidor de archivo.");
-            }
-
+            // Out of the scratch folder (purged after a while) into pending, named after where it goes.
+            Directory.CreateDirectory(pendingDirectory);
+            var pendingFile = Path.Combine(pendingDirectory, $"{Guid.NewGuid():N}__{target.RelativePath!.Replace('/', '~')}");
+            File.Move(preview.LocalPath, pendingFile);
             previews.TryRemove(previewId, out _);
-            TryDelete(preview.LocalPath);
+            QueueUpload(target.RelativePath!, pendingFile);
             return new NotePdfResult(BuildPublicLink(publicBaseUrl, target.RelativePath!), null);
         }
         finally
@@ -262,13 +274,101 @@ public sealed partial class NotePdfService
         var directory = BuildDirectory(date);
         try
         {
-            var existing = await storage.ListAsync(directory, cancellationToken).ConfigureAwait(false);
+            // The files still on their way count too: they are not in the listing yet.
+            var existing = (await storage.ListAsync(directory, cancellationToken).ConfigureAwait(false))
+                .Concat(pendingUploads.Keys
+                    .Where(path => path.StartsWith($"{directory}/", StringComparison.Ordinal))
+                    .Select(path => path[(directory.Length + 1)..]))
+                .Distinct(StringComparer.Ordinal);
             return ($"{directory}/{ChooseFileName(outletSlug, titleSlug, existing)}", null);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.LogWarning(exception, "[NotePdfService] Could not list {Directory} to number the PDF.", directory);
             return (null, "No se pudo consultar el servidor de archivo para numerar el PDF.");
+        }
+    }
+
+    // Waits until every saved PDF is in the archive (the uploads run on their own; tests wait for them).
+    internal async Task WhenUploadedAsync()
+    {
+        while (uploadLoops.Values.ToArray() is { Length: > 0 } running)
+        {
+            await Task.WhenAll(running).ConfigureAwait(false);
+        }
+    }
+
+    // The files a stop left waiting go up again.
+    private void ResumePendingUploads()
+    {
+        if (!Directory.Exists(pendingDirectory))
+        {
+            return;
+        }
+
+        foreach (var file in new DirectoryInfo(pendingDirectory).EnumerateFiles("*__*").OrderBy(file => file.LastWriteTimeUtc))
+        {
+            var relativePath = file.Name[(file.Name.IndexOf("__", StringComparison.Ordinal) + 2)..].Replace('~', '/');
+            QueueUpload(relativePath, file.FullName);
+        }
+    }
+
+    // One loop per archive path: it uploads whatever file is the latest for that path until one gets there.
+    private void QueueUpload(string relativePath, string localFile)
+    {
+        lock (pendingUploads)
+        {
+            if (pendingUploads.TryGetValue(relativePath, out var older) && older != localFile)
+            {
+                TryDelete(older); // the note was saved again before its first file got there
+            }
+
+            pendingUploads[relativePath] = localFile;
+            if (!uploadLoops.ContainsKey(relativePath))
+            {
+                uploadLoops[relativePath] = Task.Run(() => UploadLoopAsync(relativePath));
+            }
+        }
+    }
+
+    private async Task UploadLoopAsync(string relativePath)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            string localFile;
+            lock (pendingUploads)
+            {
+                localFile = pendingUploads[relativePath];
+            }
+
+            var uploaded = false;
+            try
+            {
+                uploaded = await storage.UploadAsync(localFile, relativePath).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "[NotePdfService] Upload of {Path} failed.", relativePath);
+            }
+
+            lock (pendingUploads)
+            {
+                // Done only if no newer file of the note arrived while this one was going up.
+                if (uploaded && pendingUploads[relativePath] == localFile)
+                {
+                    pendingUploads.TryRemove(relativePath, out _);
+                    uploadLoops.TryRemove(relativePath, out _);
+                    TryDelete(localFile);
+                    logger.LogInformation("[NotePdfService] {Path} is in the archive.", relativePath);
+                    return;
+                }
+            }
+
+            if (!uploaded)
+            {
+                logger.LogWarning("[NotePdfService] {Path} is not in the archive yet (attempt {Attempt}); trying again.", relativePath, attempt);
+                await Task.Delay(retryDelay * Math.Min(attempt, MaxRetryFactor)).ConfigureAwait(false);
+            }
         }
     }
 
