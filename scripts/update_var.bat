@@ -50,11 +50,13 @@ echo [%date% %time%] Starting update_var.bat>>"%LOG_FILE%"
 set "LOCK_DIR=%TEMP%\update_var_sync.lock"
 set "LOCK_HEARTBEAT=%LOCK_DIR%\heartbeat.txt"
 set "LOCK_STALE_SEC=480"
+set "LOCK_OWNED="
 
 if exist "%LOCK_DIR%" (
   set "LOCK_AGE_SEC=999999"
   if exist "%LOCK_HEARTBEAT%" (
-    for /f %%s in ('powershell -NoProfile -Command "[int]((Get-Date) - (Get-Item '%LOCK_HEARTBEAT%').LastWriteTime).TotalSeconds"') do set "LOCK_AGE_SEC=%%s"
+    REM A heartbeat from before the last boot is stale however recent: a reboot kills the instance that wrote it.
+    for /f %%s in ('powershell -NoProfile -Command "$h = (Get-Item '%LOCK_HEARTBEAT%').LastWriteTime; if ($h -lt (Get-CimInstance Win32_OperatingSystem).LastBootUpTime) { 999999 } else { [int]((Get-Date) - $h).TotalSeconds }"') do set "LOCK_AGE_SEC=%%s"
   )
   if !LOCK_AGE_SEC! LSS %LOCK_STALE_SEC% (
     echo [%date% %time%] ERROR: Another instance is already running ^(lock heartbeat !LOCK_AGE_SEC!s old^). Exiting.>>"%LOG_FILE%"
@@ -70,6 +72,7 @@ if errorlevel 1 (
   set "TASK_ERROR=1"
   goto :finalize
 )
+set "LOCK_OWNED=1"
 call :touch_lock
 
 for %%a in (cloudflared gh powershell) do (
@@ -341,6 +344,7 @@ if not "%TASK_ERROR%"=="0" (
 ) else (
   echo [%date% %time%] Script finished with exit code 0.>>"%LOG_FILE%"
 )
-rmdir /s /q "%LOCK_DIR%" >nul 2>&1
+REM Only the instance that took the lock frees it: one that found another running must leave its lock alone.
+if "%LOCK_OWNED%"=="1" rmdir /s /q "%LOCK_DIR%" >nul 2>&1
 
 endlocal & exit /b %TASK_ERROR%
