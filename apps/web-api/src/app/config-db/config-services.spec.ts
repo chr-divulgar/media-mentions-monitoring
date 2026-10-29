@@ -67,6 +67,38 @@ describe('SettingsService platforms (MongoDB)', () => {
     expect(db.platforms.docs).toHaveLength(0);
   });
 
+  // The worker only captures documents with a sourceId: one saved with a stream but no id was never recorded.
+  it('gives a source with a stream a sourceId from its name when none is typed', async () => {
+    const service = new SettingsService(noFirebase, buildDb() as never, noBackup);
+
+    const created = await service.createPlatform({
+      name: 'Canal Tró  TV', media: 'tv', primaryUrl: 'https://www.youtube.com/@CanalTROTelevision/live',
+    });
+    const again = await service.createPlatform({ name: 'Canal Tro TV', media: 'tv', streamUrl: 'https://x/live' });
+
+    expect(created.sourceId).toBe('Canal_Tro_TV');
+    expect(again.sourceId).toBe('Canal_Tro_TV_2'); // never the id of another source
+  });
+
+  it('leaves without a sourceId an entry with no stream (it is not a capture source)', async () => {
+    const service = new SettingsService(noFirebase, buildDb() as never, noBackup);
+
+    expect((await service.createPlatform({ name: 'Solo WhatsApp', media: 'radio' })).sourceId).toBeUndefined();
+  });
+
+  it('an edit gives a sourceId to a source saved before without one, and keeps an existing one', async () => {
+    const db = buildDb();
+    const service = new SettingsService(noFirebase, db as never, noBackup);
+    await db.platforms.insertOne({ name: 'Canal Tro', media: 'tv', streamUrl: 'https://youtube.com/live/x' });
+    const keeps = await service.createPlatform({ name: 'Otro', media: 'tv', sourceId: 'otro', streamUrl: 'https://y' });
+
+    const fixed = await service.updatePlatform({ id: String(db.platforms.docs[0]._id), zone: 'Magdalena Medio' });
+    const kept = await service.updatePlatform({ id: keeps.id, name: 'Otro nombre' });
+
+    expect(fixed.sourceId).toBe('Canal_Tro');
+    expect(kept.sourceId).toBe('otro');
+  });
+
   it('buildPlatformUpdate leaves out every field the request does not carry', () => {
     expect(buildPlatformUpdate({ zone: 'Z', audience: 5, rate: undefined })).toEqual({ zone: 'Z', audience: 5 });
     expect(buildPlatformUpdate({})).toEqual({});

@@ -147,7 +147,36 @@ export class SettingsService {
     return docs.map((doc) => toApiDocument(doc)) as unknown as PlatformDoc[];
   }
 
+  /**
+   * The worker only captures documents with a sourceId, and the screen leaves it optional: a source
+   * with a stream saved without one was never recorded. It gets one from its name ("Canal Tró" is
+   * "Canal_Tro"), with _2, _3... when another source already has it. An entry with no stream (only
+   * for WhatsApp, say) is not a capture source and keeps none.
+   */
+  private async missingSourceId(
+    name: string | undefined,
+    current: Record<string, unknown>,
+  ): Promise<string | undefined> {
+    const hasStream = Boolean(current.streamUrl || current.primaryUrl);
+    if (current.sourceId || !hasStream) return undefined;
+
+    const base =
+      (name ?? '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^A-Za-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'fuente';
+    for (let n = 1; ; n++) {
+      const candidate = n === 1 ? base : `${base}_${n}`;
+      if (!(await this.configDb.platforms.findOne({ sourceId: candidate }))) return candidate;
+    }
+  }
+
   async createPlatform(dto: PlatformDto): Promise<PlatformDoc> {
+    dto = {
+      ...dto,
+      sourceId: dto.sourceId || (await this.missingSourceId(dto.name, { ...dto })),
+    };
     const slots = dto.slots?.length
       ? dto.slots
       : generateDefaultSlots(dto.name ?? '');
@@ -184,10 +213,19 @@ export class SettingsService {
     const id = toObjectId(dto.id);
     if (!id) throw new NotFoundException('Platform id required');
 
+    const stored = await this.configDb.platforms.findOne({ _id: id });
+    if (!stored) throw new NotFoundException('Platform not found');
+    const update = buildPlatformUpdate(dto);
+    const sourceId = await this.missingSourceId(
+      (update.name as string | undefined) ?? (stored.name as string | undefined),
+      { ...stored, ...update },
+    );
+    if (sourceId) update.sourceId = sourceId;
+
     try {
       const updated = await this.configDb.platforms.findOneAndUpdate(
         { _id: id },
-        { $set: buildPlatformUpdate(dto) },
+        { $set: update },
         { returnDocument: 'after' },
       );
       if (!updated) throw new NotFoundException('Platform not found');
