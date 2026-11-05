@@ -546,6 +546,81 @@ public sealed class WebNewsCaptureUseCaseTests
         Assert.DoesNotContain(recorder.Records, r => r.Kind == IncidentKinds.CycleFailed);
     }
 
+    private sealed class FakeFeedSource : INewsFeedSource
+    {
+        public IReadOnlyList<NewsSearchItem> Items { get; init; } = [];
+        public Exception? Exception { get; init; }
+
+        public Task<IReadOnlyList<NewsSearchItem>> ReadAsync(CancellationToken cancellationToken = default) =>
+            Exception is not null ? throw Exception : Task.FromResult(Items);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_alerts_a_note_that_only_the_google_alerts_feed_brought()
+    {
+        // Google Alerts searches the whole text: a story naming the client only in its body.
+        var resolver = new FakeNewsLinkResolver();
+        var repository = new FakeWebArticleRepository();
+        var alertUseCase = new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["ecopetrol"], 1, 1) };
+        var recorder = new FakeIncidentRecorder();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            resolver: resolver,
+            reader: new FakeArticleReader { Content = new ArticleContent("Cronograma del gasoducto", "Ecopetrol rehabilitará", PublishedToday, null) },
+            repository: repository,
+            detectAlertsUseCase: alertUseCase,
+            recorder: recorder,
+            feed: new FakeFeedSource { Items = [DirectItem("https://www.portafolio.co/energia/gasoducto-505716", "portafolio.co")] });
+
+        await sut.ExecuteCycleAsync();
+
+        var saved = Assert.Single(repository.Saved);
+        Assert.Equal(WebArticleStatus.Alerted, saved.Status);
+        Assert.Equal("https://www.portafolio.co/energia/gasoducto-505716", saved.Url);
+        Assert.False(resolver.WasCalled);
+        Assert.Contains(recorder.Records, r => r.Kind == IncidentKinds.CycleOk && r.Reason!.Contains("1 de Google Alerts"));
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_processes_once_a_note_that_the_rss_and_the_feed_both_brought()
+    {
+        var repository = new FakeWebArticleRepository();
+        var alertUseCase = new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["ecopetrol"], 1, 1) };
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/x" },
+            reader: new FakeArticleReader { Content = new ArticleContent("Titulo", "Texto", PublishedToday, null) },
+            repository: repository,
+            detectAlertsUseCase: alertUseCase,
+            feed: new FakeFeedSource { Items = [DirectItem("https://eltiempo.com/x", "eltiempo.com")] });
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Equal(1, alertUseCase.Calls.Count(call => call == "https://eltiempo.com/x"));
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_keeps_going_when_the_google_alerts_feed_fails()
+    {
+        var recorder = new FakeIncidentRecorder();
+        var repository = new FakeWebArticleRepository();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/x" },
+            reader: new FakeArticleReader { Content = new ArticleContent("T", "P", PublishedToday, null) },
+            repository: repository,
+            recorder: recorder,
+            feed: new FakeFeedSource { Exception = new HttpRequestException("feed down") });
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Contains(recorder.Records, r => r.Kind == IncidentKinds.CycleOk);
+        Assert.DoesNotContain(recorder.Records, r => r.Kind == IncidentKinds.CycleFailed);
+        Assert.Single(repository.Saved); // the RSS note was still processed
+    }
+
     private static ClientKeywordConfig ClientWithKeyword(string name, string keyword) =>
         new(name, [new KeywordConfig(keyword, [])], new Dictionary<string, IReadOnlyList<string>>());
 
@@ -557,7 +632,8 @@ public sealed class WebNewsCaptureUseCaseTests
         FakeWebArticleRepository? repository = null,
         FakeDetectAlertsUseCase? detectAlertsUseCase = null,
         FakeIncidentRecorder? recorder = null,
-        INewsSearchProvider? directSearch = null) =>
+        INewsSearchProvider? directSearch = null,
+        INewsFeedSource? feed = null) =>
         new(
             new FakeClientConfigRepository(clients),
             detectAlertsUseCase ?? new FakeDetectAlertsUseCase(),
@@ -569,7 +645,8 @@ public sealed class WebNewsCaptureUseCaseTests
             keywordsPerQuery: 8,
             maxConcurrency: 4,
             clock: () => Now,
-            directSearchProvider: directSearch);
+            directSearchProvider: directSearch,
+            feedSource: feed);
 
     private sealed class FakeClientConfigRepository(IReadOnlyList<ClientKeywordConfig> clients) : IClientConfigRepository
     {

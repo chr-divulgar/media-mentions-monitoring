@@ -122,6 +122,34 @@ describe('ClientsService (MongoDB)', () => {
     await expect(service.getClient(b.id as string)).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  describe('Google Alerts feeds', () => {
+    const FEED = 'https://www.google.com/alerts/feeds/12345678901234567890/11111111111111111111';
+
+    it('keeps the feed links trimmed, without blanks or repeats', async () => {
+      const service = new ClientsService(buildDb() as never);
+      const created = await service.createClient({ name: 'Alfa', googleAlertsFeeds: [` ${FEED} `, '', FEED] });
+
+      expect(created.googleAlertsFeeds).toEqual([FEED]);
+      const updated = await service.updateClient(created.id as string, { name: 'Alfa', googleAlertsFeeds: [FEED, `${FEED}2`] });
+      expect(updated.googleAlertsFeeds).toEqual([FEED, `${FEED}2`]);
+    });
+
+    it('refuses a link that is not a Google Alerts feed', async () => {
+      const service = new ClientsService(buildDb() as never);
+
+      await expect(service.createClient({ name: 'Alfa', googleAlertsFeeds: ['https://www.google.com/alerts'] })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('leaves the feeds alone when an update does not carry them', async () => {
+      const service = new ClientsService(buildDb() as never);
+      const created = await service.createClient({ name: 'Alfa', googleAlertsFeeds: [FEED] });
+
+      expect((await service.updateClient(created.id as string, { name: 'Alfa Bis' })).googleAlertsFeeds).toEqual([FEED]);
+    });
+  });
+
   it('an update with nothing to change returns the client as it is', async () => {
     const service = new ClientsService(buildDb() as never);
     const created = await service.createClient({ name: 'Alfa' });

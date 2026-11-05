@@ -75,6 +75,8 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
     private readonly INewsSearchProvider newsSearchProvider;
     // Optional second source: Google's News tab (SerpApi), which also finds stories naming the client only in their body, for the main keyword of each client.
     private readonly INewsSearchProvider? directSearchProvider;
+    // Optional third source: Google Alerts feeds, which search the whole text of news and web pages.
+    private readonly INewsFeedSource? feedSource;
     private readonly INewsLinkResolver newsLinkResolver;
     private readonly IArticleReader articleReader;
     private readonly IWebArticleRepository webArticleRepository;
@@ -94,9 +96,11 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
         int keywordsPerQuery,
         int maxConcurrency,
         Func<DateTimeOffset>? clock = null,
-        INewsSearchProvider? directSearchProvider = null)
+        INewsSearchProvider? directSearchProvider = null,
+        INewsFeedSource? feedSource = null)
     {
         this.directSearchProvider = directSearchProvider;
+        this.feedSource = feedSource;
         this.clientConfigRepository = clientConfigRepository;
         this.detectAlertsUseCase = detectAlertsUseCase;
         this.newsSearchProvider = newsSearchProvider;
@@ -156,6 +160,13 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             found.TryAdd(item.GoogleId, item);
         }
 
+        // What the Google Alerts feeds brought. Like the direct search, a failure here is not the cycle's.
+        var fromFeeds = await ReadFeedsAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var item in fromFeeds)
+        {
+            found.TryAdd(item.GoogleId, item);
+        }
+
         var seenIds = await webArticleRepository.GetSeenGoogleIdsAsync(SeenLookback, cancellationToken).ConfigureAwait(false);
         // Direct results first: they need no resolving, so when the same address also came by RSS it is that one that is skipped.
         var newItems = found.Values.Where(item => !seenIds.Contains(item.GoogleId)).OrderByDescending(item => item.DirectLink).ToArray();
@@ -193,7 +204,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
         incidentRecorder.Record(
             SourceId,
             IncidentKinds.CycleOk,
-            $"{queries.Count} consulta(s) · {found.Count} nota(s) · {newItems.Length} nueva(s) · {alerted} alertada(s) · {rejected} rechazada(s) · {failed} con fallo");
+            $"{queries.Count} consulta(s) · {found.Count} nota(s) · {fromFeeds.Count} de Google Alerts · {newItems.Length} nueva(s) · {alerted} alertada(s) · {rejected} rechazada(s) · {failed} con fallo");
     }
 
     private enum ArticleOutcome
@@ -201,6 +212,24 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
         Alerted,
         Rejected,
         Failed,
+    }
+
+    private async Task<IReadOnlyList<NewsSearchItem>> ReadFeedsAsync(CancellationToken cancellationToken)
+    {
+        if (feedSource is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return await feedSource.ReadAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Never the cycle's failure: the RSS search already ran.
+            return [];
+        }
     }
 
     // The first keyword of each client, quoted: what is searched in the text of the pages.

@@ -31,6 +31,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "react-query";
 import api from "../../services/Agent";
 import ClientReportSettings from "./ClientReportSettings";
+import ClientGoogleAlertsSettings from "./ClientGoogleAlertsSettings";
 import type {
   PlatformDto,
   ClientDto,
@@ -976,6 +977,7 @@ const ClientModal: React.FC<{
       notes: initial?.notes ?? {},
       reportLogo: initial?.reportLogo ?? "",
       reportIndicators: initial?.reportIndicators ?? [],
+      googleAlertsFeeds: initial?.googleAlertsFeeds ?? [],
     }),
     [open, initial],
   );
@@ -998,6 +1000,9 @@ const ClientModal: React.FC<{
       notes: values.notes ?? initial?.notes ?? {},
       reportLogo: values.reportLogo ?? initial?.reportLogo ?? "",
       reportIndicators: values.reportIndicators ?? initial?.reportIndicators ?? [],
+      googleAlertsFeeds: (values.googleAlertsFeeds ?? initial?.googleAlertsFeeds ?? [])
+        .map((feed: string) => feed?.trim())
+        .filter(Boolean),
     });
   };
 
@@ -1418,6 +1423,11 @@ const ClientModal: React.FC<{
       label: "Informe diario",
       children: <ClientReportSettings />,
     },
+    {
+      key: "googleAlerts",
+      label: "Google Alerts",
+      children: <ClientGoogleAlertsSettings />,
+    },
   ];
 
   return (
@@ -1621,8 +1631,11 @@ const SettingsPage: React.FC = () => {
         queryClient.invalidateQueries(["clients"]);
         setClientModal({ open: false, data: null });
       },
-      onError: () => {
-        message.error("Error al guardar el cliente");
+      onError: (error: unknown) => {
+        // The API's own reason (a wrong logo, a link that is not a Google Alerts feed...), when it gives one.
+        const data = (error as { response?: { data?: { message?: unknown; error?: unknown } } })?.response?.data;
+        const reason = typeof data?.message === "string" ? data.message : typeof data?.error === "string" ? data.error : "";
+        message.error(reason || "Error al guardar el cliente");
       },
     },
   );

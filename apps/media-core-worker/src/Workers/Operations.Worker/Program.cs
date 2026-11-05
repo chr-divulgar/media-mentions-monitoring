@@ -259,6 +259,12 @@ if (options.WebNewsEnabled)
 			options.WebNewsRequestTimeoutSeconds,
 			sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SerpApiNewsProvider>>()));
 	}
+	// The clients' Google Alerts RSS feeds (Configuración → Clientes → Google Alerts), read from config.clients each cycle.
+	builder.Services.AddSingleton(sp => new GoogleAlertsFeedSource(
+		sp.GetRequiredService<HttpClient>(),
+		sp.GetRequiredService<MongoConfigStore>().GetGoogleAlertsFeedsAsync,
+		options.WebNewsRequestTimeoutSeconds,
+		sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<GoogleAlertsFeedSource>>()));
 	builder.Services.AddSingleton<INewsLinkResolver>(sp => new GoogleNewsLinkResolver(
 		sp.GetRequiredService<HttpClient>(),
 		options.WebNewsRequestTimeoutSeconds,
@@ -281,7 +287,8 @@ if (options.WebNewsEnabled)
 		sp.GetRequiredService<ISourceIncidentRecorder>(),
 		options.WebNewsKeywordsPerQuery,
 		options.WebNewsMaxConcurrency,
-		directSearchProvider: sp.GetService<SerpApiNewsProvider>()));
+		directSearchProvider: sp.GetService<SerpApiNewsProvider>(),
+		feedSource: sp.GetRequiredService<GoogleAlertsFeedSource>()));
 }
 builder.Services.AddSingleton<IDiscreteIngestionOrchestrator>(sp => new DiscreteIngestionOrchestrator(
 	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DiscreteIngestionOrchestrator>>(),

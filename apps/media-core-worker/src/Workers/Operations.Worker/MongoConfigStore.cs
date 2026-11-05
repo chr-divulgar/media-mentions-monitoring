@@ -35,6 +35,20 @@ public sealed class MongoConfigStore
 
     public IMongoCollection<BsonDocument> CaptureHours => monitoring.GetCollection<BsonDocument>("captureHours");
 
+    // Every client's Google Alerts RSS feed links (`clients.googleAlertsFeeds`, Configuración → Clientes → Google Alerts).
+    public async Task<IReadOnlyList<string>> GetGoogleAlertsFeedsAsync(CancellationToken cancellationToken = default)
+    {
+        var documents = await Clients
+            .Find(Builders<BsonDocument>.Filter.Type("googleAlertsFeeds", BsonType.Array))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return documents
+            .SelectMany(document => document["googleAlertsFeeds"].AsBsonArray)
+            .Where(feed => feed.IsString)
+            .Select(feed => feed.AsString)
+            .ToArray();
+    }
+
     /// <summary>
     /// Waits until MongoDB answers, retrying every minute. At boot the database service may not be
     /// up yet; the catalogue read that follows would otherwise fail (and every source with it).

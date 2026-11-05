@@ -47,6 +47,8 @@ export class ClientsController {
     try {
       return await this.clientsService.createClient(dto);
     } catch (error) {
+      // A bad request (wrong logo, wrong feed link...) keeps its 400 and its message.
+      if (error instanceof HttpException) throw error;
       throw new HttpException(
         { status: HttpStatus.INTERNAL_SERVER_ERROR, error: String(error) },
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -59,6 +61,8 @@ export class ClientsController {
     try {
       return await this.clientsService.updateClient(id, dto);
     } catch (error) {
+      // A bad request (wrong logo, wrong feed link...) keeps its 400 and its message.
+      if (error instanceof HttpException) throw error;
       throw new HttpException(
         { status: HttpStatus.INTERNAL_SERVER_ERROR, error: String(error) },
         HttpStatus.INTERNAL_SERVER_ERROR,

@@ -27,6 +27,21 @@ function checkReportLogo(logo: unknown): void {
   }
 }
 
+const GOOGLE_ALERTS_FEED_PREFIX = 'https://www.google.com/alerts/feeds/';
+
+// The client's Google Alerts RSS feeds, trimmed and without blanks or repeats. Only a feed link is taken: the worker
+// downloads each one every 15 minutes.
+function cleanGoogleAlertsFeeds(feeds: unknown): string[] {
+  const links = [...new Set((Array.isArray(feeds) ? feeds : []).map((feed) => String(feed ?? '').trim()).filter(Boolean))];
+  const wrong = links.find((link) => !link.startsWith(GOOGLE_ALERTS_FEED_PREFIX));
+  if (wrong) {
+    throw new BadRequestException(
+      `"${wrong}" no es el enlace de un feed de Google Alerts (debe empezar por ${GOOGLE_ALERTS_FEED_PREFIX}).`,
+    );
+  }
+  return links;
+}
+
 // Case and accents do not tell two names apart ("Inversión" is "inversion").
 const fold = (value?: string): string =>
   (value ?? '').normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
@@ -62,6 +77,7 @@ export class ClientsService {
       notes: dto.notes ?? {},
       reportLogo: dto.reportLogo ?? '',
       reportIndicators: dto.reportIndicators ?? [],
+      googleAlertsFeeds: cleanGoogleAlertsFeeds(dto.googleAlertsFeeds),
     };
     try {
       const result = await this.configDb.clients.insertOne({ ...payload });
@@ -87,6 +103,7 @@ export class ClientsService {
     if (dto.alertEmails !== undefined) payload['alertEmails'] = dto.alertEmails;
     if (dto.notes !== undefined) payload['notes'] = dto.notes;
     if (dto.reportLogo !== undefined) payload['reportLogo'] = dto.reportLogo ?? '';
+    if (dto.googleAlertsFeeds !== undefined) payload['googleAlertsFeeds'] = cleanGoogleAlertsFeeds(dto.googleAlertsFeeds);
     if (dto.reportIndicators !== undefined) {
       payload['reportIndicators'] = (dto.reportIndicators ?? [])
         .filter((item) => item?.source?.trim() || item?.label?.trim())

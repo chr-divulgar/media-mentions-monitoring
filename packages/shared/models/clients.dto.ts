@@ -52,6 +52,8 @@ export class ClientDto {
   readonly reportLogo?: string;
   /** The "Indicadores" block of the daily report. */
   readonly reportIndicators?: ReportIndicatorDto[];
+  /** Google Alerts RSS feeds (https://www.google.com/alerts/feeds/...) the worker reads for this client's notes. */
+  readonly googleAlertsFeeds?: string[];
 }
 
 export class MediaTypeDto {
