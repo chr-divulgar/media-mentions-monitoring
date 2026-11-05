@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AngleSharp;
@@ -76,7 +77,7 @@ public sealed partial class HtmlArticleReader : IArticleReader
                 return await ReadAsync(target, redirectHops + 1, cancellationToken).ConfigureAwait(false);
             }
 
-            return LogDateSource(url, await ParseAsync(html).ConfigureAwait(false));
+            return LogDateSource(url, await ParseAsync(html, url).ConfigureAwait(false));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -152,7 +153,7 @@ public sealed partial class HtmlArticleReader : IArticleReader
         var html = await browser.GetHtmlAsync(url, cancellationToken).ConfigureAwait(false);
         return html is null
             ? new ArticleContent(null, null, null, $"{Blocked}, también con navegador", Blocked: true)
-            : LogDateSource(url, await ParseAsync(html).ConfigureAwait(false));
+            : LogDateSource(url, await ParseAsync(html, url).ConfigureAwait(false));
     }
 
     private ArticleContent LogDateSource(string url, ArticleContent content)
@@ -168,7 +169,7 @@ public sealed partial class HtmlArticleReader : IArticleReader
     }
 
     // Internal so the extraction heuristics can be covered with saved HTML fixtures.
-    internal static async Task<ArticleContent> ParseAsync(string html)
+    internal static async Task<ArticleContent> ParseAsync(string html, string? url = null)
     {
         var context = BrowsingContext.New(Configuration.Default);
         var document = await context.OpenAsync(request => request.Content(html)).ConfigureAwait(false);
@@ -198,7 +199,8 @@ public sealed partial class HtmlArticleReader : IArticleReader
             firstParagraph = TruncateAtFirstSentence(firstParagraph);
         }
 
-        return new ArticleContent(title, firstParagraph, publishedAt, null, fullText, PublishedAtSource: publishedAtSource);
+        return new ArticleContent(
+            title, firstParagraph, publishedAt, null, fullText, PublishedAtSource: publishedAtSource, SiteName: ExtractSiteName(document, url));
     }
 
     private const string PageTextScanSource = "page-text-scan";
@@ -501,6 +503,114 @@ public sealed partial class HtmlArticleReader : IArticleReader
             default:
                 return null;
         }
+    }
+
+    // The outlet's own name, best first: og:site_name without its tagline ("Semana - Últimas Noticias..." is "Semana"),
+    // the JSON-LD publisher, and last the end of the page title ("... | PETROGUIA") when it matches the site's address,
+    // so the end of a headline is never taken for it.
+    private static string? ExtractSiteName(IDocument document, string? url)
+    {
+        if (ExtractMetaContent(document, "og:site_name") is { } siteName && WithoutTagline(siteName) is { Length: > 0 } name)
+        {
+            return name;
+        }
+
+        foreach (var script in document.QuerySelectorAll("script[type='application/ld+json']"))
+        {
+            if (TryFindJsonLdPublisherName(script.TextContent) is { } publisher)
+            {
+                return publisher;
+            }
+        }
+
+        var title = document.QuerySelector("title")?.TextContent?.Trim();
+        if (title is null || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        foreach (var separator in TitleSeparators)
+        {
+            var index = title.LastIndexOf(separator, StringComparison.Ordinal);
+            var tail = index > 0 ? title[(index + separator.Length)..].Trim() : string.Empty;
+            if (tail.Length is > 0 and <= 40 && NamesTheSite(tail, uri.Host))
+            {
+                return tail;
+            }
+        }
+
+        return null;
+    }
+
+    private static readonly string[] TitleSeparators = [" | ", " – ", " — ", " - "];
+
+    private static string WithoutTagline(string siteName)
+    {
+        foreach (var separator in TitleSeparators)
+        {
+            var index = siteName.IndexOf(separator, StringComparison.Ordinal);
+            if (index > 0)
+            {
+                siteName = siteName[..index];
+            }
+        }
+
+        return siteName.Trim();
+    }
+
+    // "PETROGUIA" names www.petroguia.com, "Corrillos" names corrillos.com.co; "Venezuela" names neither.
+    private static bool NamesTheSite(string candidate, string host)
+    {
+        static string Compact(string text) => new(text
+            .Normalize(NormalizationForm.FormD)
+            .Where(char.IsLetterOrDigit)
+            .Select(char.ToLowerInvariant)
+            .ToArray());
+
+        var label = Compact(host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..].Split('.')[0] : host.Split('.')[0]);
+        var name = Compact(candidate);
+        return label.Length >= 3 && name.Length >= 3 && (name.Contains(label, StringComparison.Ordinal) || label.Contains(name, StringComparison.Ordinal));
+    }
+
+    // The "publisher": {"name": ...} of the news markup, in any of its shapes (an object, an array, a "@graph").
+    private static string? TryFindJsonLdPublisherName(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return FindPublisherName(document.RootElement);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? FindPublisherName(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray().Select(FindPublisherName).FirstOrDefault(name => name is not null);
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (element.TryGetProperty("publisher", out var publisher))
+        {
+            var organization = publisher.ValueKind == JsonValueKind.Array ? publisher.EnumerateArray().FirstOrDefault() : publisher;
+            if (organization.ValueKind == JsonValueKind.Object
+                && organization.TryGetProperty("name", out var name)
+                && name.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(name.GetString()))
+            {
+                return name.GetString()!.Trim();
+            }
+        }
+
+        return element.TryGetProperty("@graph", out var graph) ? FindPublisherName(graph) : null;
     }
 
     [GeneratedRegex(@"\s+")]

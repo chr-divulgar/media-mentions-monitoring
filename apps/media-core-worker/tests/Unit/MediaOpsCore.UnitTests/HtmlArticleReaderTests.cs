@@ -332,4 +332,28 @@ public sealed class HtmlArticleReaderTests
 
         Assert.Null(HtmlArticleReader.FindClientRedirect(article, null));
     }
+
+    // The outlet's own name, for notes found by a source that only gives the address (Google Alerts).
+    [Theory]
+    [InlineData("<meta property=\"og:site_name\" content=\"Semana - Últimas Noticias de Colombia y el Mundo\">", "https://www.semana.com/a", "Semana")]
+    [InlineData("<meta property=\"og:site_name\" content=\"Diario La República\">", "https://www.larepublica.co/a", "Diario La República")]
+    [InlineData("<script type=\"application/ld+json\">{\"@type\":\"NewsArticle\",\"author\":{\"name\":\"Juan Pérez\"},\"publisher\":{\"@type\":\"Organization\",\"name\":\"El Tiempo\"}}</script>", "https://www.eltiempo.com/a", "El Tiempo")]
+    [InlineData("<title>De La Espriella declara estratégico reactivar gasoducto | PETROGUIA</title>", "https://www.petroguia.com/pet/a", "PETROGUIA")]
+    [InlineData("<title>Gasoducto Antonio Ricaurte, proyecto de interés estratégico – Corrillos</title>", "https://www.corrillos.com.co/a", "Corrillos")]
+    public async Task ParseAsync_reads_the_outlet_name_the_page_declares(string head, string url, string expected)
+    {
+        var content = await HtmlArticleReader.ParseAsync($"<html><head>{head}</head><body></body></html>", url);
+
+        Assert.Equal(expected, content.SiteName);
+    }
+
+    [Fact]
+    public async Task ParseAsync_does_not_take_the_end_of_the_headline_for_the_outlet()
+    {
+        // "Venezuela" closes the headline; it is not the site (corrillos.com.co).
+        var content = await HtmlArticleReader.ParseAsync(
+            "<html><head><title>Ecopetrol y el gasoducto - Venezuela</title></head><body></body></html>", "https://www.corrillos.com.co/a");
+
+        Assert.Null(content.SiteName);
+    }
 }

@@ -24,7 +24,10 @@ public sealed record ArticleContent(
     // Null when PublishedAt came from structured/conventional markup. "page-text-scan" when no
     // convention matched and the date was guessed from the first date-like text on the page — a
     // weaker signal, kept so those records can be audited or surfaced later.
-    string? PublishedAtSource = null)
+    string? PublishedAtSource = null,
+    // The outlet's own name as the page declares it ("Semana", "PETROGUIA"): for notes whose source only gave the
+    // address (Google Alerts), so they do not show up as "semana.com". Null when the page does not say.
+    string? SiteName = null)
 {
     public bool Succeeded => ErrorMessage is null;
 }

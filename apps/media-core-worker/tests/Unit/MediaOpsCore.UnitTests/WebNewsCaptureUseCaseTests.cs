@@ -582,6 +582,42 @@ public sealed class WebNewsCaptureUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteCycleAsync_names_a_feed_note_after_the_outlet_its_page_declares_not_its_domain()
+    {
+        var repository = new FakeWebArticleRepository();
+        var alertUseCase = new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["ecopetrol"], 1, 1) };
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            reader: new FakeArticleReader { Content = new ArticleContent("Titulo", "Ecopetrol", PublishedToday, null, SiteName: "PETROGUIA") },
+            repository: repository,
+            detectAlertsUseCase: alertUseCase,
+            feed: new FakeFeedSource { Items = [DirectItem("https://www.petroguia.com/pet/noticias/a", "petroguia.com")] });
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Equal("PETROGUIA", Assert.Single(repository.Saved).Outlet);
+        Assert.Equal("PETROGUIA", alertUseCase.Outlets.Single());
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_keeps_the_outlet_name_the_search_gave()
+    {
+        // Google News already names the outlet ("El Tiempo"): the page's own name does not replace it.
+        var repository = new FakeWebArticleRepository();
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://eltiempo.com/x" },
+            reader: new FakeArticleReader { Content = new ArticleContent("T", "P", PublishedToday, null, SiteName: "EL TIEMPO - Noticias") },
+            repository: repository,
+            detectAlertsUseCase: new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["ecopetrol"], 1, 1) });
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Equal(Item("a1").Outlet, Assert.Single(repository.Saved).Outlet);
+    }
+
+    [Fact]
     public async Task ExecuteCycleAsync_processes_once_a_note_that_the_rss_and_the_feed_both_brought()
     {
         var repository = new FakeWebArticleRepository();
@@ -728,6 +764,7 @@ public sealed class WebNewsCaptureUseCaseTests
         public WebArticleAlertOutcome Outcome { get; set; } = new([], [], 0, 0);
         public string? LastMatchText { get; private set; }
         public List<string> Calls { get; } = [];
+        public List<string> Outlets { get; } = [];
         public List<(string Outlet, string Url, string Title, string Reason, string? FirstParagraph, string? MatchText)> Unreadable { get; } = [];
 
         public Task ExecuteAsync(string platform, string media, string filePath, string text, DateTimeOffset startTime, DateTimeOffset endTime, CancellationToken cancellationToken = default) =>
@@ -739,6 +776,7 @@ public sealed class WebNewsCaptureUseCaseTests
         {
             LastMatchText = matchText;
             Calls.Add(url);
+            Outlets.Add(outlet);
             return Task.FromResult(Outcome);
         }
 

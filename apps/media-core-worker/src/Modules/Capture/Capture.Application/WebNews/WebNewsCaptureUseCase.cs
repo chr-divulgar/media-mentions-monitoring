@@ -312,6 +312,13 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
 
             var title = content.Title ?? item.Title;
 
+            // A source that only gave the address (Google Alerts: "petroguia.com") takes the name the page declares; a
+            // name the search already gave ("El Tiempo") stays.
+            if (item.DirectLink && item.Outlet.Contains('.') && !string.IsNullOrWhiteSpace(content.SiteName))
+            {
+                item = item with { Outlet = content.SiteName.Trim() };
+            }
+
             if (content.PublishedAt is null)
             {
                 // Not "confirmed not from today" — the date is simply unknown — so it is kept for a person to judge.
