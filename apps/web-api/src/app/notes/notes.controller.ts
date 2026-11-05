@@ -19,6 +19,7 @@ import {
   DashboardPeriod,
   CreateInternetPdfDto,
   SaveInternetNoteDto,
+  ImportNotesRequestDto,
 } from '@repo/shared';
 
 @Controller('notes')
@@ -143,14 +144,16 @@ export class NotesController {
   }
 
   @Post('import-excel')
-  async importExcel(@Body() notes: NoteDto[]) {
+  async importExcel(@Body() body: ImportNotesRequestDto) {
     try {
-      return await this.notesService.importNotes(notes);
+      return await this.notesService.importNotes(body);
     } catch (error) {
+      // A bad request (no client...) keeps its own status and message: the screen shows it as is.
+      if (error instanceof HttpException) throw error;
       throw new HttpException(
         {
           status: HttpStatus.INTERNAL_SERVER_ERROR,
-          error: `There was an error processing the request importExcel ${error}`,
+          error: `No se pudieron guardar las notas: ${error instanceof Error ? error.message : String(error)}`,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );

@@ -476,3 +476,161 @@ describe('NotesService.deleteNote', () => {
     await expect(service.deleteNote(ALERT_ID)).rejects.toThrow('no existe');
   });
 });
+
+describe('NotesService.importNotes (Excel)', () => {
+  // The repository the import uses: notes already stored, and what insertMany receives.
+  function buildImport(stored: Record<string, unknown>[] = []) {
+    const inserted: Record<string, unknown>[] = [];
+    const noteRepo = {
+      find: jest.fn().mockResolvedValue(stored),
+      create: jest.fn((fields: Record<string, unknown>) => ({ ...fields })),
+      insertMany: jest.fn(async (notes: Record<string, unknown>[]) => {
+        inserted.push(...notes);
+        return notes;
+      }),
+    };
+    const dataSource = { getMongoRepository: () => noteRepo };
+    const service = new NotesService(dataSource as never, {} as never, {} as never);
+    return { service, inserted, noteRepo };
+  }
+
+  const row = (fields: Record<string, unknown> = {}) => ({
+    sheet: 'Oct 26 a nov 01',
+    row: 2,
+    date: '2026-10-26',
+    media: 'Internet',
+    mediaName: 'El Frente',
+    title: 'Cayó alias ‘Visajes’, señalado de amenazar a comerciantes',
+    ...fields,
+  });
+
+  it('imports a valid row under the chosen client', async () => {
+    const { service, inserted } = buildImport();
+
+    const result = await service.importNotes({ clientName: 'Ecopetrol', notes: [row()] });
+
+    expect(result).toEqual({ inserted: 1, duplicates: 0, errors: [] });
+    expect(inserted[0]).toMatchObject({ clientName: 'Ecopetrol', title: row().title, media: 'Internet' });
+    expect(inserted[0]).not.toHaveProperty('sheet');
+  });
+
+  it('reports each row it cannot take, with its sheet, row and reason, instead of skipping it silently', async () => {
+    const { service, inserted } = buildImport();
+
+    const result = await service.importNotes({
+      clientName: 'Ecopetrol',
+      notes: [row({ row: 5, title: '' }), row({ row: 6, date: '46320' }), row({ row: 7, media: '', mediaName: '' })],
+    });
+
+    expect(result.inserted).toBe(0);
+    expect(inserted).toHaveLength(0);
+    expect(result.errors).toEqual([
+      { sheet: 'Oct 26 a nov 01', row: 5, reason: 'Falta: Titular' },
+      { sheet: 'Oct 26 a nov 01', row: 6, reason: 'Fecha inválida: "46320"' },
+      { sheet: 'Oct 26 a nov 01', row: 7, reason: 'Falta: Tipo de medio, Medio' },
+    ]);
+  });
+
+  it('keeps the portal note when the Excel brings it with other capitals, accents or quotes', async () => {
+    const portalNote = {
+      _id: 'p1',
+      date: '2026-10-26',
+      media: 'internet',
+      mediaName: 'El Frente',
+      title: "Cayo alias 'Visajes', señalado de amenazar a comerciantes",
+      attachment: 'https://chrdivulgar.org/x.pdf',
+    };
+    const { service, inserted, noteRepo } = buildImport([portalNote]);
+
+    const result = await service.importNotes({ clientName: 'Ecopetrol', notes: [row(), row({ media: 'Televisión', mediaName: 'RCN', title: 'Otra' })] });
+
+    expect(result).toEqual({ inserted: 1, duplicates: 1, errors: [] });
+    expect(inserted.map((note) => note.title)).toEqual(['Otra']);
+    expect(portalNote.attachment).toBe('https://chrdivulgar.org/x.pdf'); // untouched
+    // One query for the dates of the file, not one per row.
+    expect(noteRepo.find).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats televisión and tv as the same medium', async () => {
+    const { service } = buildImport([{ date: '2026-10-26', media: 'tv', mediaName: 'RCN', title: 'Nota' }]);
+
+    const result = await service.importNotes({ clientName: 'Ecopetrol', notes: [row({ media: 'Televisión', mediaName: 'RCN', title: 'Nota' })] });
+
+    expect(result.duplicates).toBe(1);
+  });
+
+  it('recognizes the portal note under the outlet name the Excel uses', async () => {
+    const { service, inserted } = buildImport([
+      { date: '2026-10-28', media: 'internet', mediaName: 'LaRepublica.co', title: 'Ecopetrol revelará sus resultados' },
+      { date: '2026-10-28', media: 'internet', mediaName: 'Revista Semana', title: 'ISA eligió nueva junta' },
+      { date: '2026-10-26', media: 'internet', mediaName: 'Las2orillas', title: 'La empresa de Roa' },
+      { date: '2026-10-28', media: 'internet', mediaName: 'Forbes Colombia', title: 'Asamblea de ISA cambia reglas' },
+    ]);
+
+    const result = await service.importNotes({
+      clientName: 'Ecopetrol',
+      notes: [
+        row({ date: '2026-10-28', mediaName: 'La República', title: 'Ecopetrol revelará sus resultados' }),
+        row({ date: '2026-10-28', mediaName: 'Semana', title: 'ISA eligió nueva junta' }),
+        row({ date: '2026-10-26', mediaName: 'Las 2 Orillas', title: 'La empresa de Roa' }),
+        row({ date: '2026-10-28', mediaName: 'Forbes', title: 'Asamblea de ISA cambia reglas' }),
+      ],
+    });
+
+    expect(result).toMatchObject({ inserted: 0, duplicates: 4 });
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('keeps notes that only share a link: social posts and press PDFs carry one address for several stories', async () => {
+    const { service, inserted } = buildImport();
+
+    await service.importNotes({
+      clientName: 'Ecopetrol',
+      notes: [
+        row({ media: 'Redes Sociales', mediaName: 'Facebook', title: 'Uno', link: 'https://facebook.com/story.php?id=1' }),
+        row({ media: 'Redes Sociales', mediaName: 'Facebook', title: 'Dos', link: 'https://facebook.com/story.php?id=2' }),
+      ],
+    });
+
+    expect(inserted).toHaveLength(2);
+  });
+
+  it('keeps the same headline from two different outlets: a syndicated story is two notes', async () => {
+    const { service, inserted } = buildImport();
+
+    const result = await service.importNotes({
+      clientName: 'Ecopetrol',
+      notes: [
+        row({ mediaName: 'La FM', title: 'Nuevo nombramiento en Ecopetrol' }),
+        row({ mediaName: 'RCN Noticias', title: 'Nuevo nombramiento en Ecopetrol' }),
+        // "el norte" is inside "diariodelnorte" as letters, not as words: two outlets.
+        row({ mediaName: 'Diario del Norte', title: 'Nuevo nombramiento en Ecopetrol' }),
+        row({ mediaName: 'El Norte', title: 'Nuevo nombramiento en Ecopetrol' }),
+      ],
+    });
+
+    expect(result.inserted).toBe(4);
+    expect(inserted).toHaveLength(4);
+  });
+
+  it('saves a note repeated inside the same file only once', async () => {
+    const { service, inserted } = buildImport();
+
+    const result = await service.importNotes({ clientName: 'Ecopetrol', notes: [row(), row({ row: 9, title: row().title.toUpperCase() })] });
+
+    expect(result).toMatchObject({ inserted: 1, duplicates: 1 });
+    expect(inserted).toHaveLength(1);
+  });
+
+  it('refuses an import without a client', async () => {
+    const { service } = buildImport();
+
+    await expect(service.importNotes({ clientName: '  ', notes: [row()] })).rejects.toThrow('cliente');
+  });
+
+  it('refuses a body that is not a list of notes', async () => {
+    const { service } = buildImport();
+
+    await expect(service.importNotes({ clientName: 'Ecopetrol', notes: 'x' as never })).rejects.toThrow();
+  });
+});

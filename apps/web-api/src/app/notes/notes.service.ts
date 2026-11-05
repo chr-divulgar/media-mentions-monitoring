@@ -1,7 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource, MongoRepository } from 'typeorm';
 import { ObjectId } from 'mongodb';
 import {
+  ImportNotesRequestDto,
+  ImportNotesResultDto,
   NoteDto,
   InternetNotePreviewDto,
   SaveInternetNoteDto,
@@ -22,6 +24,29 @@ import { WhatsAppService } from '../settings/whatsapp.service';
 import { noteMediaKind } from '../video/video.helpers';
 import { buildDailyReport, dailyReportFileName } from './daily-report';
 import * as fs from 'fs';
+
+// Lowercase, no accents, any run of other characters (quotes, dashes...) as one space.
+const foldText = (text?: unknown): string =>
+  String(text ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+// An outlet's name in words, without a closing domain: "LaRepublica.co" is "larepublica".
+const outletWords = (name?: unknown): string => foldText(name).replace(/ (com co|com|co|net|org)$/, '');
+
+// The portal names outlets as Google News does ("LaRepublica.co", "Revista Semana", "Forbes Colombia") and the Excel
+// as people do ("La República", "Semana", "Forbes"). The same outlet: equal without spaces, or one name inside the other
+// in whole words ("Diario del Norte" is not "El Norte").
+const sameOutlet = (a?: unknown, b?: unknown): boolean => {
+  const [x, y] = [outletWords(a), outletWords(b)];
+  if (!x || !y) return false;
+  if (x.replace(/ /g, '') === y.replace(/ /g, '')) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return ` ${long} `.includes(` ${short} `);
+};
 
 @Injectable()
 export class NotesService {
@@ -506,31 +531,81 @@ export class NotesService {
     return key === 'television' || key === 'televisión' ? 'tv' : key;
   }
 
-  async importNotes(notes: NoteDto[]): Promise<{ inserted: number }> {
-    if (!Array.isArray(notes)) {
-      throw new Error('Input must be an array of notes');
+  /**
+   * Notes from the monthly Excel, all for the client chosen on upload. A row that cannot be taken is
+   * reported with its sheet, row and reason (never skipped silently), and a note that already exists
+   * is left as it is: the one saved from the portal keeps its PDF. "The same note" is the same date,
+   * medium kind, outlet and headline once capitals, accents, quotes and spacing are set aside
+   * ("Internet" is "internet", "Televisión" is "tv").
+   */
+  async importNotes(body: ImportNotesRequestDto): Promise<ImportNotesResultDto> {
+    const clientName = body?.clientName?.trim();
+    if (!clientName) {
+      throw new BadRequestException('Elige el cliente de las notas que vas a cargar.');
     }
-    // Filtrar notas duplicadas por combinación única y validar campos obligatorios
-    const insertedNotes: NoteDto[] = [];
-    for (const n of notes) {
-      if (!n.date || !n.media || !n.mediaName || !n.title) {
-        // Saltar notas que no tengan los campos mínimos requeridos
+    if (!Array.isArray(body.notes)) {
+      throw new BadRequestException('La carga debe traer la lista de notas.');
+    }
+
+    const errors: ImportNotesResultDto['errors'] = [];
+    const valid: ImportNotesRequestDto['notes'] = [];
+    for (const note of body.notes) {
+      const missing = (
+        [
+          [note.date, 'Fecha'],
+          [note.media, 'Tipo de medio'],
+          [note.mediaName, 'Medio'],
+          [note.title, 'Titular'],
+        ] as const
+      )
+        .filter(([value]) => !String(value ?? '').trim())
+        .map(([, label]) => label);
+      if (missing.length > 0) {
+        errors.push({ sheet: note.sheet, row: note.row, reason: `Falta: ${missing.join(', ')}` });
+      } else if (!moment(note.date, 'YYYY-MM-DD', true).isValid()) {
+        errors.push({ sheet: note.sheet, row: note.row, reason: `Fecha inválida: "${note.date}"` });
+      } else {
+        valid.push(note);
+      }
+    }
+
+    // The notes already stored for the file's dates, in one query.
+    const dates = valid.map((note) => note.date as string).sort();
+    const stored = dates.length
+      ? await this.noteRepo.find({
+          where: { date: { $gte: dates[0], $lte: dates[dates.length - 1] } },
+        } as never)
+      : [];
+    // The same note is the same story (date, medium kind, headline) from the same outlet. Not the headline alone: one
+    // story from an agency comes out in several outlets, and each one is its own note. Not the link either: social
+    // posts share one address (facebook.com/story.php?...) and one press PDF can hold two stories.
+    const outletsByStory = new Map<string, unknown[]>();
+    const storyKey = (note: NoteDto) =>
+      [note.date, this.normalizeMediaKey(foldText(note.media)), foldText(note.title)].join('|');
+    const remember = (note: NoteDto) =>
+      outletsByStory.set(storyKey(note), [...(outletsByStory.get(storyKey(note)) ?? []), note.mediaName]);
+    const exists = (note: NoteDto) =>
+      (outletsByStory.get(storyKey(note)) ?? []).some((outlet) => sameOutlet(outlet, note.mediaName));
+    stored.forEach(remember);
+
+    const toInsert: Note[] = [];
+    let duplicates = 0;
+    for (const note of valid) {
+      if (exists(note)) {
+        duplicates++;
         continue;
       }
-      const exists = await this.noteRepo.findOneBy({
-        title: n.title,
-        date: n.date,
-        media: n.media,
-        mediaName: n.mediaName,
-      });
-      if (!exists) {
-        insertedNotes.push(this.noteRepo.create(n));
-      }
+      remember(note);
+      // Where the row came from is for the error list, not part of the note.
+      const fields: Partial<ImportNotesRequestDto['notes'][number]> = { ...note, clientName };
+      delete fields.sheet;
+      delete fields.row;
+      toInsert.push(this.noteRepo.create(fields));
     }
-    if (insertedNotes.length > 0) {
-      await this.noteRepo.insertMany(insertedNotes);
+    if (toInsert.length > 0) {
+      await this.noteRepo.insertMany(toInsert);
     }
-    return { inserted: insertedNotes.length };
+    return { inserted: toInsert.length, duplicates, errors };
   }
 
   // Devuelve el rango de fechas min/max de la colección note

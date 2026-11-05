@@ -60,3 +60,19 @@ export class NoteDto {
   readonly attachment?: string;
   message?: string;
 }
+
+/** One note of an Excel import, with the sheet and row it came from (to say which row failed). */
+export type ImportNoteRowDto = NoteDto & { sheet?: string; row?: number };
+
+/** Body of POST /notes/import-excel. */
+export interface ImportNotesRequestDto {
+  clientName: string;
+  notes: ImportNoteRowDto[];
+}
+
+/** 201 body of POST /notes/import-excel: what came in, what already existed and what could not (and why). */
+export interface ImportNotesResultDto {
+  inserted: number;
+  duplicates: number;
+  errors: { sheet?: string; row?: number; reason: string }[];
+}

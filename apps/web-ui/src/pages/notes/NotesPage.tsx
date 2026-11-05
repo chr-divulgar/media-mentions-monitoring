@@ -7,8 +7,11 @@ import {
   Upload,
   Modal,
   Checkbox,
+  Select,
   message,
 } from "antd";
+import type { AxiosError } from "axios";
+import type { ImportNoteRowDto, ImportNotesResultDto } from "@repo/shared";
 import { FileWordOutlined, UploadOutlined } from "@ant-design/icons";
 import * as XLSX from "xlsx";
 import dayjs from "dayjs";
@@ -19,6 +22,56 @@ import { useQuery } from "react-query";
 import DailyReportModal from "./DailyReportModal";
 import NotesTable from "./NotesTable";
 import NoteEditModal from "./NoteEditModal";
+import {
+  excelSerialToIsoDate,
+  mapHeaders,
+  missingRequired,
+  type ImportField,
+} from "./excelImport";
+
+// What the API said went wrong: its own message (400) or error (500), not a generic text.
+const apiErrorMessage = (error: unknown, fallback: string): string => {
+  const data = (error as AxiosError<{ message?: unknown; error?: unknown }>)?.response?.data;
+  if (typeof data?.message === "string") return data.message;
+  if (typeof data?.error === "string") return data.error;
+  return fallback;
+};
+
+// The import's result, shown as it is: what came in, what already existed and each row that could not.
+const showImportResult = (result: ImportNotesResultDto) => {
+  const lines = [
+    `Importadas: ${result.inserted}`,
+    `Ya existían (se conservan las del portal): ${result.duplicates}`,
+    `Con error: ${result.errors.length}`,
+  ];
+  const content = (
+    <div>
+      {lines.map((line) => (
+        <div key={line}>{line}</div>
+      ))}
+      {result.errors.length > 0 && (
+        <div style={{ maxHeight: 280, overflowY: "auto", marginTop: 12 }}>
+          {result.errors.slice(0, 200).map((error, index) => (
+            <div key={index} style={{ fontSize: 12 }}>
+              {error.sheet ? `${error.sheet}, fila ${error.row}: ` : ""}
+              {error.reason}
+            </div>
+          ))}
+          {result.errors.length > 200 && (
+            <div style={{ fontSize: 12 }}>… y {result.errors.length - 200} más</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+  if (result.inserted === 0 && result.errors.length > 0) {
+    Modal.error({ title: "No se importó ninguna nota", content, width: 560 });
+  } else if (result.errors.length > 0) {
+    Modal.warning({ title: "Importación con errores", content, width: 560 });
+  } else {
+    Modal.success({ title: "Notas importadas", content, width: 560 });
+  }
+};
 
 const NotesPage: React.FC = () => {
   // Por defecto, seleccionar la semana del último dato (maxDate)
@@ -34,12 +87,21 @@ const NotesPage: React.FC = () => {
   // Guardar nueva nota
   const handleAddNote = async (note: any) => {
     try {
-      await api.post("/notes/import-excel", [note]);
+      const { data } = await api.post<ImportNotesResultDto>("/notes/import-excel", {
+        clientName: note.clientName,
+        notes: [note],
+      });
+      if (data.inserted === 0) {
+        message.error(
+          data.errors[0]?.reason ?? "Esa nota ya existe (misma fecha, medio y titular)",
+        );
+        return;
+      }
       message.success("Nota agregada correctamente");
       setAddModalOpen(false);
       refetch();
     } catch (err) {
-      message.error("Error al agregar la nota");
+      message.error(apiErrorMessage(err, "Error al agregar la nota"));
     }
   };
   // Consultar min/max date al montar
@@ -60,8 +122,15 @@ const NotesPage: React.FC = () => {
     };
     fetchDates();
   }, []);
-  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  // Each sheet of the file and the required columns it lacks (empty: it can be imported).
+  const [sheets, setSheets] = useState<{ name: string; missing: string[] }[]>([]);
   const [selectedSheets, setSelectedSheets] = useState<string[]>([]);
+  const [importClient, setImportClient] = useState<string | undefined>();
+  const { data: clients = [] } = useQuery<{ name: string }[]>(
+    ["clients"],
+    async () => (await api.get("/clients")).data,
+    { staleTime: 5 * 60 * 1000 },
+  );
   const [modalVisible, setModalVisible] = useState(false);
   const workbookRef = useRef<XLSX.WorkBook | null>(null);
   const [loading, setLoading] = useState(false);
@@ -115,8 +184,17 @@ const NotesPage: React.FC = () => {
       const data = new Uint8Array(e.target?.result as ArrayBuffer);
       const workbook = XLSX.read(data, { type: "array" });
       workbookRef.current = workbook;
-      setSheetNames(workbook.SheetNames);
-      setSelectedSheets([]);
+      // Only the sheets with the note columns can be imported; the others are summaries or pivot tables.
+      const found = workbook.SheetNames.map((name) => {
+        const [header = []] = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], {
+          header: 1,
+          defval: "",
+        });
+        return { name, missing: missingRequired(mapHeaders(header)) };
+      });
+      setSheets(found);
+      setSelectedSheets(found.filter((sheet) => sheet.missing.length === 0).map((sheet) => sheet.name));
+      setImportClient((current) => current ?? clients[0]?.name);
       setModalVisible(true);
     };
     reader.readAsArrayBuffer(file);
@@ -125,26 +203,6 @@ const NotesPage: React.FC = () => {
 
   const handleSheetSelect = (checkedValues: any) => {
     setSelectedSheets(checkedValues);
-  };
-
-  const columnMap: Record<string, string> = {
-    Fecha: "date",
-    "TIPO DE MEDIO": "media",
-    Medio: "mediaName",
-    VARIABLES: "topic", // ← Sin espacio
-    Tema: "subtopic",
-    Subtemas: "subsubtopic",
-    Origen: "origin",
-    DEPARTAMENTO: "department",
-    Zona: "zone",
-    Ciudad: "city",
-    Titular: "title",
-    RESUMEN: "summary",
-    TARIFA: "rate",
-    Sentimiento: "sentiment",
-    VALOR: "value",
-    Audiencia: "audience",
-    LINK: "link",
   };
 
   const normalizeWithSingleSeparator = (
@@ -203,72 +261,62 @@ const NotesPage: React.FC = () => {
 
   const handleModalOk = async () => {
     if (!workbookRef.current) return;
+    if (!importClient) {
+      message.error("Elige el cliente de las notas");
+      return;
+    }
     setLoading(true);
-    const notes: any[] = [];
+    const notes: ImportNoteRowDto[] = [];
 
-    selectedSheets.forEach((sheetName) => {
-      const ws = workbookRef.current!.Sheets[sheetName];
-      const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    for (const sheetName of selectedSheets) {
+      const ws = workbookRef.current.Sheets[sheetName];
+      const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "", blankrows: true });
+      const columns = mapHeaders(rows[0] ?? []);
 
-      json.forEach((row, rowIdx) => {
-        // Trim a todas las keys del row
-        const trimmedRow = Object.keys(row).reduce(
-          (acc, key) => {
-            acc[key.trim()] = row[key];
-            return acc;
-          },
-          {} as Record<string, any>,
-        );
+      rows.slice(1).forEach((cells, index) => {
+        if (cells.every((cell) => String(cell ?? "").trim() === "")) return;
+        const sheetRow = range.s.r + index + 1; // zero-based, as the sheet counts it
+        const note: Record<string, unknown> = { sheet: sheetName, row: sheetRow + 1 };
 
-        const note: Record<string, any> = {};
-        Object.entries(columnMap).forEach(([col, key]) => {
-          let value = trimmedRow[col] ?? "";
-
-          // Si la columna es fecha, formatear a YYYY-MM-DD
-          if (key === "date" && value) {
-            if (typeof value === "number") {
-              const utcDays = Math.floor(value);
-              const utcDate = new Date(
-                Date.UTC(1899, 11, 30) + (utcDays + 1) * 86400000,
-              );
-              value = dayjs(utcDate).format("YYYY-MM-DD");
-            } else {
-              const d = dayjs(value);
-              value = d.isValid() ? d.format("YYYY-MM-DD") : value;
-            }
+        for (const [field, column] of Object.entries(columns) as [ImportField, number][]) {
+          let value = cells[column];
+          if (field === "date") {
+            const text = String(value ?? "").trim();
+            value =
+              typeof value === "number"
+                ? excelSerialToIsoDate(value)
+                : text && dayjs(text).isValid()
+                  ? dayjs(text).format("YYYY-MM-DD")
+                  : text; // left as it is: the API says which row has a date it cannot read
+          } else if (field === "link") {
+            // The cell shows the headline; the address is its hyperlink.
+            const cell = ws[XLSX.utils.encode_cell({ r: sheetRow, c: range.s.c + column })];
+            value = cell?.l?.Target ?? value;
+          } else if (field === "rate" || field === "audience") {
+            value = toTruncatedInteger(value as string | number);
+          } else if (typeof value === "string") {
+            value = value.trim();
           }
-
-          // Si la columna es LINK, buscar el hipervínculo real si existe
-          if (key === "link") {
-            const cellAddress = XLSX.utils.encode_cell({
-              r: rowIdx + 1,
-              c: Object.keys(trimmedRow).indexOf(col),
-            });
-            const cell = ws[cellAddress];
-            if (cell && cell.l && cell.l.Target) {
-              value = cell.l.Target;
-            }
-          }
-
-          if (key === "rate" || key === "audience") {
-            value = toTruncatedInteger(value);
-          }
-
-          note[key] = value;
-        });
-
-        notes.push(note);
+          note[field] = value;
+        }
+        notes.push(note as ImportNoteRowDto);
       });
-    });
+    }
 
     try {
-      await api.post("/notes/import-excel", notes);
-      message.success("Notas importadas correctamente");
+      const { data } = await api.post<ImportNotesResultDto>("/notes/import-excel", {
+        clientName: importClient,
+        notes,
+      });
+      setModalVisible(false);
+      showImportResult(data);
+      refetch();
     } catch (err) {
-      message.error("Error al importar las notas");
+      message.error(apiErrorMessage(err, "No se pudieron cargar las notas"));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    setModalVisible(false);
   };
 
   const uploadProps = {
@@ -335,11 +383,11 @@ const NotesPage: React.FC = () => {
       </Row>
       <DailyReportModal open={reportOpen} onClose={() => setReportOpen(false)} defaultRange={selectedDates} />
       <Modal
-        title="Selecciona las hojas a cargar"
+        title="Cargar notas desde Excel"
         open={modalVisible}
         onOk={handleModalOk}
         onCancel={() => setModalVisible(false)}
-        okButtonProps={{ disabled: selectedSheets.length === 0 || loading }}
+        okButtonProps={{ disabled: selectedSheets.length === 0 || !importClient || loading }}
         cancelButtonProps={{ disabled: loading }}
         maskClosable={!loading}
         closable={!loading}
@@ -366,34 +414,55 @@ const NotesPage: React.FC = () => {
             <div style={{ marginTop: 16 }}>Importando notas...</div>
           </div>
         ) : (
-          <Checkbox.Group
-            value={selectedSheets}
-            onChange={handleSheetSelect}
-            disabled={loading}
-          >
-            <Row gutter={[16, 8]}>
-              {sheetNames.map((name) => (
-                <Col span={8} key={name} style={{ marginBottom: 8 }}>
-                  <Checkbox value={name}>
-                    <span
-                      style={{
-                        display: "inline-block",
-                        maxWidth: 120,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        verticalAlign: "middle",
-                        cursor: "pointer",
-                      }}
-                      title={name}
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <span style={{ marginRight: 8 }}>Cliente:</span>
+              <Select
+                value={importClient}
+                onChange={setImportClient}
+                options={clients.map((client) => ({ value: client.name, label: client.name }))}
+                style={{ minWidth: 220 }}
+              />
+            </div>
+            <div style={{ marginBottom: 8 }}>Hojas a cargar:</div>
+            <Checkbox.Group
+              value={selectedSheets}
+              onChange={handleSheetSelect}
+              disabled={loading}
+            >
+              <Row gutter={[16, 8]}>
+                {sheets.map(({ name, missing }) => (
+                  <Col span={8} key={name} style={{ marginBottom: 8 }}>
+                    <Checkbox
+                      value={name}
+                      disabled={missing.length > 0}
+                      title={missing.length > 0 ? `No son notas: faltan las columnas ${missing.join(", ")}` : name}
                     >
-                      {name}
-                    </span>
-                  </Checkbox>
-                </Col>
-              ))}
-            </Row>
-          </Checkbox.Group>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          maxWidth: 120,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          verticalAlign: "middle",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {name}
+                      </span>
+                    </Checkbox>
+                  </Col>
+                ))}
+              </Row>
+            </Checkbox.Group>
+            {sheets.some((sheet) => sheet.missing.length > 0) && (
+              <div style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
+                Las hojas deshabilitadas no tienen las columnas de una nota (Fecha, Tipo de medio, Medio, Titular).
+                Pasa el cursor sobre ellas para ver cuáles faltan.
+              </div>
+            )}
+          </>
         )}
       </Modal>
       <h2>
