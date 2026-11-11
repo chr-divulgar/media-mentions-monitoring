@@ -55,7 +55,7 @@ describe('dailyReportFileName', () => {
 });
 
 describe('groupByTheme', () => {
-  it('groups by subtopic, falls back to the topic and then to "Otros", in the order the notes were registered', () => {
+  it('groups by subtopic, falls back to the topic and then to "Otros", themes A-Z and notes in the order they were registered', () => {
     const groups = groupByTheme([
       note({ title: 'c', subtopic: 'gas', index: '3' }),
       note({ title: 'a', subtopic: 'Carlos Suarez', index: '1' }),
@@ -67,8 +67,8 @@ describe('groupByTheme', () => {
 
     expect(groups.map((g) => [g.theme, g.notes.map((n) => n.title).join('')])).toEqual([
       ['Carlos Suarez', 'af'],
-      ['gas', 'bc'],
       ['Finanzas', 'd'],
+      ['gas', 'bc'],
       ['Otros', 'e'],
     ]);
   });
@@ -119,8 +119,8 @@ describe('buildDailyReport', () => {
     expect(seen).toContain('Indicadores');
     expect(seen).toContain('El Tiempo');
     expect(seen).toContain('Divisas');
-    // Themes in the order of their first note; each note: outlet, headline, summary.
-    expect(seen.indexOf('Temática: nombramientos en Ecopetrol')).toBeLessThan(seen.indexOf('Temática: Carlos Suarez'));
+    // Themes A-Z; each note: outlet, headline, summary.
+    expect(seen.indexOf('Temática: Carlos Suarez')).toBeLessThan(seen.indexOf('Temática: nombramientos en Ecopetrol'));
     expect(seen).toContain('Investing.com|Ecopetrol nombra vicepresidente|Ecopetrol S.A. anunció hoy…');
     expect(seen).toContain('Infobae|Salida de Rodrigo Lara|La salida del titular…');
     // The headline links to the archived PDF, or to the article when the note has no PDF.
