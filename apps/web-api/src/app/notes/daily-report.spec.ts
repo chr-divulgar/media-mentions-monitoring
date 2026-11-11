@@ -81,6 +81,17 @@ describe('groupByTheme', () => {
 
     expect(groups[0].notes.map((n) => n.title)).toEqual(['early', 'late']);
   });
+
+  it('orders the notes of a theme A-Z by outlet, then in registered order', () => {
+    const groups = groupByTheme([
+      note({ title: 'p', mediaName: 'Portafolio', subtopic: 'x', index: '1' }),
+      note({ title: 't2', mediaName: 'El Tiempo', subtopic: 'x', index: '3' }),
+      note({ title: 'm', mediaName: 'el Meridiano', subtopic: 'x', index: '4' }),
+      note({ title: 't1', mediaName: 'El Tiempo', subtopic: 'x', index: '2' }),
+    ]);
+
+    expect(groups[0].notes.map((n) => n.title)).toEqual(['m', 't1', 't2', 'p']);
+  });
 });
 
 describe('buildDailyReport', () => {

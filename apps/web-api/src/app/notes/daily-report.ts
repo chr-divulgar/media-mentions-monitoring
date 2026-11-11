@@ -85,7 +85,9 @@ const registeredOrder = (a: ReportNote, b: ReportNote): number => {
   return new Date(a.startTime ?? 0).getTime() - new Date(b.startTime ?? 0).getTime();
 };
 
-/** The notes by theme (the subtopic; else the topic; else "Otros"), themes A-Z, notes in registered order. */
+const az = (a = '', b = '') => a.trim().localeCompare(b.trim(), 'es', { sensitivity: 'base' });
+
+/** The notes by theme (the subtopic; else the topic; else "Otros"), themes A-Z, notes A-Z by outlet (then registered order). */
 export function groupByTheme(notes: ReportNote[]): { theme: string; notes: ReportNote[] }[] {
   const groups = new Map<string, ReportNote[]>();
   for (const item of [...notes].sort(registeredOrder)) {
@@ -93,8 +95,8 @@ export function groupByTheme(notes: ReportNote[]): { theme: string; notes: Repor
     groups.set(theme, [...(groups.get(theme) ?? []), item]);
   }
   return [...groups.entries()]
-    .sort(([a], [b]) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
-    .map(([theme, grouped]) => ({ theme, notes: grouped }));
+    .sort(([a], [b]) => az(a, b))
+    .map(([theme, grouped]) => ({ theme, notes: grouped.sort((a, b) => az(a.mediaName, b.mediaName)) }));
 }
 
 const run = (text: string, options: { bold?: boolean; color?: string } = {}) =>
