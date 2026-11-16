@@ -279,6 +279,15 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates, showSla = fals
       width: "100px",
     },
     {
+      // When the alert arrived; the list is ordered by it, newest first (a web note can arrive hours after "Hora").
+      title: "Llegó",
+      dataIndex: "capturedAt",
+      key: "capturedAt",
+      render: (text) => (text ? getWorkerDate(text).format("HH:mm:ss") : ""),
+      ellipsis: true,
+      width: "100px",
+    },
+    {
       title: "Tipo",
       dataIndex: "type",
       key: "type",

@@ -182,7 +182,7 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                switch (await ProcessArticleAsync(item, processedUrls, cancellationToken).ConfigureAwait(false))
+                switch (await ProcessArticleAsync(item, seenIds, processedUrls, cancellationToken).ConfigureAwait(false))
                 {
                     case ArticleOutcome.Alerted:
                         Interlocked.Increment(ref alerted);
@@ -262,7 +262,10 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
     }
 
     private async Task<ArticleOutcome> ProcessArticleAsync(
-        NewsSearchItem item, System.Collections.Concurrent.ConcurrentDictionary<string, byte> processedUrls, CancellationToken cancellationToken)
+        NewsSearchItem item,
+        IReadOnlySet<string> seenIds,
+        System.Collections.Concurrent.ConcurrentDictionary<string, byte> processedUrls,
+        CancellationToken cancellationToken)
     {
         // The real article URL once resolved, or Google's own interstitial link as a fallback for
         // every message recorded before (or without) a successful resolution — an operator checking
@@ -284,9 +287,9 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
 
             var url = linkResolution.Url!;
             linkForIncidents = url;
-            if (!processedUrls.TryAdd(url, 0))
+            if (seenIds.Contains(WebArticleKeys.Url(url)) || !processedUrls.TryAdd(url, 0))
             {
-                // Also found by the other search in this cycle: that one is the note.
+                // Also found by another source, in this cycle or an earlier one: that one is the note.
                 await SaveAsync(item, url, WebArticleStatus.Duplicate, item.Title, null, [], [], cancellationToken).ConfigureAwait(false);
                 return ArticleOutcome.Rejected;
             }
@@ -317,6 +320,14 @@ public sealed class WebNewsCaptureUseCase : IWebNewsCaptureUseCase
             if (item.DirectLink && item.Outlet.Contains('.') && !string.IsNullOrWhiteSpace(content.SiteName))
             {
                 item = item with { Outlet = content.SiteName.Trim() };
+            }
+
+            // The same story under another address (Google Alerts gives ".../53431", Google News ".../53431-titular"):
+            // the same site and headline, already handled in the last 24 h or earlier in this cycle.
+            if (WebArticleKeys.Story(url, title) is { } story && (seenIds.Contains(story) || !processedUrls.TryAdd(story, 0)))
+            {
+                await SaveAsync(item, url, WebArticleStatus.Duplicate, title, content.FirstParagraph, [], [], cancellationToken).ConfigureAwait(false);
+                return ArticleOutcome.Rejected;
             }
 
             if (content.PublishedAt is null)

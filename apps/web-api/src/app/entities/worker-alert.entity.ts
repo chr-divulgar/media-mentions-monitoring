@@ -52,6 +52,10 @@ export class WorkerAlert {
   @Column()
   slaSeconds?: number;
 
+  // When the worker caught it: for a web note it can be hours after its publication (startTime/endTime).
+  @Column()
+  capturedAt?: Date;
+
   // For a repeat, the id (as a string) of the "Nueva" alert that started its story.
   @Column()
   repeatOfAlertId?: string;

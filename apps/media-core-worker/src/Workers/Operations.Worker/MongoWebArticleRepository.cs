@@ -40,16 +40,32 @@ public sealed class MongoWebArticleRepository : IWebArticleRepository
                 Builders<BsonDocument>.Filter.Ne("status", WebArticleStatus.Failed),
                 Builders<BsonDocument>.Filter.Gte("attemptCount", maxFailedAttempts)));
 
-        var documents = await collection.Find(filter).Project(Builders<BsonDocument>.Projection.Include("googleId").Include("url"))
+        var documents = await collection.Find(filter)
+            .Project(Builders<BsonDocument>.Projection.Include("googleId").Include("url").Include("title").Include("status"))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         // Direct search results are keyed "url:{address}": an address the News RSS already brought is seen too, so it is
-        // not read again (and not recorded as no-keyword because its alert already exists).
-        return documents
-            .SelectMany(document => document.TryGetValue("url", out var url) && url.IsString
-                ? new[] { document["googleId"].AsString, $"url:{url.AsString}" }
-                : new[] { document["googleId"].AsString })
-            .ToHashSet(StringComparer.Ordinal);
+        // not read again (and not recorded as no-keyword because its alert already exists). The story key (site and
+        // headline) catches the same story under another address; a failed article has no trustworthy headline.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var document in documents)
+        {
+            seen.Add(document["googleId"].AsString);
+            if (!document.TryGetValue("url", out var url) || !url.IsString)
+            {
+                continue;
+            }
+
+            seen.Add(WebArticleKeys.Url(url.AsString));
+            var title = document.TryGetValue("title", out var value) && value.IsString ? value.AsString : null;
+            var failed = document.TryGetValue("status", out var status) && status == WebArticleStatus.Failed;
+            if (!failed && WebArticleKeys.Story(url.AsString, title) is { } story)
+            {
+                seen.Add(story);
+            }
+        }
+
+        return seen;
     }
 
     public async Task<bool> SaveAsync(WebArticleRecord record, CancellationToken cancellationToken = default)

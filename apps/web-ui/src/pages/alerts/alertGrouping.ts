@@ -6,6 +6,10 @@ const REPEATED_WITHIN_MINUTE = "RepetidaMinuto";
 
 const timeOf = (alert: AlertDto): number => new Date(alert.endTime ?? alert.startTime ?? 0).getTime();
 
+// When the alert arrived: a web note found late (published at 4 a.m., caught at 9 p.m.) goes to the top, not among the
+// morning's alerts. Older alerts without capturedAt fall back to their own time.
+const arrivalOf = (alert: AlertDto): number => (alert.capturedAt ? new Date(alert.capturedAt).getTime() : timeOf(alert));
+
 /**
  * Folds each repeat under the "Nueva" alert it repeats, so the table lists a story once and its
  * repeats can be expanded under it.
@@ -13,7 +17,7 @@ const timeOf = (alert: AlertDto): number => new Date(alert.endTime ?? alert.star
  * The link is the alert's own `repeatOfAlertId`, which the worker stores when it classifies the
  * alert, so nothing is guessed from times or text. A repeat whose "Nueva" is not in the list (it
  * is on another day, is filtered out, or the alert was stored before the link existed) stays on
- * its own row. Rows and each group's repeats come back in time order.
+ * its own row. Rows come back newest arrival first; each group's repeats in time order.
  */
 export const groupRepeatedAlerts = (alerts: AlertDto[]): AlertRow[] => {
   const rows: AlertRow[] = alerts.map((alert) => ({ ...alert }));
@@ -36,7 +40,7 @@ export const groupRepeatedAlerts = (alerts: AlertDto[]): AlertRow[] => {
   for (const row of topLevel) {
     row.children?.sort(byTime);
   }
-  return topLevel.sort(byTime);
+  return topLevel.sort((a, b) => arrivalOf(b) - arrivalOf(a));
 };
 
 /**

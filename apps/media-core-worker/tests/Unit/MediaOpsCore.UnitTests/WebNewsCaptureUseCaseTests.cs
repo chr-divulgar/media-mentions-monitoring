@@ -637,6 +637,44 @@ public sealed class WebNewsCaptureUseCaseTests
     }
 
     [Fact]
+    public async Task ExecuteCycleAsync_does_not_alert_again_a_story_an_earlier_cycle_alerted_under_another_address()
+    {
+        // Google Alerts brought ".../publicacion/53431" at noon; at night Google News brought ".../53431-ecopetrol-planea-...".
+        var repository = new FakeWebArticleRepository();
+        repository.SeenIds.Add(WebArticleKeys.Story("https://ciudadccs.info/publicacion/53431", "Ecopetrol planea reactivar gasoducto")!);
+        var alertUseCase = new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["ecopetrol"], 1, 1) };
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://ciudadccs.info/publicacion/53431-ecopetrol-planea-reactivar-gasoducto" },
+            reader: new FakeArticleReader { Content = new ArticleContent("Ecopetrol  planea reactivar GASODUCTO", "Busca", PublishedToday, null) },
+            repository: repository,
+            detectAlertsUseCase: alertUseCase);
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Empty(alertUseCase.Calls);
+        Assert.Equal(WebArticleStatus.Duplicate, Assert.Single(repository.Saved).Status);
+    }
+
+    [Fact]
+    public async Task ExecuteCycleAsync_alerts_once_a_story_two_sources_brought_under_different_addresses_in_one_cycle()
+    {
+        var alertUseCase = new FakeDetectAlertsUseCase { Outcome = new WebArticleAlertOutcome(["Ecopetrol"], ["ecopetrol"], 1, 1) };
+        var sut = Build(
+            clients: [ClientWithKeyword("Ecopetrol", "ecopetrol")],
+            search: new FakeNewsSearchProvider { Items = [Item("a1")] },
+            resolver: new FakeNewsLinkResolver { Url = "https://ciudadccs.info/publicacion/53431-ecopetrol-planea" },
+            reader: new FakeArticleReader { Content = new ArticleContent("Ecopetrol planea", "Busca", PublishedToday, null) },
+            detectAlertsUseCase: alertUseCase,
+            feed: new FakeFeedSource { Items = [DirectItem("https://ciudadccs.info/publicacion/53431", "ciudadccs.info")] });
+
+        await sut.ExecuteCycleAsync();
+
+        Assert.Single(alertUseCase.Calls);
+    }
+
+    [Fact]
     public async Task ExecuteCycleAsync_keeps_going_when_the_google_alerts_feed_fails()
     {
         var recorder = new FakeIncidentRecorder();

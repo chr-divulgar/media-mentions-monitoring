@@ -22,6 +22,8 @@ export class AlertDto {
   readonly level?: string;
   /** Seconds from capture to the first confirmed delivery (worker alerts, RQ-031); absent until sent. */
   readonly slaSeconds?: number;
+  /** When the worker caught it (worker alerts): a web note can arrive hours after it was published. */
+  readonly capturedAt?: string;
   /** For a repeat, the id of the "Nueva" alert that started its story (worker alerts); absent on older alerts. */
   readonly repeatOfAlertId?: string;
   /** Web mention the worker could not read or date: only title and link are stored, and this says what to check. */
