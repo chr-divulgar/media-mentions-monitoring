@@ -139,6 +139,12 @@ dotnet run --project src/Workers/Operations.Worker   # Run worker locally
 MONGODB_URI=mongodb://localhost:27017
 BACK_PORT=3001
 OPEN_AI_KEY=<key>
+# AI provider of the title/summary (apps/web-api/src/app/ai). Default "openai". An ordered list works: each Gemini key is
+# its own entry, and the next one is tried when one fails (quota, invalid key, outage).
+AI_PROVIDERS=gemini,openai
+GEMINI_API_KEYS=<key1>,<key2>
+GEMINI_MODEL=gemini-flash-latest   # optional
+OPENAI_MODEL=gpt-5-mini            # optional
 NODE_ENV=development|production
 ```
 

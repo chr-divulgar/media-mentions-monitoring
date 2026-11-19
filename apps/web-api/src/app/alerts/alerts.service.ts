@@ -1,5 +1,5 @@
 // alerta.service.ts
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   DataSource,
   FindOneOptions,
@@ -18,9 +18,8 @@ import {
 } from '@repo/shared';
 import { splitAudio } from './audio-chunker';
 import { transcribeWithPython } from './google-speech';
-import OpenAI from 'openai';
 import * as path from 'path';
-import { ConfigService } from '@nestjs/config';
+import { TEXT_MODEL, TextModel } from '../ai/text-model';
 import { Alert, Note, Transcription, WorkerAlert } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as fs from 'fs/promises';
@@ -31,19 +30,16 @@ export class AlertsService {
   workerAlertsRepo: MongoRepository<WorkerAlert>;
   transcriptRepo: MongoRepository<Transcription>;
   noteRepo: MongoRepository<Note>;
-  openai: OpenAI;
 
   constructor(
     @InjectDataSource('monitoring') private readonly dataSource: DataSource,
-    configService: ConfigService,
+    // Whichever AI provider the environment configures (see ai/build-text-model.ts).
+    @Inject(TEXT_MODEL) private readonly textModel: TextModel,
   ) {
     this.alertsRepo = this.dataSource.getMongoRepository(Alert);
     this.workerAlertsRepo = this.dataSource.getMongoRepository(WorkerAlert);
     this.transcriptRepo = this.dataSource.getMongoRepository(Transcription);
     this.noteRepo = this.dataSource.getMongoRepository(Note);
-    this.openai = new OpenAI({
-      apiKey: configService.get<string>('OPEN_AI_KEY'),
-    });
   }
 
   async getChatResponse(getSummaryDto: GetSummaryDto): Promise<SummaryDto> {
@@ -52,15 +48,8 @@ export class AlertsService {
       el resumen máximo alrededor de 120 palabras que sea coherente y bien redactado. 
       Asegúrate de que el resumen sea fiel a los hechos y no atribuya incorrectamente acciones o eventos a personas o entidades mencionadas en el texto.`;
 
-      // return { title: 'Titulo', summary: prompt };
-
-      const response = await this.openai.responses.create({
-        model: 'gpt-5-mini',
-        instructions: prompt,
-        input: getSummaryDto.text,
-      });
-
-      const message = response.output_text.replace(/#/g, '').replace(/\*/g, '');
+      const answer = await this.textModel.complete(prompt, getSummaryDto.text ?? '');
+      const message = answer.replace(/#/g, '').replace(/\*/g, '');
       const title = message.split('\n')[0].trim();
       const summary = message.split('\n').slice(1).join('\n').trim();
 
@@ -71,7 +60,7 @@ export class AlertsService {
 
       return { title, summary };
     } catch (error) {
-      throw new Error(`Error fetching response from OpenAI.${error}`);
+      throw new Error(`Error generando el resumen. ${error}`);
     }
   }
 
