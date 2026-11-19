@@ -89,14 +89,15 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         IOperationalMetrics operationalMetrics,
         ICaptureAttemptObserver captureAttemptObserver,
         IMonitoringArtifactRepository monitoringArtifactRepository,
-        IDetectAlertsUseCase detectAlertsUseCase)
+        IDetectAlertsUseCase detectAlertsUseCase,
+        ISpeechToText speechToText)
     {
         this.options = options;
         this.logger = logger;
         this.operationalMetrics = operationalMetrics;
         this.captureAttemptObserver = captureAttemptObserver;
         this.monitoringArtifactRepository = monitoringArtifactRepository;
-        chunkTranscriptionPipeline = new ChunkTranscriptionPipeline(logger, detectAlertsUseCase);
+        chunkTranscriptionPipeline = new ChunkTranscriptionPipeline(logger, detectAlertsUseCase, speechToText);
         EnsureFfmpegInitialized();
     }
 
@@ -1836,13 +1837,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
             var payloadPcm = ConcatPcm(overlapTailPcm, currentPcm);
             var preprocessedPcm = PreprocessPcmForRecognition(payloadPcm);
-            var flacWindows = BuildFlacRecognitionWindows(
+            var pcmWindows = BuildRecognitionWindows(
                 preprocessedPcm,
                 options.FlacSilenceMaxChunkSeconds + TranscriptionChunkOverlapSeconds);
-            if (flacWindows.Count == 0)
+            if (pcmWindows.Count == 0)
             {
                 logger.LogWarning(
-                    "FLAC encoding produced 0 windows for source {SourceId} chunk [{Start:HH:mm:ss}–{End:HH:mm:ss}]. Chunk dropped without SR.",
+                    "Recognition produced 0 windows for source {SourceId} chunk [{Start:HH:mm:ss}–{End:HH:mm:ss}]. Chunk dropped without SR.",
                     sourceId, chunkStartedAt, chunkEndedAt);
                 pcmBuffer.ResetAfterWrite();
                 return;
@@ -1852,7 +1853,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 transcriptionJsonPath,
                 chunkStartedAt,
                 chunkEndedAt,
-                flacWindows,
+                pcmWindows,
                 sourceId,
                 source.Platform,
                 source.Media,
@@ -1880,173 +1881,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
             var ticks = (sampleOffset * TimeSpan.TicksPerSecond) / AudioSampleRate;
             return opusStartedAt.AddTicks(ticks);
-        }
-
-        private static byte[] EncodeFlacChunkBytes(byte[] pcmSnapshot)
-        {
-            if (pcmSnapshot.Length == 0)
-            {
-                return [];
-            }
-
-            AVFormatContext* outputContext = null;
-            AVCodecContext* encoderContext = null;
-            AVStream* outputStream = null;
-            AVFrame* frame = null;
-            AVPacket* packet = null;
-            byte* dynamicBuffer = null;
-            byte[]? encodedBytes = null;
-
-            try
-            {
-                AVCodec* encoder = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_FLAC);
-                if (encoder is null)
-                {
-                    throw new InvalidOperationException("FLAC encoder not found.");
-                }
-
-                ffmpeg.avformat_alloc_output_context2(&outputContext, null, "flac", null).ThrowIfError("avformat_alloc_output_context2(flac)");
-
-                encoderContext = ffmpeg.avcodec_alloc_context3(encoder);
-                if (encoderContext is null)
-                {
-                    throw new InvalidOperationException("Unable to allocate FLAC encoder context.");
-                }
-
-                encoderContext->sample_rate = AudioSampleRate;
-                encoderContext->sample_fmt = AVSampleFormat.AV_SAMPLE_FMT_S16;
-                encoderContext->time_base = new AVRational { num = 1, den = AudioSampleRate };
-
-                try
-                {
-                    ffmpeg.av_channel_layout_default(&encoderContext->ch_layout, AudioChannels);
-                }
-                catch (NotSupportedException exception)
-                {
-                    throw new InvalidOperationException("av_channel_layout_default(flac_encoder) is not supported by the loaded FFmpeg bindings.", exception);
-                }
-
-                if ((outputContext->oformat->flags & ffmpeg.AVFMT_GLOBALHEADER) != 0)
-                {
-                    encoderContext->flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
-                }
-
-                ffmpeg.avcodec_open2(encoderContext, encoder, null).ThrowIfError("avcodec_open2(flac_encoder)");
-
-                outputStream = ffmpeg.avformat_new_stream(outputContext, null);
-                if (outputStream is null)
-                {
-                    throw new InvalidOperationException("Unable to create FLAC output stream.");
-                }
-
-                ffmpeg.avcodec_parameters_from_context(outputStream->codecpar, encoderContext).ThrowIfError("avcodec_parameters_from_context(flac)");
-                outputStream->time_base = encoderContext->time_base;
-
-                ffmpeg.avio_open_dyn_buf(&outputContext->pb).ThrowIfError("avio_open_dyn_buf(flac)");
-                outputContext->flags |= ffmpeg.AVFMT_FLAG_CUSTOM_IO;
-                ffmpeg.avformat_write_header(outputContext, null).ThrowIfError("avformat_write_header(flac)");
-
-                frame = ffmpeg.av_frame_alloc();
-                packet = ffmpeg.av_packet_alloc();
-                if (frame is null || packet is null)
-                {
-                    throw new InvalidOperationException("Unable to allocate FLAC frame or packet.");
-                }
-
-                var frameSamples = encoderContext->frame_size > 0 ? encoderContext->frame_size : 4096;
-                var bytesPerSample = AudioChannels * AudioBytesPerSample;
-                var offset = 0;
-                var pts = 0L;
-
-                while (offset < pcmSnapshot.Length)
-                {
-                    var availableSamples = (pcmSnapshot.Length - offset) / bytesPerSample;
-                    if (availableSamples <= 0)
-                    {
-                        break;
-                    }
-
-                    var samplesToEncode = Math.Min(frameSamples, availableSamples);
-                    var bytesToEncode = samplesToEncode * bytesPerSample;
-
-                    ffmpeg.av_frame_unref(frame);
-                    frame->nb_samples = samplesToEncode;
-                    frame->format = (int)AVSampleFormat.AV_SAMPLE_FMT_S16;
-                    frame->sample_rate = AudioSampleRate;
-                    frame->pts = pts;
-                    pts += samplesToEncode;
-
-                    try
-                    {
-                        ffmpeg.av_channel_layout_default(&frame->ch_layout, AudioChannels);
-                    }
-                    catch (NotSupportedException exception)
-                    {
-                        throw new InvalidOperationException("av_channel_layout_default(flac_frame) is not supported by the loaded FFmpeg bindings.", exception);
-                    }
-
-                    ffmpeg.av_frame_get_buffer(frame, 0).ThrowIfError("av_frame_get_buffer(flac)");
-                    Marshal.Copy(pcmSnapshot, offset, (IntPtr)frame->data[0], bytesToEncode);
-                    offset += bytesToEncode;
-
-                    ffmpeg.avcodec_send_frame(encoderContext, frame).ThrowIfError("avcodec_send_frame(flac)");
-                    WriteAvailableFlacPackets(outputContext, outputStream, encoderContext, packet);
-                }
-
-                ffmpeg.avcodec_send_frame(encoderContext, null).ThrowIfError("avcodec_send_frame(flac_flush)");
-                WriteAvailableFlacPackets(outputContext, outputStream, encoderContext, packet);
-
-                ffmpeg.av_write_trailer(outputContext).ThrowIfError("av_write_trailer(flac)");
-
-                var dynamicSize = ffmpeg.avio_close_dyn_buf(outputContext->pb, &dynamicBuffer);
-                outputContext->pb = null;
-                if (dynamicSize < 0)
-                {
-                    throw new InvalidOperationException($"avio_close_dyn_buf(flac) failed with FFmpeg error code {dynamicSize}.");
-                }
-
-                encodedBytes = new byte[dynamicSize];
-                if (dynamicSize > 0)
-                {
-                    Marshal.Copy((IntPtr)dynamicBuffer, encodedBytes, 0, dynamicSize);
-                }
-
-            }
-            finally
-            {
-                if (dynamicBuffer is not null)
-                {
-                    ffmpeg.av_free(dynamicBuffer);
-                }
-
-                if (packet is not null)
-                {
-                    ffmpeg.av_packet_free(&packet);
-                }
-
-                if (frame is not null)
-                {
-                    ffmpeg.av_frame_free(&frame);
-                }
-
-                if (outputContext is not null)
-                {
-                    if (outputContext->pb is not null)
-                    {
-                        ffmpeg.avio_context_free(&outputContext->pb);
-                    }
-
-                    ffmpeg.avformat_free_context(outputContext);
-                }
-
-                if (encoderContext is not null)
-                {
-                    AVCodecContext* encoderToFree = encoderContext;
-                    ffmpeg.avcodec_free_context(&encoderToFree);
-                }
-            }
-
-            return encodedBytes ?? [];
         }
 
         private static byte[] ConcatPcm(byte[]? prefix, byte[] current)
@@ -2151,7 +1985,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         // completely normal chunk always exceeds the threshold and the split path (no dedup between
         // its sub-windows, silently drops unrecognized ones) fires on every chunk instead of only
         // genuinely oversized ones.
-        private static IReadOnlyList<byte[]> BuildFlacRecognitionWindows(byte[] pcm, int maxFastPathSeconds)
+        // The windows are PCM: each speech engine (ISpeechToText) converts them to what it needs.
+        private static IReadOnlyList<byte[]> BuildRecognitionWindows(byte[] pcm, int maxFastPathSeconds)
         {
             if (pcm.Length == 0)
             {
@@ -2166,8 +2001,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             var maxVadChunkBytes = maxFastPathSeconds * bytesPerSecond;
             if (pcm.Length <= maxVadChunkBytes)
             {
-                var singleFlac = EncodeFlacChunkBytes(pcm);
-                return singleFlac.Length > 0 ? [singleFlac] : [];
+                return [pcm];
             }
 
             var overlapBytes = Math.Clamp(RecognitionWindowOverlapSeconds * bytesPerSecond, 0, windowBytes / 2);
@@ -2219,11 +2053,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
                 var windowPcm = new byte[end - start];
                 Buffer.BlockCopy(pcm, start, windowPcm, 0, end - start);
-                var flac = EncodeFlacChunkBytes(windowPcm);
-                if (flac.Length > 0)
-                {
-                    windows.Add(flac);
-                }
+                windows.Add(windowPcm);
             }
 
             return windows;
@@ -2344,24 +2174,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             }
 
             return result;
-        }
-
-        private static void WriteAvailableFlacPackets(AVFormatContext* outputContext, AVStream* outputStream, AVCodecContext* encoderContext, AVPacket* packet)
-        {
-            while (true)
-            {
-                ffmpeg.av_packet_unref(packet);
-                var result = ffmpeg.avcodec_receive_packet(encoderContext, packet);
-                if (result == ffmpeg.AVERROR(ffmpeg.EAGAIN) || result == ffmpeg.AVERROR_EOF)
-                {
-                    break;
-                }
-
-                result.ThrowIfError("avcodec_receive_packet(flac)");
-                packet->stream_index = outputStream->index;
-                ffmpeg.av_packet_rescale_ts(packet, encoderContext->time_base, outputStream->time_base);
-                ffmpeg.av_interleaved_write_frame(outputContext, packet).ThrowIfError("av_interleaved_write_frame(flac)");
-            }
         }
 
         private void EncodeBufferedSamples(
@@ -2804,26 +2616,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         string JsonPath,
         DateTimeOffset StartTime,
         DateTimeOffset EndTime,
-        IReadOnlyList<byte[]> FlacWindows,
+        IReadOnlyList<byte[]> PcmWindows,
         string SourceId,
         string Platform,
         string Media,
         string FilePath);
 
     private sealed record ChunkTranscriptionItem(string Text, string StartTime, string EndTime, string Status);
-
-    private enum RecognitionStatus
-    {
-        Recognized,
-        NoSpeech,
-        InvalidAudio,
-        RateLimited,
-        HttpError,
-        Timeout,
-        NetworkError,
-    }
-
-    private readonly record struct RecognitionResult(RecognitionStatus Status, string Text);
 
     // Internal (not private) so MediaOpsCore.UnitTests can exercise StripTextPrefixOverlap
     // directly — see AssemblyInfo.cs's InternalsVisibleTo.
@@ -2844,11 +2643,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
         private readonly ILogger logger;
         private readonly IDetectAlertsUseCase detectAlertsUseCase;
-        private readonly HttpClient httpClient;
+        // The speech engine (Google's web endpoint today): the pipeline only knows the port.
+        private readonly ISpeechToText speechToText;
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private readonly ConcurrentDictionary<string, SourcePipeline> sourcePipelines = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, PathState> pathStates = new(StringComparer.OrdinalIgnoreCase);
-        private readonly string googleApiKey;
         private int appendsSinceEviction;
         private int disposed;
 
@@ -2860,15 +2659,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             public readonly Task Worker = worker;
         }
 
-        public ChunkTranscriptionPipeline(ILogger logger, IDetectAlertsUseCase detectAlertsUseCase)
+        public ChunkTranscriptionPipeline(ILogger logger, IDetectAlertsUseCase detectAlertsUseCase, ISpeechToText speechToText)
         {
             this.logger = logger;
             this.detectAlertsUseCase = detectAlertsUseCase;
-            googleApiKey = ResolveGoogleApiKey();
-            httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(60)
-            };
+            this.speechToText = speechToText;
 
             logger.LogInformation(
                 "Transcription windowing configured with chunkOverlap={ChunkOverlapSeconds}s, recognitionWindow={RecognitionWindowSeconds}s, recognitionOverlap={RecognitionOverlapSeconds}s.",
@@ -2934,7 +2729,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             }
 
             cancellationTokenSource.Dispose();
-            httpClient.Dispose();
 
             foreach (var state in pathStates.Values)
             {
@@ -2956,14 +2750,14 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
                     try
                     {
-                        var recognition = await RecognizeWindowedAsync(request.FlacWindows, DefaultLanguage, request.SourceId).ConfigureAwait(false);
+                        var recognition = await RecognizeWindowedAsync(request.PcmWindows, DefaultLanguage, request.SourceId).ConfigureAwait(false);
                         entryStatus = StatusLabel(recognition.Status);
-                        entryText = recognition.Status == RecognitionStatus.Recognized
+                        entryText = recognition.Status == SpeechRecognitionStatus.Recognized
                             ? recognition.Text
                             : DisplayTextFor(recognition.Status);
-                        recognized = recognition.Status == RecognitionStatus.Recognized;
+                        recognized = recognition.Status == SpeechRecognitionStatus.Recognized;
 
-                        if (recognition.Status == RecognitionStatus.NoSpeech)
+                        if (recognition.Status == SpeechRecognitionStatus.NoSpeech)
                         {
                             logger.LogDebug(
                                 "SR no_speech for source {SourceId} [{Start}–{End}].",
@@ -2973,8 +2767,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                         }
 
                         TranscriptionChunksProcessed.Add(1, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
-                        TranscriptionWindowsProcessed.Add(request.FlacWindows.Count, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
-                        if (recognition.Status == RecognitionStatus.RateLimited)
+                        TranscriptionWindowsProcessed.Add(request.PcmWindows.Count, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
+                        if (recognition.Status == SpeechRecognitionStatus.RateLimited)
                         {
                             TranscriptionRateLimited.Add(1, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
                         }
@@ -3054,26 +2848,26 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             }
         }
 
-        private async Task<RecognitionResult> RecognizeWindowedAsync(IReadOnlyList<byte[]> flacWindows, string language, string sourceId)
+        private async Task<SpeechRecognitionResult> RecognizeWindowedAsync(IReadOnlyList<byte[]> pcmWindows, string language, string sourceId)
         {
-            if (flacWindows.Count == 0)
+            if (pcmWindows.Count == 0)
             {
-                return new RecognitionResult(RecognitionStatus.NoSpeech, string.Empty);
+                return new SpeechRecognitionResult(SpeechRecognitionStatus.NoSpeech, string.Empty);
             }
 
-            // One chunk normally produces a single FLAC window (see BuildFlacRecognitionWindows' fast
+            // One chunk normally produces a single window (see BuildRecognitionWindows' fast
             // path). When it doesn't — chunk abnormally large, VAD never found silence — these
             // sub-windows overlap by RecognitionWindowOverlapSeconds, same as cross-chunk overlap, so
             // they need the same dedup, not a plain join. When nothing is recognized, report the most
             // informative failure status across the windows so the cause (no speech / rate limit /
             // audio error / ...) stays visible downstream instead of collapsing into an ambiguous
             // "no text".
-            var recognized = new List<string>(flacWindows.Count);
-            var worst = RecognitionStatus.NoSpeech;
-            foreach (var window in flacWindows)
+            var recognized = new List<string>(pcmWindows.Count);
+            var worst = SpeechRecognitionStatus.NoSpeech;
+            foreach (var window in pcmWindows)
             {
-                var result = await RecognizeSingleAsync(window, language).ConfigureAwait(false);
-                if (result.Status == RecognitionStatus.Recognized && !string.IsNullOrWhiteSpace(result.Text))
+                var result = await speechToText.RecognizeAsync(window, language, cancellationTokenSource.Token).ConfigureAwait(false);
+                if (result.Status == SpeechRecognitionStatus.Recognized && !string.IsNullOrWhiteSpace(result.Text))
                 {
                     var text = result.Text.Trim();
                     if (recognized.Count > 0)
@@ -3099,147 +2893,45 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             }
 
             return recognized.Count > 0
-                ? new RecognitionResult(RecognitionStatus.Recognized, string.Join(" ", recognized))
-                : new RecognitionResult(worst, string.Empty);
-        }
-
-        private async Task<RecognitionResult> RecognizeSingleAsync(byte[] flacBytes, string language)
-        {
-            if (flacBytes.Length < 4 || flacBytes[0] != (byte)'f' || flacBytes[1] != (byte)'L' || flacBytes[2] != (byte)'a' || flacBytes[3] != (byte)'C')
-            {
-                return new RecognitionResult(RecognitionStatus.InvalidAudio, string.Empty);
-            }
-
-            var sampleRate = ReadFlacSampleRate(flacBytes);
-            var url = "http://www.google.com/speech-api/v2/recognize"
-                + $"?client=chromium&lang={Uri.EscapeDataString(language)}"
-                + $"&key={Uri.EscapeDataString(googleApiKey)}&pFilter=0";
-
-            using var content = new ByteArrayContent(flacBytes);
-            content.Headers.TryAddWithoutValidation("Content-Type", $"audio/x-flac; rate={sampleRate}");
-
-            HttpResponseMessage response;
-            try
-            {
-                response = await httpClient.PostAsync(url, content, cancellationTokenSource.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
-            {
-                throw; // pipeline is shutting down — let the worker loop stop
-            }
-            catch (OperationCanceledException)
-            {
-                return new RecognitionResult(RecognitionStatus.Timeout, string.Empty); // HttpClient.Timeout elapsed
-            }
-            catch (HttpRequestException)
-            {
-                return new RecognitionResult(RecognitionStatus.NetworkError, string.Empty);
-            }
-
-            using (response)
-            {
-                // Distinguish rate limiting / quota from other server errors so it is never silently
-                // treated as "no speech". Essential for the free endpoint and for scaling out sources.
-                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
-                    || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
-                {
-                    return new RecognitionResult(RecognitionStatus.RateLimited, string.Empty);
-                }
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    return new RecognitionResult(RecognitionStatus.HttpError, string.Empty);
-                }
-
-                byte[] bodyBytes;
-                try
-                {
-                    bodyBytes = await response.Content.ReadAsByteArrayAsync(cancellationTokenSource.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (OperationCanceledException)
-                {
-                    return new RecognitionResult(RecognitionStatus.Timeout, string.Empty);
-                }
-
-                // Read raw bytes and decode as UTF-8 explicitly. The Google speech endpoint returns UTF-8
-                // JSON but its response frequently omits (or misreports) the charset, so ReadAsStringAsync
-                // falls back to ISO-8859-1 and mangles accented characters (café → cafÃ©, señor → seÃ±or).
-                var body = System.Text.Encoding.UTF8.GetString(bodyBytes);
-                foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    JsonDocument document;
-                    try
-                    {
-                        document = JsonDocument.Parse(line);
-                    }
-                    catch (JsonException)
-                    {
-                        continue;
-                    }
-
-                    using (document)
-                    {
-                        if (!document.RootElement.TryGetProperty("result", out var result) || result.GetArrayLength() == 0)
-                        {
-                            continue;
-                        }
-
-                        var alternatives = result[0].GetProperty("alternative");
-                        if (alternatives.GetArrayLength() > 0 && alternatives[0].TryGetProperty("transcript", out var transcriptProperty))
-                        {
-                            var text = transcriptProperty.GetString();
-                            if (!string.IsNullOrWhiteSpace(text))
-                            {
-                                return new RecognitionResult(RecognitionStatus.Recognized, text);
-                            }
-                        }
-                    }
-                }
-
-                // 2xx with no transcript = the API ran and detected no speech (music / silence / non-Spanish).
-                return new RecognitionResult(RecognitionStatus.NoSpeech, string.Empty);
-            }
+                ? new SpeechRecognitionResult(SpeechRecognitionStatus.Recognized, string.Join(" ", recognized))
+                : new SpeechRecognitionResult(worst, string.Empty);
         }
 
         // Higher = more informative / more actionable failure when no window was recognized.
-        private static int StatusSeverity(RecognitionStatus status) => status switch
+        private static int StatusSeverity(SpeechRecognitionStatus status) => status switch
         {
-            RecognitionStatus.RateLimited => 6,
-            RecognitionStatus.HttpError => 5,
-            RecognitionStatus.NetworkError => 4,
-            RecognitionStatus.Timeout => 3,
-            RecognitionStatus.InvalidAudio => 2,
-            RecognitionStatus.NoSpeech => 1,
+            SpeechRecognitionStatus.RateLimited => 6,
+            SpeechRecognitionStatus.HttpError => 5,
+            SpeechRecognitionStatus.NetworkError => 4,
+            SpeechRecognitionStatus.Timeout => 3,
+            SpeechRecognitionStatus.InvalidAudio => 2,
+            SpeechRecognitionStatus.NoSpeech => 1,
             _ => 0,
         };
 
         // Machine-readable status written to the JSON entry's "status" field.
-        private static string StatusLabel(RecognitionStatus status) => status switch
+        private static string StatusLabel(SpeechRecognitionStatus status) => status switch
         {
-            RecognitionStatus.Recognized => "recognized",
-            RecognitionStatus.NoSpeech => "no_speech",
-            RecognitionStatus.InvalidAudio => "audio_error",
-            RecognitionStatus.RateLimited => "rate_limited",
-            RecognitionStatus.HttpError => "api_error",
-            RecognitionStatus.Timeout => "timeout",
-            RecognitionStatus.NetworkError => "network_error",
+            SpeechRecognitionStatus.Recognized => "recognized",
+            SpeechRecognitionStatus.NoSpeech => "no_speech",
+            SpeechRecognitionStatus.InvalidAudio => "audio_error",
+            SpeechRecognitionStatus.RateLimited => "rate_limited",
+            SpeechRecognitionStatus.HttpError => "api_error",
+            SpeechRecognitionStatus.Timeout => "timeout",
+            SpeechRecognitionStatus.NetworkError => "network_error",
             _ => "unknown",
         };
 
         // Human-readable placeholder text shown for non-recognized windows (the UI renders "text").
         // NoSpeech (genuine silence / music / non-Spanish) falls through to empty text, which the
         // ordered writer skips — silent windows no longer produce a filler entry in the JSON.
-        private static string DisplayTextFor(RecognitionStatus status) => status switch
+        private static string DisplayTextFor(SpeechRecognitionStatus status) => status switch
         {
-            RecognitionStatus.InvalidAudio => "[audio inválido]",
-            RecognitionStatus.RateLimited => "[límite de API]",
-            RecognitionStatus.HttpError => "[error de API]",
-            RecognitionStatus.Timeout => "[timeout de API]",
-            RecognitionStatus.NetworkError => "[error de red]",
+            SpeechRecognitionStatus.InvalidAudio => "[audio inválido]",
+            SpeechRecognitionStatus.RateLimited => "[límite de API]",
+            SpeechRecognitionStatus.HttpError => "[error de API]",
+            SpeechRecognitionStatus.Timeout => "[timeout de API]",
+            SpeechRecognitionStatus.NetworkError => "[error de red]",
             _ => string.Empty,
         };
 
@@ -3348,74 +3040,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             return chars.Length == 0 ? string.Empty : new string(chars);
         }
 
-        private static string ResolveGoogleApiKey()
-        {
-            var fromEnv = Environment.GetEnvironmentVariable("GOOGLE_SPEECH_API_KEY")?.Trim();
-            if (!string.IsNullOrWhiteSpace(fromEnv))
-            {
-                return fromEnv;
-            }
-
-            var fromDotEnv = TryReadGoogleApiKeyFromDotEnv();
-            if (!string.IsNullOrWhiteSpace(fromDotEnv))
-            {
-                return fromDotEnv;
-            }
-
-            throw new InvalidOperationException(
-                "Missing GOOGLE_SPEECH_API_KEY. Set the environment variable or create a .env file with GOOGLE_SPEECH_API_KEY=<value>.");
-        }
-
-        private static string? TryReadGoogleApiKeyFromDotEnv()
-        {
-            var candidatePaths = new[]
-            {
-                Path.Combine(Directory.GetCurrentDirectory(), ".env"),
-                Path.Combine(AppContext.BaseDirectory, ".env"),
-                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env"),
-                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".env")
-            }
-            .Select(Path.GetFullPath)
-            .Distinct(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var path in candidatePaths)
-            {
-                if (!File.Exists(path))
-                {
-                    continue;
-                }
-
-                foreach (var rawLine in File.ReadLines(path))
-                {
-                    var line = rawLine.Trim();
-                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
-                    {
-                        continue;
-                    }
-
-                    var separatorIndex = line.IndexOf('=');
-                    if (separatorIndex <= 0)
-                    {
-                        continue;
-                    }
-
-                    var key = line[..separatorIndex].Trim();
-                    if (!key.Equals("GOOGLE_SPEECH_API_KEY", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    var value = line[(separatorIndex + 1)..].Trim().Trim('"', '\'');
-                    if (!string.IsNullOrWhiteSpace(value))
-                    {
-                        return value;
-                    }
-                }
-            }
-
-            return null;
-        }
-
         private static int ResolveConfiguredInt(string key, int fallback, int min, int max)
         {
             var raw = Environment.GetEnvironmentVariable(key);
@@ -3512,21 +3136,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     }
                 }
             }
-        }
-
-        private static int ReadFlacSampleRate(byte[] flac)
-        {
-            const int rateOffset = 18;
-            if (flac.Length < rateOffset + 3)
-            {
-                return AudioSampleRate;
-            }
-
-            var sampleRate = (flac[rateOffset] << 12)
-                | (flac[rateOffset + 1] << 4)
-                | (flac[rateOffset + 2] >> 4);
-
-            return sampleRate > 0 ? sampleRate : AudioSampleRate;
         }
 
         private sealed class PathState

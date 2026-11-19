@@ -154,6 +154,9 @@ public sealed class OperationsWorkerOptions
 
     public bool RtspPreferTcp { get; set; } = true;
 
+    // The speech recognition engine behind ISpeechToText (see SpeechEngines): "google-web" is the only one for now.
+    public string SpeechEngine { get; set; } = SpeechEngines.GoogleWeb;
+
     public bool EnableFlacSilenceChunking { get; set; } = true;
 
     public int FlacSilenceMinChunkSeconds { get; set; } = 20;

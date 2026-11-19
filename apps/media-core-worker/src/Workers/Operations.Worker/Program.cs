@@ -216,6 +216,8 @@ builder.Services.AddSingleton<WhatsAppSidecarProcessSupervisor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WhatsAppSidecarProcessSupervisor>());
 builder.Services.AddSingleton<IDetectAlertsUseCase, DetectAlertsUseCase>();
 builder.Services.AddHostedService<PendingAlertNotificationRetryWorker>();
+// The speech engine every transcription goes through (live capture, and the portal's on-demand requests).
+builder.Services.AddSingleton<ISpeechToText>(_ => SpeechEngines.Create(options.SpeechEngine));
 // IAudioCapturePlugin gets observer and repository so sessions report events directly.
 builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudioCapturePlugin(
 	sp.GetRequiredService<OperationsWorkerOptions>(),
@@ -223,7 +225,8 @@ builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudi
 	sp.GetRequiredService<IOperationalMetrics>(),
 	sp.GetRequiredService<ICaptureAttemptObserver>(),
 	sp.GetRequiredService<IMonitoringArtifactRepository>(),
-	sp.GetRequiredService<IDetectAlertsUseCase>()));
+	sp.GetRequiredService<IDetectAlertsUseCase>(),
+	sp.GetRequiredService<ISpeechToText>()));
 builder.Services.AddSingleton<ILiveCaptureProgressReader>(
 	sp => (ILiveCaptureProgressReader)sp.GetRequiredService<IAudioCapturePlugin>());
 builder.Services.AddSingleton<IClosedHourAudioReader>(sp => new ClosedHourAudioSegmentReader(
