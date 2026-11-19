@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -8,13 +8,22 @@ import {
   Modal,
   Radio,
   Row,
+  Space,
   Spin,
   Steps,
+  Typography,
 } from "antd";
 import { AxiosError } from "axios";
 import { useAlert } from "./AlertsContext";
 import { useMutation, UseMutationResult } from "react-query";
-import { CreateFileDto, FileDto, Fragment, NoteDto } from "@repo/shared/index";
+import {
+  CreateFileDto,
+  FileDto,
+  Fragment,
+  MAX_SEGMENT_WINDOW_SECONDS,
+  NoteDto,
+  SEGMENT_EXTENSION_STEP_SECONDS,
+} from "@repo/shared/index";
 import api from "../../services/Agent";
 import AudioEdit from "../audio/AudioEdit";
 import VideoEdit from "../audio/VideoEdit";
@@ -66,15 +75,27 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
   // The window defaults to 30 min (1800s) for audio and video alike; the user can widen it to 1 or 2 hours,
   // which brings in the adjacent hours' recordings (audio.service.ts, and the worker joins the MP4s).
   const [segmentDuration, setSegmentDuration] = useState(1800);
+  // Seconds added to either side of that window with the "+10 min" buttons (each click adds a step).
+  const [extraBefore, setExtraBefore] = useState(0);
+  const [extraAfter, setExtraAfter] = useState(0);
+  // The extensions the last window that loaded had, to go back to them when the audio asked for is not there.
+  const lastGoodExtras = useRef({ before: 0, after: 0 });
 
-  const createSegmentDto = useMemo(
-    () => ({
+  const createSegmentDto = useMemo(() => {
+    const extended = extraBefore > 0 || extraAfter > 0;
+    const before = segmentDuration / 2 + extraBefore;
+    const after = segmentDuration / 2 + extraAfter;
+    return {
       alert: selectedAlert,
-      output: `segment_${selectedAlert?.id}_${segmentDuration / 60}`,
-      duration: segmentDuration,
-    }),
-    [selectedAlert, segmentDuration]
-  );
+      // Without extensions the request is the usual one (same name, same centred window). With them it says how
+      // much audio goes before and after the end of the alert, and the name keeps the files apart.
+      output: extended
+        ? `segment_${selectedAlert?.id}_b${before / 60}_a${after / 60}`
+        : `segment_${selectedAlert?.id}_${segmentDuration / 60}`,
+      duration: segmentDuration + extraBefore + extraAfter,
+      ...(extended && { before, after }),
+    };
+  }, [selectedAlert, segmentDuration, extraBefore, extraAfter]);
 
   const {
     mutateAsync: createSegmentFile,
@@ -104,6 +125,24 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
     const response = await api.post(`/notes/set-note`, note);
     return response.data;
   });
+
+  useEffect(() => {
+    if (segmentData) {
+      lastGoodExtras.current = { before: extraBefore, after: extraAfter };
+    }
+    // Only when a window finishes loading: the extensions it had are the ones to go back to.
+  }, [segmentData]);
+
+  useEffect(() => {
+    if (!errorSegment) return;
+    const { before, after } = lastGoodExtras.current;
+    if (extraBefore === before && extraAfter === after) return; // the failure is not from an extension
+    message.error(
+      `${describeCreateFileError(errorSegment, "No hay audio para esa ventana.")} Se volvió a la ventana anterior.`
+    );
+    setExtraBefore(before);
+    setExtraAfter(after);
+  }, [errorSegment]);
 
   useEffect(() => {
     if (visible) {
@@ -187,6 +226,20 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
   const videoNotAvailable =
     isVideo && (errorSegment as AxiosError | null)?.response?.status === 404;
 
+  // The "+10 min" buttons stop at the longest window the server accepts, and the one after stops at the present:
+  // there is no audio of what has not happened yet.
+  const stepSeconds = SEGMENT_EXTENSION_STEP_SECONDS;
+  const windowSeconds = segmentDuration + extraBefore + extraAfter;
+  const alertEndMs = selectedAlert?.endTime ? new Date(selectedAlert.endTime).getTime() : NaN;
+  const windowWouldEndInTheFuture =
+    Number.isFinite(alertEndMs) &&
+    alertEndMs + (segmentDuration / 2 + extraAfter + stepSeconds) * 1000 > Date.now();
+  const canExtend = !isLoadingSegment && windowSeconds + stepSeconds <= MAX_SEGMENT_WINDOW_SECONDS;
+  const resetExtras = () => {
+    setExtraBefore(0);
+    setExtraAfter(0);
+  };
+
   const windowOptions = [
     { value: 1800, label: "30 min" },
     { value: 3600, label: "1 hora" },
@@ -198,18 +251,41 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
       title: isVideo ? "Editar Video" : "Editar Audio",
       content: (
         <>
-          <Radio.Group
-            value={segmentDuration}
-            onChange={(e) => setSegmentDuration(e.target.value)}
-            disabled={isLoadingSegment}
-            style={{ marginBottom: 12 }}
-          >
-            {windowOptions.map((option) => (
-              <Radio.Button key={option.value} value={option.value}>
-                {option.label}
-              </Radio.Button>
-            ))}
-          </Radio.Group>
+          <Space style={{ marginBottom: 12 }} wrap>
+            <Button
+              onClick={() => setExtraBefore((seconds) => seconds + stepSeconds)}
+              disabled={!canExtend}
+            >
+              +10 min antes
+            </Button>
+            <Radio.Group
+              value={segmentDuration}
+              onChange={(e) => {
+                setSegmentDuration(e.target.value);
+                resetExtras();
+              }}
+              disabled={isLoadingSegment}
+            >
+              {windowOptions.map((option) => (
+                <Radio.Button key={option.value} value={option.value}>
+                  {option.label}
+                </Radio.Button>
+              ))}
+            </Radio.Group>
+            <Button
+              onClick={() => setExtraAfter((seconds) => seconds + stepSeconds)}
+              disabled={!canExtend || windowWouldEndInTheFuture}
+            >
+              +10 min después
+            </Button>
+            {(extraBefore > 0 || extraAfter > 0) && (
+              <Typography.Text type="secondary">
+                {`Ventana: ${(segmentDuration / 2 + extraBefore) / 60} min antes · ${
+                  (segmentDuration / 2 + extraAfter) / 60
+                } min después`}
+              </Typography.Text>
+            )}
+          </Space>
           {videoNotAvailable ? (
             <Alert
               type="warning"
@@ -227,6 +303,7 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
                     onClick={() => {
                       setAudioFallback(true);
                       setSegmentDuration(1800);
+                      resetExtras();
                     }}
                   >
                     Usar audio

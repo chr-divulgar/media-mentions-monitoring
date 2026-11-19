@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
+import { requestedWindow } from '../audio/segment-window';
 import {
   audioOffsetInClip,
   isSafeClipName,
@@ -43,6 +44,7 @@ export class VideoService {
         new Date(alert.endTime ?? ''),
         duration ?? 0,
         outputPath,
+        requestedWindow(createFileDto),
       );
     }
     if (output.includes('fragment')) {
@@ -67,9 +69,12 @@ export class VideoService {
     alertEnd: Date,
     windowSeconds: number,
     outputPath: string,
+    // Set when the editor extended the window with its "+10 min" buttons (see requestedWindow).
+    extended: { before: number; after: number } | null = null,
   ): Promise<AudioFile> {
     const endSeconds = (alertEnd.getTime() - fileTime.getTime()) / 1000;
-    const windowStart = segmentStartSeconds(endSeconds, windowSeconds);
+    if (extended) windowSeconds = extended.before + extended.after;
+    const windowStart = segmentStartSeconds(endSeconds, windowSeconds, extended?.before);
 
     const clip = await this.fetchClip(
       sourceId,

@@ -3,14 +3,16 @@
 
 /**
  * Where a segment window starts, in seconds from the start of the alert's hour file: centred on the
- * end of the alert (the same rule the audio flow uses). It can be negative: the window then reaches
+ * end of the alert (the same rule the audio flow uses), or `beforeSeconds` ahead of it when the editor
+ * extended the window with its "+10 min" buttons. It can be negative: the window then reaches
  * into the recording before this one, and the worker joins them.
  */
 export function segmentStartSeconds(
   alertEndSeconds: number,
   windowSeconds: number,
+  beforeSeconds?: number,
 ): number {
-  return alertEndSeconds - windowSeconds / 2;
+  return alertEndSeconds - (beforeSeconds ?? windowSeconds / 2);
 }
 
 /**

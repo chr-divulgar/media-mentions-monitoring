@@ -13,6 +13,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import stream from 'stream';
+import { requestedWindow } from './segment-window';
 
 @Injectable()
 export class AudioService {
@@ -29,6 +30,7 @@ export class AudioService {
         duration,
         filePath,
         outputPath,
+        requestedWindow(createFileDto),
       );
     if (createFileDto.output.includes('fragment'))
       return await this.processAudioFragment(
@@ -45,6 +47,8 @@ export class AudioService {
     durationIn: number,
     filePath: string,
     outputPath: string,
+    // Set when the editor extended the window with its "+10 min" buttons (see requestedWindow).
+    extended: { before: number; after: number } | null = null,
   ): Promise<AudioFile> {
     const fileTime = getDateFromFile(filePath);
     // Worker alerts store real UTC timestamps; legacy alerts store local (Bogotá)
@@ -55,8 +59,14 @@ export class AudioService {
         : new Date(alert.endTime?.replace('Z', '-05:00') ?? '');
     const endSeconds = (endTime.getTime() - fileTime.getTime()) / 1000;
 
-    const startSeconds =
-      endSeconds > durationIn / 2 ? endSeconds - durationIn / 2 : 0;
+    // The usual window is centred on the end of the alert and starts no earlier than its file. An extended one starts
+    // exactly where the editor asked, which can be before the file: it then reaches into the hour before it.
+    const startSeconds = extended
+      ? endSeconds - extended.before
+      : endSeconds > durationIn / 2
+        ? endSeconds - durationIn / 2
+        : 0;
+    if (extended) durationIn = extended.before + extended.after;
 
     // A clip cut while the hour was still being recorded is short; it must not be reused once the
     // hour is closed, or the alert falls outside it (no marker, truncated audio).

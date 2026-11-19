@@ -116,3 +116,14 @@ describe('isSafeClipName', () => {
     expect(isSafeClipName('')).toBe(false);
   });
 });
+
+describe('segmentStartSeconds with the editor\'s extension', () => {
+  it('starts "before" seconds ahead of the end of the alert when the editor asks for it', () => {
+    // alert ends 20 min into the hour; 25 min before and 15 after: starts 5 min before the hour
+    expect(segmentStartSeconds(1200, 2400, 1500)).toBe(-300);
+  });
+
+  it('keeps centring when no "before" is given', () => {
+    expect(segmentStartSeconds(1200, 2400)).toBe(0);
+  });
+});
