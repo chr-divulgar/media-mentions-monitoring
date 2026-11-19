@@ -40,7 +40,7 @@ status.
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/alerts` | List alerts |
-| POST | `/alerts/getText` | Transcribe audio (spawns Python) |
+| POST | `/alerts/getText` | Transcribe audio (asks the worker's `POST /transcribe`) |
 | POST | `/alerts/getSummary` | Summarize text (OpenAI) |
 | POST | `/audio/createFile` | Generate MP3/WAV segment via FFmpeg |
 | GET  | `/audio/fetchByName/:filename` | Serve audio file |
@@ -50,7 +50,7 @@ status.
 
 **Key constraints**:
 - Windows-only deployment (mudslide CLI, hardcoded paths).
-- Python required for `scripts/getText.py` (Google Speech Recognition). Run `pnpm --filter web-api setup:python` once: it creates `apps/web-api/.venv` with `requirements.txt`, which the API uses automatically (`PYTHON_BIN` overrides the interpreter).
+- No Python: transcription runs in the worker (`POST /transcribe` on `localhost:5000`, through the `ISpeechToText` port; engine chosen by `speechEngine` in `worker-options.json`). The worker service must be running for the note editor's "transcribe" button to work.
 - TypeORM MongoDB driver (not Mongoose).
 - Production: UI built into `apps/web-api/public/` before API build.
 

@@ -17,7 +17,7 @@ import {
   ValidDatesDto,
 } from '@repo/shared';
 import { splitAudio } from './audio-chunker';
-import { transcribeWithPython } from './google-speech';
+import { assembleTranscript, transcribeViaWorker } from './worker-transcription';
 import * as path from 'path';
 import { TEXT_MODEL, TextModel } from '../ai/text-model';
 import { Alert, Note, Transcription, WorkerAlert } from '../entities';
@@ -163,27 +163,9 @@ export class AlertsService {
 
     let fullText: string;
     try {
-      // Procesar todos los chunks en paralelo sin límite de concurrencia
-      const results = await Promise.all(
-        chunkPaths.map((chunk) =>
-          transcribeWithPython(chunk).then(
-            (text) => ({ text, error: undefined }),
-            (error: Error) => ({ text: '--error--', error }),
-          ),
-        ),
-      );
-
-      const failures = results.flatMap((result) =>
-        result.error ? [result.error] : [],
-      );
-      // Nothing transcribed at all: say why, instead of saving a note full of "--error--".
-      if (failures.length === results.length) {
-        throw failures[0];
-      }
-      failures.forEach((error) =>
-        console.error('Error transcribing a chunk:', error.message),
-      );
-      fullText = results.map((result) => result.text).join(' ');
+      // The worker's speech engine transcribes the chunks (it limits how many it asks at once and retries).
+      // Nothing transcribed at all throws, saying why, instead of saving a note full of "--error--".
+      fullText = assembleTranscript(await transcribeViaWorker(chunkPaths));
     } finally {
       try {
         await fs.rm(chunksDir, { recursive: true, force: true });

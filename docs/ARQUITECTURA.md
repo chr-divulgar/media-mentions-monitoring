@@ -19,8 +19,8 @@ flowchart LR
    API -->|TypeORM MongoDB| DBM[(MongoDB: monitoring)]
 
    API -->|fluent-ffmpeg| FFMPEG[FFmpeg]
-   API -->|python ./scripts/getText.py| PY[Python + SpeechRecognition<br/>recognize_google]
-   API -->|OpenAI Responses API| OAI[OpenAI]
+   API -->|POST /transcribe| WRK[Worker .NET<br/>ISpeechToText]
+   API -->|AI_PROVIDERS: Gemini / OpenAI| AI[Proveedor de IA]
 
    API -->|npx mudslide| WA[WhatsApp - mudslide CLI]
 ```
@@ -42,16 +42,15 @@ La extracción y conversión se hace con **ffmpeg** vía `fluent-ffmpeg`.
 
 ### Transcripción
 
-La transcripción usada por el flujo principal **se ejecuta con Python**:
+La transcripción la hace el **worker .NET** detrás del puerto `ISpeechToText` (motor elegido con `speechEngine` en `worker-options.json`; hoy el endpoint web de Google):
 
-- Node ejecuta: `python ./scripts/getText.py "<chunkPath>"`
-- `getText.py` usa `speech_recognition` y `recognize_google(..., language='es-CO')`.
-
-Además hay scripts alternativos con `faster_whisper` en `apps/web-api/scripts/getTranscription.py` y `scripts/getTranscription.py`, pero **no están conectados al flujo actual** (según el código).
+- La captura en vivo (`ChunkTranscriptionPipeline`) y el botón "transcribir" del portal usan el mismo motor.
+- Node corta el audio en trozos de 60 s (`fluent-ffmpeg`) y llama `POST http://localhost:5000/transcribe` con las rutas de los WAV; el worker responde el texto de cada trozo (máx. 3 a la vez, con reintentos).
+- Ya no se usa Python.
 
 ### Resumen (IA)
 
-El backend genera título + resumen con **OpenAI** en `apps/web-api/src/app/alerts/alerts.service.ts` usando `openai.responses.create()`.
+El backend genera título + resumen en `apps/web-api/src/app/alerts/alerts.service.ts` a través del puerto `TextModel` (`apps/web-api/src/app/ai/`). `AI_PROVIDERS` elige el proveedor (`gemini`, `openai` o una lista con failover; cada clave de `GEMINI_API_KEYS` es una entrada de la cadena).
 
 ## 3) Flujo funcional principal (end-to-end)
 
@@ -70,7 +69,7 @@ El flujo principal visible en la UI está en `apps/web-ui/src/pages/alerts`:
 
 4. **Transcribir**
    - UI llama `POST /alerts/getText` con `{ filename: "fragment_<id>.wav" }`.
-   - API divide en chunks de 60s, transcribe cada chunk en paralelo (Python), concatena texto y lo guarda/actualiza en `Note` (colección `note`).
+   - API divide en chunks de 60s, le pide el texto de cada chunk al worker (`POST /transcribe`), concatena texto y lo guarda/actualiza en `Note` (colección `note`).
 
 5. **Resumir**
    - UI llama `POST /alerts/getSummary` con `{ noteId, text, words }`.

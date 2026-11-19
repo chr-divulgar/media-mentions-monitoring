@@ -1,3 +1,0 @@
-# Python packages for apps/web-api/scripts/getText.py (installed in apps/web-api/.venv by
-# `pnpm --filter web-api setup:python`).
-SpeechRecognition>=3.14

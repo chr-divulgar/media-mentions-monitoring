@@ -2910,17 +2910,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         };
 
         // Machine-readable status written to the JSON entry's "status" field.
-        private static string StatusLabel(SpeechRecognitionStatus status) => status switch
-        {
-            SpeechRecognitionStatus.Recognized => "recognized",
-            SpeechRecognitionStatus.NoSpeech => "no_speech",
-            SpeechRecognitionStatus.InvalidAudio => "audio_error",
-            SpeechRecognitionStatus.RateLimited => "rate_limited",
-            SpeechRecognitionStatus.HttpError => "api_error",
-            SpeechRecognitionStatus.Timeout => "timeout",
-            SpeechRecognitionStatus.NetworkError => "network_error",
-            _ => "unknown",
-        };
+        private static string StatusLabel(SpeechRecognitionStatus status) => status.ToLabel();
 
         // Human-readable placeholder text shown for non-recognized windows (the UI renders "text").
         // NoSpeech (genuine silence / music / non-Spanish) falls through to empty text, which the

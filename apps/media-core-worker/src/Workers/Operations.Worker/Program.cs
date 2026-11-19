@@ -218,6 +218,9 @@ builder.Services.AddSingleton<IDetectAlertsUseCase, DetectAlertsUseCase>();
 builder.Services.AddHostedService<PendingAlertNotificationRetryWorker>();
 // The speech engine every transcription goes through (live capture, and the portal's on-demand requests).
 builder.Services.AddSingleton<ISpeechToText>(_ => SpeechEngines.Create(options.SpeechEngine));
+// The portal's on-demand transcription (POST /transcribe on the worker's HTTP service) goes through the same engine.
+builder.Services.AddSingleton<IPcmFileReader, WavPcmFileReader>();
+builder.Services.AddSingleton<TranscribeAudioFilesUseCase>();
 // IAudioCapturePlugin gets observer and repository so sessions report events directly.
 builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudioCapturePlugin(
 	sp.GetRequiredService<OperationsWorkerOptions>(),

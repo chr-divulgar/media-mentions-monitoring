@@ -62,7 +62,7 @@ apps/web-ui/           React 18 + Vite frontend (port 4200)
 packages/shared/       Shared DTOs and helpers (@repo/shared)
 packages/config-eslint/
 packages/config-typescript/
-scripts/               Python transcription scripts (getText.py, etc.)
+scripts/               one-off scripts (Firestore migration)
 ```
 
 ### Backend (`apps/web-api`)
@@ -102,7 +102,7 @@ TypeScript DTOs and helpers used by both apps. Key models: `alerts.dto`, `notes.
 ### Transcription Flow
 
 1. Frontend requests `/alerts/getText` with a filename
-2. Backend: splits WAV file into 60-second chunks (`audio-chunker.ts`), transcribes each chunk in parallel via `transcribeWithPython` (`google-speech.ts`), joins text, upserts a `Note` document
+2. Backend: splits WAV file into 60-second chunks (`audio-chunker.ts`), asks the worker for the text of each chunk (`POST /transcribe`, `worker-transcription.ts`), joins text, upserts a `Note` document
 3. `/alerts/getSummary` sends the text to OpenAI (gpt-5-mini), parses title + summary from the response, updates the `Note`
 
 ---
@@ -164,6 +164,6 @@ VITE_FIREBASE_AUTH_DOMAIN=...
 ## Constraints
 
 - **Windows-only**: mudslide CLI paths, audio recording scripts, and build commands (`set NODE_ENV=...`) are Windows-specific. No Docker.
-- **Python required**: `scripts/getText.py` needs a Python env with `speech_recognition` and `google-cloud-speech`
+- **No Python**: transcription runs in the .NET worker (`POST /transcribe`, `ISpeechToText`); the worker service must be running
 - **TypeORM `synchronize: false`**: Schema changes must be applied manually to MongoDB
 - **fastify pinned to 4.28.1** via pnpm overrides (breaking change in later versions)

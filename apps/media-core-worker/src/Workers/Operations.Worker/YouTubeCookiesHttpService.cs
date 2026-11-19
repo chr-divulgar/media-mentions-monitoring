@@ -1,3 +1,4 @@
+using MediaOpsCore.Modules.Capture.Application;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
@@ -27,6 +28,8 @@ namespace MediaOpsCore.Workers.Operations;
 ///     {country}/{client}/{yyyy}/{MM}/{dd}/ (see NoteClipService);
 ///   POST /notes/pdf/commit  — on save, archives the previewed PDF over FTP ({previewId} → {link});
 ///     all three are consumed by NestJS's NotesService.
+///   POST /transcribe       — the text of WAV chunks the portal cut ({audioPaths, language?} → {chunks: [{status, text}]}),
+///     through the speech engine behind ISpeechToText: the note editor's "transcribe" button.
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
 ///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
 ///   GET  /whatsapp/qr      — relays the WhatsApp sidecar's own /qr (base64 PNG or null).
@@ -62,6 +65,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     private readonly NotePdfService? notePdfService;
     private readonly NoteClipService? noteClipService;
     private readonly NoteArchiveRemover? noteArchiveRemover;
+    private readonly TranscribeAudioFilesUseCase? transcribeAudioFiles;
     private readonly HttpClient httpClient;
     private readonly int whatsAppSidecarPort;
     private HttpListener? httpListener;
@@ -80,8 +84,10 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         HttpClient httpClient,
         NotePdfService? notePdfService = null,
         NoteClipService? noteClipService = null,
-        NoteArchiveRemover? noteArchiveRemover = null)
+        NoteArchiveRemover? noteArchiveRemover = null,
+        TranscribeAudioFilesUseCase? transcribeAudioFiles = null)
     {
+        this.transcribeAudioFiles = transcribeAudioFiles;
         this.noteArchiveRemover = noteArchiveRemover;
         this.notePdfService = notePdfService;
         this.noteClipService = noteClipService;
@@ -204,6 +210,12 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "GET" && path == "/video/segment")
             {
                 await HandleVideoSegmentRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (method == "POST" && path == "/transcribe")
+            {
+                await HandleTranscribeRequestAsync(context).ConfigureAwait(false);
                 return;
             }
 
@@ -497,6 +509,36 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
         var body = await reader.ReadToEndAsync().ConfigureAwait(false);
         return JsonSerializer.Deserialize<T>(body, JsonOptions);
+    }
+
+    // The portal's "transcribe": a few WAV chunks in, the text of each one out. It can take minutes for a long clip, so it
+    // runs for as long as the caller waits; a caller that hangs up cancels the work.
+    private async Task HandleTranscribeRequestAsync(HttpListenerContext context)
+    {
+        if (transcribeAudioFiles is null)
+        {
+            await SendJsonResponse(context, 503, new AudioSegmentErrorResponse { Message = "El motor de transcripción no está disponible." }).ConfigureAwait(false);
+            return;
+        }
+
+        var request = await ReadJsonBodyAsync<TranscribeRequest>(context).ConfigureAwait(false);
+        var problem = request is null ? "Missing or invalid body." : request.Validate();
+        if (problem is not null)
+        {
+            await SendJsonResponse(context, 400, new AudioSegmentErrorResponse { Message = problem }).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            var chunks = await transcribeAudioFiles.TranscribeAsync(request!.AudioPaths!, request.EffectiveLanguage, cts?.Token ?? CancellationToken.None).ConfigureAwait(false);
+            await SendJsonResponse(context, 200, new TranscribeResponse { Chunks = chunks }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The worker is stopping: nothing to answer.
+            context.Response.Abort();
+        }
     }
 
     private async Task HandleNoteClipRequestAsync(HttpListenerContext context)

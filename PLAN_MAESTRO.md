@@ -72,7 +72,7 @@ Estado: **N** no iniciado · **P** en progreso · **C** cumplido (solo con evide
 | RQ-017 | Universo de medios ampliable sin costo; ≥30 departamentos; base de medios actualizada; clasificación TIER1/TIER2; medios comunitarios | ANX-19, ANX-20, ANX-21, ANX-22, FIC-16, FIC-31, FIC-52, FIC-59 | P | 20 | Catálogo en MongoDB (`config.platforms`) con zona y ciudad (Plataformas UI) | F1, F3 |
 | RQ-018 | Monitorear entidad, programas, voceros, entidades adscritas y sector; menciones directas e indirectas | ANX-01, ANX-05, ANX-42 | P | 30 | Palabras clave por cliente; origen directo/indirecto manual en notas | F2 |
 | RQ-019 | Captura automática + **revisión editorial** (ortografía y calidad) antes de publicar | ANX-04, FIC-27 | P | 20 | Revisión manual en el modal de alertas | F2 |
-| RQ-020 | Transcripción radio/TV con motor licenciado, español de Colombia | ANX-11, ANX-42, FIC-01 | P | 50 | `ChunkTranscriptionPipeline` (motor gratuito, por reemplazar) | F1 |
+| RQ-020 | Transcripción radio/TV con motor licenciado, español de Colombia | ANX-11, ANX-42, FIC-01 | P | 50 | Puerto `ISpeechToText` (captura en vivo y `POST /transcribe` del portal, sin Python); el adaptador actual `GoogleWebSpeechToText` es gratuito y se reemplaza por uno licenciado (`speechEngine`) | F1 |
 
 ### 4.3 Base de datos de menciones y clasificación
 
