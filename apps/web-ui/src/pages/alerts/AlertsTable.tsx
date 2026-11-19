@@ -6,6 +6,7 @@ dayjs.extend(utc);
 import {
   AlertDto,
   AlertSlaSummaryDto,
+  ALERT_REVIEW_STATUSES,
   ALERT_SLA_TARGET_SECONDS,
   dateFormat,
   DateRange,
@@ -25,8 +26,9 @@ import AlertsModal from "./AlertsModal";
 import InternetNoteModal from "./InternetNoteModal";
 import { AlertRow, groupRepeatedAlerts, hideRepeatedWithinMinute } from "./alertGrouping";
 import api from "../../services/Agent";
-import { useQuery, UseQueryResult } from "react-query";
+import { useQuery, useQueryClient, UseQueryResult } from "react-query";
 import { useAlert } from "./AlertsContext";
+import { ReviewStatusDot, ReviewStatusLegend, reviewStatusRank } from "./ReviewStatus";
 
 // worker alerts store a real UTC instant; show it fixed at Colombia time (UTC-5)
 // regardless of the viewer's own browser timezone.
@@ -181,10 +183,17 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates, showSla = fals
   // Internet alerts have no audio/video to cut: they open the PDF-based editor instead.
   const [internetModalOpen, setInternetModalOpen] = useState(false);
   const { setSelectedAlert } = useAlert();
+  const queryClient = useQueryClient();
 
   const showModal = (alert: AlertDto) => {
     setModalKey((prevKey) => prevKey + 1);
     setSelectedAlert(alert);
+    // Opening the editor is what makes an alert "seen" for the whole team. It never holds up (or breaks) the editor.
+    if (alert.id) {
+      api.post("/alerts/view", { alertId: alert.id }).catch((error) => {
+        console.error("Could not record that the alert was opened:", error);
+      });
+    }
     if (alert.media === "internet") {
       setInternetModalOpen(true);
     } else {
@@ -195,6 +204,8 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates, showSla = fals
   const hideModal = () => {
     setModalOpen(false);
     setInternetModalOpen(false);
+    // What the editor did (the alert was opened, a note made, saved or sent) shows in the status column.
+    queryClient.invalidateQueries(["alerts"]);
   };
 
   //#endregion
@@ -395,6 +406,18 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates, showSla = fals
       ),
       width: "60px",
     },
+    {
+      // What has happened with the alert, as a color (see ReviewStatus.tsx and the "Convención" button).
+      title: "Estado",
+      dataIndex: "reviewStatus",
+      key: "reviewStatus",
+      align: "center",
+      width: "80px",
+      filters: ALERT_REVIEW_STATUSES.map((status) => ({ text: status.label, value: status.value })),
+      onFilter: (value, record) => (record.reviewStatus ?? "unseen") === value,
+      sorter: (a, b) => reviewStatusRank(a) - reviewStatusRank(b),
+      render: (_, record) => <ReviewStatusDot alert={record} />,
+    },
   ];
 
   const tableProps: TableProps<AlertRow> = {
@@ -412,17 +435,16 @@ const AlertsTable: React.FC<AlertsTableProps> = ({ selectedDates, showSla = fals
 
   return (
     <>
-      <Radio.Group
-        value={mediaFilter}
-        onChange={(e) => setMediaFilter(e.target.value)}
-        style={{ marginBottom: 8 }}
-      >
-        {MEDIA_FILTERS.map((option) => (
-          <Radio.Button key={option.value} value={option.value}>
-            {option.label}
-          </Radio.Button>
-        ))}
-      </Radio.Group>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <Radio.Group value={mediaFilter} onChange={(e) => setMediaFilter(e.target.value)}>
+          {MEDIA_FILTERS.map((option) => (
+            <Radio.Button key={option.value} value={option.value}>
+              {option.label}
+            </Radio.Button>
+          ))}
+        </Radio.Group>
+        <ReviewStatusLegend />
+      </div>
       {showSla && slaSummary && slaSummary.measured > 0 && (
         <AntAlert
           style={{ marginBottom: 8 }}

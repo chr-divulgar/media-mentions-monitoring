@@ -85,4 +85,8 @@ export class Note {
 
   @Column()
   attachment!: string;
+
+  /** When the note was sent by WhatsApp to at least one recipient; absent until then. */
+  @Column()
+  sentAt?: Date;
 }

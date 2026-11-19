@@ -20,9 +20,11 @@ import { splitAudio } from './audio-chunker';
 import { assembleTranscript, transcribeViaWorker } from './worker-transcription';
 import * as path from 'path';
 import { TEXT_MODEL, TextModel } from '../ai/text-model';
-import { Alert, Note, Transcription, WorkerAlert } from '../entities';
+import { Alert, AlertView, Note, Transcription, WorkerAlert } from '../entities';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as fs from 'fs/promises';
+import { ObjectId } from 'mongodb';
+import { reviewStatusOf } from './review-status';
 
 @Injectable()
 export class AlertsService {
@@ -30,6 +32,7 @@ export class AlertsService {
   workerAlertsRepo: MongoRepository<WorkerAlert>;
   transcriptRepo: MongoRepository<Transcription>;
   noteRepo: MongoRepository<Note>;
+  viewRepo: MongoRepository<AlertView>;
 
   constructor(
     @InjectDataSource('monitoring') private readonly dataSource: DataSource,
@@ -40,6 +43,7 @@ export class AlertsService {
     this.workerAlertsRepo = this.dataSource.getMongoRepository(WorkerAlert);
     this.transcriptRepo = this.dataSource.getMongoRepository(Transcription);
     this.noteRepo = this.dataSource.getMongoRepository(Note);
+    this.viewRepo = this.dataSource.getMongoRepository(AlertView);
   }
 
   async getChatResponse(getSummaryDto: GetSummaryDto): Promise<SummaryDto> {
@@ -106,7 +110,49 @@ export class AlertsService {
     // Stamp the origin on each record: the audio-cut flow (AudioService) needs it to
     // know whether startTime/endTime are real UTC (worker) or legacy's mislabeled-local-time.
     const resolvedSource = source === 'worker' ? 'worker' : 'legacy';
-    return results.map((alert) => ({ ...alert, source: resolvedSource }));
+    const alerts = source === 'worker' ? await this.withReviewStatus(results) : results;
+    return alerts.map((alert) => ({ ...alert, source: resolvedSource }));
+  }
+
+  // What has happened with each alert on the portal: whether someone opened it and the note made from it. Two queries
+  // for the whole day (a few hundred ids), not one per alert.
+  private async withReviewStatus(alerts: WorkerAlert[]) {
+    const ids = alerts.map((alert) => String(alert.id));
+    if (ids.length === 0) return alerts;
+
+    const [views, notes] = await Promise.all([
+      this.viewRepo.find({ where: { alertId: { $in: ids } } } as unknown as FindOneOptions<AlertView>),
+      this.noteRepo.find({ where: { alert_id: { $in: ids } } } as unknown as FindOneOptions<Note>),
+    ]);
+    const viewOf = new Map(views.map((view) => [view.alertId, view]));
+    const noteOf = new Map(notes.map((note) => [note.alert_id, note]));
+
+    return alerts.map((alert) => {
+      const view = viewOf.get(String(alert.id));
+      const note = noteOf.get(String(alert.id));
+      return {
+        ...alert,
+        reviewStatus: reviewStatusOf({ viewedAt: view?.viewedAt, note }),
+        viewedAt: view?.viewedAt ? new Date(view.viewedAt).toISOString() : undefined,
+        noteId: note ? String(note.id) : undefined,
+      };
+    });
+  }
+
+  /**
+   * Records that someone opened the alert's editor. Only the first view is kept (who and when), so opening it again
+   * never changes it; the whole team shares it.
+   */
+  async markViewed(alertId: string, viewedBy?: string): Promise<void> {
+    if (!ObjectId.isValid(alertId)) {
+      throw new Error('alertId no es un id de alerta válido');
+    }
+
+    await this.viewRepo.updateOne(
+      { alertId },
+      { $setOnInsert: { alertId, viewedAt: new Date(), ...(viewedBy && { viewedBy }) } },
+      { upsert: true },
+    );
   }
 
   /**

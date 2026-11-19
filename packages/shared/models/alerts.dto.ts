@@ -28,7 +28,33 @@ export class AlertDto {
   readonly repeatOfAlertId?: string;
   /** Web mention the worker could not read or date: only title and link are stored, and this says what to check. */
   readonly reviewReason?: string;
+  /** What has happened with this alert on the portal (worker alerts): see ALERT_REVIEW_STATUSES. */
+  readonly reviewStatus?: AlertReviewStatus;
+  /** When someone first opened the alert's editor, if anyone has. */
+  readonly viewedAt?: string;
+  /** The note made from this alert, if there is one. */
+  readonly noteId?: string;
 }
+
+/** Where an alert is in its handling, from not looked at to its note sent. The most advanced applies. */
+export type AlertReviewStatus = 'unseen' | 'viewed' | 'draft' | 'saved' | 'sent';
+
+/**
+ * The states, in order of progress, with the color the alerts table shows and what each one means. The single source
+ * of the status column and of its legend, so they cannot disagree.
+ */
+export const ALERT_REVIEW_STATUSES: readonly {
+  readonly value: AlertReviewStatus;
+  readonly label: string;
+  readonly color: string;
+  readonly description: string;
+}[] = [
+  { value: 'unseen', label: 'Sin ver', color: '#f5222d', description: 'Nadie ha abierto la alerta y no tiene nota.' },
+  { value: 'viewed', label: 'Vista', color: '#faad14', description: 'Alguien abrió el editor, pero todavía no hay nota.' },
+  { value: 'draft', label: 'Nota en borrador', color: '#1677ff', description: 'Ya se transcribió, pero falta guardar la nota.' },
+  { value: 'saved', label: 'Nota guardada', color: '#52c41a', description: 'La nota está guardada con su titular.' },
+  { value: 'sent', label: 'Nota enviada', color: '#722ed1', description: 'La nota ya se envió por WhatsApp.' },
+];
 
 /** Target for "alert within 5 minutes of capture" (AMB-001); configurable per level later. */
 export const ALERT_SLA_TARGET_SECONDS = 300;

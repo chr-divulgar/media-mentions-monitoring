@@ -634,3 +634,46 @@ describe('NotesService.importNotes (Excel)', () => {
     await expect(service.importNotes({ clientName: 'Ecopetrol', notes: 'x' as never })).rejects.toThrow();
   });
 });
+
+describe('NotesService.sendMessage: the alert learns its note was sent', () => {
+  const noteDto = { alert_id: 'al1', clientName: 'Ecopetrol', media: 'radio', message: 'NOTA 1 ...' };
+
+  function buildSender(send: jest.Mock) {
+    const note = { id: 'n1', alert_id: 'al1', title: 'Titular' } as Record<string, unknown>;
+    const noteRepo = {
+      findOne: jest.fn().mockResolvedValue(note),
+      save: jest.fn(async (saved: Record<string, unknown>) => saved),
+    };
+    const dataSource = { getMongoRepository: () => noteRepo };
+    const clients = { getClients: jest.fn().mockResolvedValue([{ name: 'Ecopetrol', notes: { radio: ['+57300', '+57301'] } }]) };
+    const service = new NotesService(dataSource as never, clients as never, { send } as never);
+    return { service, note, noteRepo };
+  }
+
+  it('saves when it was sent', async () => {
+    const { service, note } = buildSender(jest.fn().mockResolvedValue(undefined));
+
+    await expect(service.sendMessage(noteDto as never)).resolves.toBe(true);
+
+    expect(note.sentAt).toBeInstanceOf(Date);
+  });
+
+  it('saves it too when only some recipients got it: the note did reach someone', async () => {
+    const send = jest.fn().mockImplementation(async (recipient: string) => {
+      if (recipient === '+57301') throw new Error('sin sesión');
+    });
+    const { service, note } = buildSender(send);
+
+    await expect(service.sendMessage(noteDto as never)).rejects.toThrow(/1 de 2/);
+
+    expect(note.sentAt).toBeInstanceOf(Date);
+  });
+
+  it('does not mark it as sent when nobody got it', async () => {
+    const { service, note } = buildSender(jest.fn().mockRejectedValue(new Error('sin sesión')));
+
+    await expect(service.sendMessage(noteDto as never)).rejects.toThrow(/No se pudo enviar/);
+
+    expect(note.sentAt).toBeUndefined();
+  });
+});

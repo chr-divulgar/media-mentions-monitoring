@@ -491,6 +491,8 @@ export class NotesService {
     if (failures.length === recipients.length) {
       throw new Error(`No se pudo enviar la nota: ${failures.join('; ')}`);
     }
+    // It reached at least one recipient: the alerts table shows it as sent, even when some failed.
+    await this.markSent(noteDto.alert_id);
     if (failures.length > 0) {
       throw new Error(
         `Nota enviada a ${recipients.length - failures.length} de ${recipients.length} destinatarios; falló: ${failures.join('; ')}`,
@@ -498,6 +500,20 @@ export class NotesService {
     }
 
     return true;
+  }
+
+  // Remembers when the note went out. Never fails the send: the message is already on its way.
+  private async markSent(alertId?: string): Promise<void> {
+    if (!alertId) return;
+    try {
+      const note = await this.noteRepo.findOne({ where: { alert_id: alertId } });
+      if (note) {
+        note.sentAt = new Date();
+        await this.noteRepo.save(note);
+      }
+    } catch (error) {
+      console.error('Could not record that the note was sent:', error);
+    }
   }
 
   private async resolveNoteRecipients(noteDto: NoteDto): Promise<string[]> {

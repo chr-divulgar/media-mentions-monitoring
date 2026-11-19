@@ -4,6 +4,7 @@ import {
   Body,
   HttpException,
   HttpStatus,
+  Req,
 } from '@nestjs/common';
 import { AlertsService } from './alerts.service';
 import {
@@ -28,6 +29,26 @@ export class AlertsController {
           error: `There was an error processing the request getAlerts ${error}`,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // The editor of an alert was opened: the first view is kept for the whole team (the "Vista" status).
+  @Post('view')
+  async markViewed(
+    @Body() body: { alertId?: string },
+    @Req() request: { user?: { uid?: string } },
+  ) {
+    try {
+      await this.alertService.markViewed(body?.alertId ?? '', request.user?.uid);
+      return { ok: true };
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.BAD_REQUEST,
+          error: `There was an error processing the request markViewed ${error}`,
+        },
+        HttpStatus.BAD_REQUEST,
       );
     }
   }
