@@ -221,6 +221,17 @@ builder.Services.AddSingleton<ISpeechToText>(_ => SpeechEngines.Create(options.S
 // The portal's on-demand transcription (POST /transcribe on the worker's HTTP service) goes through the same engine.
 builder.Services.AddSingleton<IPcmFileReader, WavPcmFileReader>();
 builder.Services.AddSingleton<TranscribeAudioFilesUseCase>();
+// The one-time conversion of the radio hours on disk to 32 kbps: it only runs when asked through /maintenance/radio-opus.
+builder.Services.AddSingleton(sp => new RadioOpusConversionJob(
+	options,
+	sp.GetService<ArchiveLedger>(),
+	new ArchiveLedger(Path.Combine(options.StageFilesystemRootPath, "monitoringArtifacts", "radio-opus-converted-ledger.jsonl")),
+	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RadioOpusConversionJob>>(),
+	offsets: async cancellationToken =>
+	{
+		var sources = await sp.GetRequiredService<ICaptureSourceRepository>().ListAllAsync(cancellationToken).ConfigureAwait(false);
+		return sources.ToDictionary(source => source.SourceId, source => TimeSpan.FromMinutes(source.UtcOffsetMinutes), StringComparer.OrdinalIgnoreCase);
+	}));
 // IAudioCapturePlugin gets observer and repository so sessions report events directly.
 builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudioCapturePlugin(
 	sp.GetRequiredService<OperationsWorkerOptions>(),

@@ -67,6 +67,7 @@ public static class OperationsWorkerOptionsLoader
         int? DefaultOpusFlushIntervalSeconds,
         int? DefaultOpusRotationIntervalHours,
         int? DefaultOpusBitrateKbps,
+        int? RadioOpusBitrateKbps,
         bool? EnableDecoderReconnect,
         int? DecoderReconnectDelayMaxSeconds,
         bool? RtspPreferTcp,
@@ -335,6 +336,11 @@ public static class OperationsWorkerOptionsLoader
         if (model.DefaultOpusBitrateKbps.HasValue)
         {
             options.DefaultOpusBitrateKbps = model.DefaultOpusBitrateKbps.Value;
+        }
+
+        if (model.RadioOpusBitrateKbps is > 0)
+        {
+            options.RadioOpusBitrateKbps = model.RadioOpusBitrateKbps.Value;
         }
 
         if (model.EnableDecoderReconnect.HasValue)

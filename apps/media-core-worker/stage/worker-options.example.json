@@ -27,6 +27,7 @@
   "defaultOpusFlushIntervalSeconds": 30,
   "defaultOpusRotationIntervalHours": 1,
   "defaultOpusBitrateKbps": 64,
+  "radioOpusBitrateKbps": 32,
   "enableDecoderReconnect": true,
   "decoderReconnectDelayMaxSeconds": 5,
   "rtspPreferTcp": true,

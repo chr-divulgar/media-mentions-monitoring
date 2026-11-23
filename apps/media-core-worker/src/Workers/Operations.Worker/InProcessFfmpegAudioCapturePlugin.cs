@@ -801,7 +801,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 ffmpeg.av_opt_set_sample_fmt(swrContext, "out_sample_fmt", AVSampleFormat.AV_SAMPLE_FMT_S16, 0).ThrowIfError("av_opt_set_sample_fmt(out_sample_fmt)");
                 ffmpeg.swr_init(swrContext).ThrowIfError("swr_init");
 
-                encoderContext = CreateOpusEncoderContext(Math.Max(6, options.DefaultOpusBitrateKbps));
+                encoderContext = CreateOpusEncoderContext(Math.Max(6, options.OpusBitrateKbpsFor(source.Media)));
                 encoderFrameSize = encoderContext->frame_size > 0 ? encoderContext->frame_size : AudioSampleRate / 2;
                 pendingOpusPcm = new PcmByteQueue();
                 pendingFlacPcm = new PcmByteQueue();
@@ -904,7 +904,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     source,
                     new AudioCaptureExecutionResult(true, activeOpusPath ?? string.Empty),
                     CancellationToken.None);
-                logger.LogInformation("Capture started for source {SourceId}. Reconnect={ReconnectEnabled}, RtspTcp={RtspPreferTcp}, SilenceChunking={SilenceChunkingEnabled}, OpusBitrateKbps={OpusBitrateKbps}.", sourceId, options.EnableDecoderReconnect, options.RtspPreferTcp, chunkingState is not null, options.DefaultOpusBitrateKbps);
+                logger.LogInformation("Capture started for source {SourceId}. Reconnect={ReconnectEnabled}, RtspTcp={RtspPreferTcp}, SilenceChunking={SilenceChunkingEnabled}, OpusBitrateKbps={OpusBitrateKbps}.", sourceId, options.EnableDecoderReconnect, options.RtspPreferTcp, chunkingState is not null, options.OpusBitrateKbpsFor(source.Media));
                 logger.LogInformation("OPUS rotation interval for source {SourceId}: profile={ProfileRotationMinutes} min, effective={EffectiveRotationMinutes} min.", sourceId, plan.OpusRotationInterval.TotalMinutes, effectiveOpusRotationInterval.TotalMinutes);
 
                 // Allocate FFmpeg packets and frames before any silence fill so they are
@@ -1518,7 +1518,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
 
             try
             {
-                enc = CreateOpusEncoderContext(Math.Max(6, options.DefaultOpusBitrateKbps));
+                enc = CreateOpusEncoderContext(Math.Max(6, options.OpusBitrateKbpsFor(source.Media)));
                 outCtx = OpenOutputContext(tempPath, enc, ref outStream);
                 encFrame = ffmpeg.av_frame_alloc();
                 pkt = ffmpeg.av_packet_alloc();
@@ -1761,7 +1761,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             // so no audio is lost across the rotation.
             AVCodecContext* encoderToFree = encoderContext;
             ffmpeg.avcodec_free_context(&encoderToFree);
-            encoderContext = CreateOpusEncoderContext(Math.Max(6, options.DefaultOpusBitrateKbps));
+            encoderContext = CreateOpusEncoderContext(Math.Max(6, options.OpusBitrateKbpsFor(source.Media)));
 
             // Reset PTS so each rotated file starts from timestamp 0.
             // Without this, files after the first rotation have non-zero start PTS equal to the cumulative

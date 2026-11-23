@@ -30,6 +30,9 @@ namespace MediaOpsCore.Workers.Operations;
 ///     all three are consumed by NestJS's NotesService.
 ///   POST /transcribe       — the text of WAV chunks the portal cut ({audioPaths, language?} → {chunks: [{status, text}]}),
 ///     through the speech engine behind ISpeechToText: the note editor's "transcribe" button.
+///   POST /maintenance/radio-opus/convert — starts the one-time conversion of the radio hours on disk to 32 kbps
+///     ({dryRun?, limit?}); GET /maintenance/radio-opus reports how it is going and POST .../stop stops it (see
+///     RadioOpusConversionJob and scripts/convert-radio-opus.ps1).
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
 ///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
 ///   GET  /whatsapp/qr      — relays the WhatsApp sidecar's own /qr (base64 PNG or null).
@@ -66,6 +69,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
     private readonly NoteClipService? noteClipService;
     private readonly NoteArchiveRemover? noteArchiveRemover;
     private readonly TranscribeAudioFilesUseCase? transcribeAudioFiles;
+    private readonly RadioOpusConversionJob? radioOpusConversion;
     private readonly HttpClient httpClient;
     private readonly int whatsAppSidecarPort;
     private HttpListener? httpListener;
@@ -85,8 +89,10 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         NotePdfService? notePdfService = null,
         NoteClipService? noteClipService = null,
         NoteArchiveRemover? noteArchiveRemover = null,
-        TranscribeAudioFilesUseCase? transcribeAudioFiles = null)
+        TranscribeAudioFilesUseCase? transcribeAudioFiles = null,
+        RadioOpusConversionJob? radioOpusConversion = null)
     {
+        this.radioOpusConversion = radioOpusConversion;
         this.transcribeAudioFiles = transcribeAudioFiles;
         this.noteArchiveRemover = noteArchiveRemover;
         this.notePdfService = notePdfService;
@@ -216,6 +222,25 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             if (method == "POST" && path == "/transcribe")
             {
                 await HandleTranscribeRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (path == "/maintenance/radio-opus/convert" && method == "POST")
+            {
+                await HandleRadioOpusConvertRequestAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (path == "/maintenance/radio-opus" && method == "GET")
+            {
+                await SendJsonResponse(context, radioOpusConversion is null ? 503 : 200, (object?)radioOpusConversion?.Status ?? NotAvailable("La conversión de audio de radio no está disponible.")).ConfigureAwait(false);
+                return;
+            }
+
+            if (path == "/maintenance/radio-opus/stop" && method == "POST")
+            {
+                radioOpusConversion?.Stop();
+                await SendJsonResponse(context, radioOpusConversion is null ? 503 : 200, (object?)radioOpusConversion?.Status ?? NotAvailable("La conversión de audio de radio no está disponible.")).ConfigureAwait(false);
                 return;
             }
 
@@ -509,6 +534,45 @@ public sealed class YouTubeCookiesHttpService : IHostedService
         using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
         var body = await reader.ReadToEndAsync().ConfigureAwait(false);
         return JsonSerializer.Deserialize<T>(body, JsonOptions);
+    }
+
+    private static AudioSegmentErrorResponse NotAvailable(string message) => new() { Message = message };
+
+    // Starts the one-time conversion in the background: it takes hours, so the answer is the status right after starting.
+    // An empty body means the defaults (a real run, every file).
+    private async Task HandleRadioOpusConvertRequestAsync(HttpListenerContext context)
+    {
+        if (radioOpusConversion is null)
+        {
+            await SendJsonResponse(context, 503, NotAvailable("La conversión de audio de radio no está disponible.")).ConfigureAwait(false);
+            return;
+        }
+
+        using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
+        var body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        RadioOpusConvertRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? new RadioOpusConvertRequest() : JsonSerializer.Deserialize<RadioOpusConvertRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            request = null;
+        }
+
+        if (request is null)
+        {
+            await SendJsonResponse(context, 400, NotAvailable("Invalid body: expected {\"dryRun\": bool, \"limit\": number}.")).ConfigureAwait(false);
+            return;
+        }
+
+        if (!radioOpusConversion.TryStart(request.DryRun, request.Limit))
+        {
+            await SendJsonResponse(context, 409, NotAvailable("La conversión ya está en marcha.")).ConfigureAwait(false);
+            return;
+        }
+
+        await SendJsonResponse(context, 202, radioOpusConversion.Status).ConfigureAwait(false);
     }
 
     // The portal's "transcribe": a few WAV chunks in, the text of each one out. It can take minutes for a long clip, so it

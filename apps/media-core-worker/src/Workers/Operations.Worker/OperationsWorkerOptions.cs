@@ -148,6 +148,17 @@ public sealed class OperationsWorkerOptions
 
     public int DefaultOpusBitrateKbps { get; set; } = 64;
 
+    // Radio is recorded at this bitrate (mono, 16 kHz): what the mp3 of a note has, at half of the 64 kbps the hour files
+    // used to take. The general bitrate above stays for everything else (television).
+    public int RadioOpusBitrateKbps { get; set; } = 32;
+
+    public int OpusBitrateKbpsFor(string? media) =>
+        string.Equals(media, ArchiveMedia.Radio, StringComparison.OrdinalIgnoreCase) ? RadioOpusBitrateKbps : DefaultOpusBitrateKbps;
+
+    // How many hour files the one-time conversion of the radio on disk re-encodes at once (see RadioOpusConversionJob). It
+    // shares the CPU with the capture, so it stays small.
+    public int RadioOpusConversionMaxParallel { get; set; } = 2;
+
     public bool EnableDecoderReconnect { get; set; } = true;
 
     public int DecoderReconnectDelayMaxSeconds { get; set; } = 5;

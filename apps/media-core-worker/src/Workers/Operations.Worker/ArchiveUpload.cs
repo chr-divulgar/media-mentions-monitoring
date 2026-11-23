@@ -68,7 +68,7 @@ internal static class ArchiveUpload
     // the source id is the file's folder. A source no longer in the catalog falls back to Bogota.
     private static readonly TimeSpan BogotaOffset = TimeSpan.FromHours(-5);
 
-    private static bool IsStillRecording(FileInfo file, DateTime nowUtc, IReadOnlyDictionary<string, TimeSpan>? offsetBySourceId)
+    internal static bool IsStillRecording(FileInfo file, DateTime nowUtc, IReadOnlyDictionary<string, TimeSpan>? offsetBySourceId)
     {
         var match = RecordingStamp.Match(file.Name);
         var isOpus = file.Name.EndsWith(".opus", StringComparison.OrdinalIgnoreCase);
