@@ -54,6 +54,8 @@ export class ClientDto {
   readonly reportIndicators?: ReportIndicatorDto[];
   /** Google Alerts RSS feeds (https://www.google.com/alerts/feeds/...) the worker reads for this client's notes. */
   readonly googleAlertsFeeds?: string[];
+  /** Abbreviation of the client in the names of its note files (ECOP); empty means the first four letters of its name. */
+  readonly abbreviation?: string;
 }
 
 export class MediaTypeDto {

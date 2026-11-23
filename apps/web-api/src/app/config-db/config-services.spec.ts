@@ -122,8 +122,30 @@ describe('ClientsService (MongoDB)', () => {
     await expect(service.getClient(b.id as string)).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  describe('the abbreviation used in the note file names', () => {
+    it('keeps it clean (upper case, letters and digits) and leaves it alone when an update does not carry it', async () => {
+      const service = new ClientsService(buildDb() as never);
+
+      const created = await service.createClient({ name: 'Prosperidad Social', abbreviation: ' d.p.s ' });
+      expect(created.abbreviation).toBe('DPS');
+
+      const renamed = await service.updateClient(created.id as string, { name: 'Prosperidad Social Bis' });
+      expect(renamed.abbreviation).toBe('DPS');
+
+      const changed = await service.updateClient(created.id as string, { name: 'Prosperidad Social Bis', abbreviation: 'prosp' });
+      expect(changed.abbreviation).toBe('PROSP');
+    });
+
+    it('can be emptied, and then the first letters of the name are used', async () => {
+      const service = new ClientsService(buildDb() as never);
+      const created = await service.createClient({ name: 'Alfa', abbreviation: 'AL' });
+
+      expect((await service.updateClient(created.id as string, { name: 'Alfa', abbreviation: '' })).abbreviation).toBe('');
+    });
+  });
+
   describe('Google Alerts feeds', () => {
-    const FEED = 'https://www.google.com/alerts/feeds/12345678901234567890/11111111111111111111';
+    const FEED ='https://www.google.com/alerts/feeds/12345678901234567890/11111111111111111111';
 
     it('keeps the feed links trimmed, without blanks or repeats', async () => {
       const service = new ClientsService(buildDb() as never);

@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { ClientDto, MediaTypeDto } from '@repo/shared';
+import { ClientDto, MediaTypeDto, cleanAbbreviation } from '@repo/shared';
 import {
   ConfigDbService,
   isDuplicateKey,
@@ -78,6 +78,7 @@ export class ClientsService {
       reportLogo: dto.reportLogo ?? '',
       reportIndicators: dto.reportIndicators ?? [],
       googleAlertsFeeds: cleanGoogleAlertsFeeds(dto.googleAlertsFeeds),
+      abbreviation: cleanAbbreviation(dto.abbreviation),
     };
     try {
       const result = await this.configDb.clients.insertOne({ ...payload });
@@ -103,6 +104,7 @@ export class ClientsService {
     if (dto.alertEmails !== undefined) payload['alertEmails'] = dto.alertEmails;
     if (dto.notes !== undefined) payload['notes'] = dto.notes;
     if (dto.reportLogo !== undefined) payload['reportLogo'] = dto.reportLogo ?? '';
+    if (dto.abbreviation !== undefined) payload['abbreviation'] = cleanAbbreviation(dto.abbreviation);
     if (dto.googleAlertsFeeds !== undefined) payload['googleAlertsFeeds'] = cleanGoogleAlertsFeeds(dto.googleAlertsFeeds);
     if (dto.reportIndicators !== undefined) {
       payload['reportIndicators'] = (dto.reportIndicators ?? [])

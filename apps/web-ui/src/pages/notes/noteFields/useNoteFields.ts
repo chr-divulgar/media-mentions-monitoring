@@ -5,6 +5,7 @@ import dayjs from "dayjs";
 import { useQuery, useQueryClient } from "react-query";
 import api from "../../../services/Agent";
 import type { MediaTypeDto, NoteDto, PlatformDto } from "@repo/shared/index";
+import { clientAbbreviation, composeNoteAudioLabel } from "@repo/shared/index";
 import {
   acceptByMedia,
   expectedExtension,
@@ -24,6 +25,7 @@ interface ClientTopicNode {
 interface ClientWithTopics {
   id?: string;
   name?: string;
+  abbreviation?: string;
   topics?: ClientTopicNode[];
 }
 
@@ -345,12 +347,18 @@ export function useNoteFields(form: FormInstance, options: NoteFieldsOptions = {
     return programSlotMap.get(effectiveProgramValue);
   }, [programSlotMap, effectiveProgramValue]);
 
-  const composedAudioLabel = React.useMemo(() => {
-    const resolvedIndex =
-      selectedIndex && selectedIndex.trim().length > 0 ? selectedIndex : "##";
-    if (!selectedProgramSlot?.audioLabel) return undefined;
-    return `NOTA_${resolvedIndex}${selectedProgramSlot.audioLabel}.${attachmentExtension}`;
-  }, [selectedIndex, selectedProgramSlot, attachmentExtension]);
+  // NOTA_{number}_{program}_{dd-MM-yy}_{client abbreviation}.{ext}, the name the audio is filed under.
+  const composedAudioLabel = React.useMemo(
+    () =>
+      composeNoteAudioLabel({
+        index: selectedIndex,
+        slotLabel: selectedProgramSlot?.audioLabel,
+        date: selectedDate?.isValid() ? selectedDate.format("YYYY-MM-DD") : undefined,
+        abbreviation: selectedClient ? clientAbbreviation(selectedClient) : undefined,
+        extension: attachmentExtension,
+      }),
+    [selectedIndex, selectedProgramSlot, selectedDate, selectedClient, attachmentExtension],
+  );
 
   const canSelectTime =
     !!selectedMedia && !!selectedDate && selectedDate.isValid();

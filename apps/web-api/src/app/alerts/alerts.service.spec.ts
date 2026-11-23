@@ -54,6 +54,27 @@ describe('AlertsService.getChatResponse', () => {
   });
 });
 
+describe('AlertsService.getChatResponse: the length of the summary', () => {
+  const modelAnswering = (): TextModel => ({ label: 'fake', complete: jest.fn().mockResolvedValue('Titulo\nResumen del audio.') });
+  const asked = (textModel: TextModel) => (textModel.complete as jest.Mock).mock.calls[0][0] as string;
+
+  it.each([
+    [{ durationSeconds: 25 }, '20 palabras'],
+    [{ durationSeconds: 200 }, '40 palabras'],
+    [{ durationSeconds: 300 }, '60 palabras'],
+    [{ durationSeconds: 900 }, '90 palabras'],
+    [{ durationSeconds: 200, economicIndicators: true }, '50 palabras'],
+    [{}, '40 palabras'],
+  ])('with %j asks for %s', async (extra, words) => {
+    const textModel = modelAnswering();
+    const { service } = build(textModel);
+
+    await service.getChatResponse({ noteId: 'n1', text: 'audio', ...extra });
+
+    expect(asked(textModel)).toContain(words);
+  });
+});
+
 describe('AlertsService.getAlerts: what has happened with each alert', () => {
   const day = { startDate: '2026-11-10', endDate: '2026-11-10', source: 'worker' as const };
   type Row = { reviewStatus?: string; viewedAt?: string; noteId?: string };

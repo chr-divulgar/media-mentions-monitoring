@@ -10,3 +10,4 @@ export * from "./models/status.dto";
 export * from "./models/whatsapp.dto";
 export * from "./helper/dates";
 export * from "./helper/text";
+export * from "./helper/note-label";

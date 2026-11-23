@@ -41,7 +41,7 @@ status.
 |--------|------|---------|
 | POST | `/alerts` | List alerts |
 | POST | `/alerts/getText` | Transcribe audio (asks the worker's `POST /transcribe`) |
-| POST | `/alerts/getSummary` | Summarize text (OpenAI) |
+| POST | `/alerts/getSummary` | Title + summary through the configured AI provider; its length follows the audio duration |
 | POST | `/audio/createFile` | Generate MP3/WAV segment via FFmpeg |
 | GET  | `/audio/fetchByName/:filename` | Serve audio file |
 | POST | `/notes/set-note` | Save/update note metadata |

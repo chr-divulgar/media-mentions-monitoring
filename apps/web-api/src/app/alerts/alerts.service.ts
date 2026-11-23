@@ -25,6 +25,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import * as fs from 'fs/promises';
 import { ObjectId } from 'mongodb';
 import { reviewStatusOf } from './review-status';
+import { summaryInstructions, summaryWordTarget } from './summary-length';
 
 @Injectable()
 export class AlertsService {
@@ -48,9 +49,13 @@ export class AlertsService {
 
   async getChatResponse(getSummaryDto: GetSummaryDto): Promise<SummaryDto> {
     try {
-      const prompt = `Genera un título separado por una línea nueva y un resumen en forma de noticia escrita en tercera persona,
-      el resumen máximo alrededor de 120 palabras que sea coherente y bien redactado. 
-      Asegúrate de que el resumen sea fiel a los hechos y no atribuya incorrectamente acciones o eventos a personas o entidades mencionadas en el texto.`;
+      // How many words the summary has depends on how long the audio is, and on whether it is economic indicators.
+      const prompt = summaryInstructions(
+        summaryWordTarget({
+          durationSeconds: getSummaryDto.durationSeconds,
+          economicIndicators: getSummaryDto.economicIndicators,
+        }),
+      );
 
       const answer = await this.textModel.complete(prompt, getSummaryDto.text ?? '');
       const message = answer.replace(/#/g, '').replace(/\*/g, '');

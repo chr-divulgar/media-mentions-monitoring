@@ -166,7 +166,11 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
     setNote({
       ...note,
       startTime: fragment.startTime?.toISOString(),
-      duration: fragment?.duration?.seconds(),
+      // The whole length in seconds (seconds() is only the 0-59 part: a 3:20 clip was saved as 20 s).
+      duration:
+        fragment?.duration === undefined
+          ? undefined
+          : Math.round(fragment.duration.asSeconds()),
     });
   }, [fragment]);
 

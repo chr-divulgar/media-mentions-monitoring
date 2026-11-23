@@ -978,6 +978,7 @@ const ClientModal: React.FC<{
       reportLogo: initial?.reportLogo ?? "",
       reportIndicators: initial?.reportIndicators ?? [],
       googleAlertsFeeds: initial?.googleAlertsFeeds ?? [],
+      abbreviation: initial?.abbreviation ?? "",
     }),
     [open, initial],
   );
@@ -1003,6 +1004,7 @@ const ClientModal: React.FC<{
       googleAlertsFeeds: (values.googleAlertsFeeds ?? initial?.googleAlertsFeeds ?? [])
         .map((feed: string) => feed?.trim())
         .filter(Boolean),
+      abbreviation: values.abbreviation ?? initial?.abbreviation ?? "",
     });
   };
 
@@ -1087,13 +1089,22 @@ const ClientModal: React.FC<{
       key: "info",
       label: "Información",
       children: (
-        <Form.Item
-          name="name"
-          label="Nombre del cliente"
-          rules={[{ required: true }]}
-        >
-          <Input />
-        </Form.Item>
+        <>
+          <Form.Item
+            name="name"
+            label="Nombre del cliente"
+            rules={[{ required: true }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="abbreviation"
+            label="Sigla"
+            extra="Va al final del nombre del audio de cada nota (NOTA_01_JAVERIANA_ESTEREO_AM_19-11-26_ECOP). Si se deja vacía se usan las 4 primeras letras del nombre."
+          >
+            <Input maxLength={10} placeholder="Ej.: ECOP" style={{ maxWidth: 200 }} />
+          </Form.Item>
+        </>
       ),
     },
     {

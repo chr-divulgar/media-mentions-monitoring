@@ -8,6 +8,7 @@ import {
   Input,
   message,
   Row,
+  Switch,
   Spin,
 } from "antd";
 import {
@@ -71,6 +72,8 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
   const { selectedAlert } = useAlert();
   const { note, setNote } = useNote();
   const getSummaryDtoRef = useRef(new GetSummaryDto()); // Replace initialGetSummaryDtoValue with the initial value
+  // Economic indicators always get the 50 word summary; the rest by how long the audio is (see the API's summaryWordTarget).
+  const [economicIndicators, setEconomicIndicators] = useState(false);
   const noteFields = useNoteFields(form, { lockContext: true, indexForAllMedia: true });
 
   // What the alert and its clip already say about the note. The date and time are the clip's own,
@@ -156,7 +159,10 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `fragment_${selectedAlert?.id}.${mediaKind === "video" ? "mp4" : "mp3"}`;
+      // The name the note's audio is filed under (NOTA_01_..._ECOP) when it is already composed, else the clip's own.
+      const extension = mediaKind === "video" ? "mp4" : "mp3";
+      const label = String(form.getFieldValue("audioLabel") ?? "").replace(/.[^.]+$/, "");
+      a.download = label ? `${label}.${extension}` : `fragment_${selectedAlert?.id}.${extension}`;
       document.body.appendChild(a);
       a.click();
 
@@ -323,10 +329,24 @@ const SummaryEdit: React.FC<SummaryEditProps> = ({ form, onFinish, mediaKind = "
                 style={{ height: "100%" }}
               />
             </Spin>
-            <Row style={{ margin: "12px" }} justify="end">
+            <Row style={{ margin: "12px" }} justify="end" align="middle">
+              <Switch
+                size="small"
+                checked={economicIndicators}
+                onChange={setEconomicIndicators}
+                disabled={!transcriptionData}
+              />
+              <span style={{ margin: "0 12px 0 8px" }}>Indicadores económicos</span>
               <Button
                 type="primary"
-                onClick={() => generateSummary(getSummaryDtoRef.current)}
+                onClick={() => {
+                  getSummaryDtoRef.current = {
+                    ...getSummaryDtoRef.current,
+                    durationSeconds: note?.duration,
+                    economicIndicators,
+                  };
+                  generateSummary(getSummaryDtoRef.current);
+                }}
                 size="small"
                 disabled={!transcriptionData}
               >

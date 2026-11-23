@@ -96,6 +96,10 @@ export class GetSummaryDto {
   readonly noteId?: string;
   readonly text?: string;
   readonly words?: string[];
+  /** How long the audio is: the summary is longer the longer it is (see summaryWordTarget in the API). */
+  readonly durationSeconds?: number;
+  /** Economic indicators: the summary is always 50 words. */
+  readonly economicIndicators?: boolean;
 }
 
 export class SummaryDto {
