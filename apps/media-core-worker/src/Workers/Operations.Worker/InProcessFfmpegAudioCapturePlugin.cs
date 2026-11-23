@@ -90,14 +90,16 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         ICaptureAttemptObserver captureAttemptObserver,
         IMonitoringArtifactRepository monitoringArtifactRepository,
         IDetectAlertsUseCase detectAlertsUseCase,
-        ISpeechToText speechToText)
+        ISpeechToText speechToText,
+        ITranscriptionStore transcriptionStore,
+        ISourceIncidentRecorder? incidentRecorder = null)
     {
         this.options = options;
         this.logger = logger;
         this.operationalMetrics = operationalMetrics;
         this.captureAttemptObserver = captureAttemptObserver;
         this.monitoringArtifactRepository = monitoringArtifactRepository;
-        chunkTranscriptionPipeline = new ChunkTranscriptionPipeline(logger, detectAlertsUseCase, speechToText);
+        chunkTranscriptionPipeline = new ChunkTranscriptionPipeline(logger, detectAlertsUseCase, speechToText, transcriptionStore, incidentRecorder);
         EnsureFfmpegInitialized();
     }
 
@@ -510,11 +512,6 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             return Path.Combine(sourceDirectory, $"{sourceId}_{now:yyyy-MM-dd_HH-mm-ss}.opus");
         }
 
-        public string CurrentTranscriptionJsonPath(string opusPath)
-        {
-            return Path.ChangeExtension(opusPath, ".json");
-        }
-
         private string ResolveSourceDirectory(DateTimeOffset timestamp)
         {
             var sourceDirectory = Path.Combine(
@@ -629,11 +626,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             var nextFlacWindowAt = AlignWindow(lastFlushAt, plan.FlacWindowDuration).Add(plan.FlacWindowDuration);
             var nextRotationAt = AlignWindow(lastFlushAt, effectiveOpusRotationInterval).Add(effectiveOpusRotationInterval);
             var encoderFrameSize = 0;
-            string? currentTranscriptionJsonPath = null;
+            string? currentHourFilePath = null;
             var currentOpusStartedAt = SourceNow();
             var currentOpusSampleCursor = 0L;
             long? flacChunkStartSample = null;
-            string? flacChunkTranscriptionJsonPath = null;
+            string? flacChunkHourFilePath = null;
             byte[]? transcriptionOverlapTailPcm = null;
             ChunkingState? chunkingState = null;
             var consecutivePacketSendErrors = 0;
@@ -815,7 +812,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 var sessionStartNow = SourceNow();
                 var alignedSessionStart = AlignWindow(sessionStartNow, effectiveOpusRotationInterval);
                 activeOpusPath = CurrentOpusPath(alignedSessionStart, effectiveOpusRotationInterval);
-                currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath);
+                currentHourFilePath = activeOpusPath;
 
                 // Previous-window gap fill: if the source was excluded for the rest of the
                 // previous hour (e.g. failed at 13:22, recovered at 14:00), the file
@@ -1051,7 +1048,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                                     previousHourPcm,
                                     alignedSessionStart - TimeSpan.FromSeconds(placement.PreviousHourSamples / (double)AudioSampleRate),
                                     alignedSessionStart,
-                                    CurrentTranscriptionJsonPath(previousWindowPath),
+                                    previousWindowPath,
                                     ref noOverlap,
                                     preserveOverlapForNextChunk: false);
                             }
@@ -1110,7 +1107,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                                 if (pendingFlacPcm!.Length == 0)
                                 {
                                     flacChunkStartSample = currentOpusSampleCursor;
-                                    flacChunkTranscriptionJsonPath = currentTranscriptionJsonPath;
+                                    flacChunkHourFilePath = currentHourFilePath;
                                 }
 
                                 pendingFlacPcm.AppendBytes(burst, keptOffset, keptBytes);
@@ -1174,7 +1171,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                         if (flacChunkWasEmpty)
                         {
                             flacChunkStartSample = currentOpusSampleCursor;
-                            flacChunkTranscriptionJsonPath = currentTranscriptionJsonPath;
+                            flacChunkHourFilePath = currentHourFilePath;
                         }
 
                         currentOpusSampleCursor += frameSampleCount;
@@ -1190,10 +1187,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                                 var chunkStartSample = flacChunkStartSample ?? currentOpusSampleCursor;
                                 var chunkStartedAt = ResolveChunkTime(currentOpusStartedAt, chunkStartSample);
                                 var chunkEndedAt = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
-                                var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
-                                EnqueueChunkTranscription(pendingFlacPcm!, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: true);
+                                var chunkHourFilePath = flacChunkHourFilePath ?? currentHourFilePath;
+                                EnqueueChunkTranscription(pendingFlacPcm!, chunkStartedAt, chunkEndedAt, chunkHourFilePath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: true);
                                 flacChunkStartSample = null;
-                                flacChunkTranscriptionJsonPath = null;
+                                flacChunkHourFilePath = null;
                                 logger.LogDebug("FLAC chunk cut for source {SourceId}. ForcedByMaxWindow={ForcedByMaxWindow}, ChunkSamples={ChunkSamples}.", sourceId, cutDecision.ForcedByMaxWindow, cutDecision.ChunkSamples);
                                 chunkingState.ResetAfterFlush();
                             }
@@ -1203,10 +1200,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                             var chunkStartSample = flacChunkStartSample ?? currentOpusSampleCursor;
                             var chunkStartedAt = ResolveChunkTime(currentOpusStartedAt, chunkStartSample);
                             var chunkEndedAt = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
-                            var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
-                            EnqueueChunkTranscription(pendingFlacPcm!, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: true);
+                            var chunkHourFilePath = flacChunkHourFilePath ?? currentHourFilePath;
+                            EnqueueChunkTranscription(pendingFlacPcm!, chunkStartedAt, chunkEndedAt, chunkHourFilePath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: true);
                             flacChunkStartSample = null;
-                            flacChunkTranscriptionJsonPath = null;
+                            flacChunkHourFilePath = null;
                             nextFlacWindowAt = AlignWindow(now, plan.FlacWindowDuration).Add(plan.FlacWindowDuration);
                         }
 
@@ -1228,10 +1225,10 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                                 var chunkStartSample = flacChunkStartSample ?? currentOpusSampleCursor;
                                 var chunkStartedAt = ResolveChunkTime(currentOpusStartedAt, chunkStartSample);
                                 var chunkEndedAt = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
-                                var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
-                                EnqueueChunkTranscription(pendingFlacPcm, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: false);
+                                var chunkHourFilePath = flacChunkHourFilePath ?? currentHourFilePath;
+                                EnqueueChunkTranscription(pendingFlacPcm, chunkStartedAt, chunkEndedAt, chunkHourFilePath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: false);
                                 flacChunkStartSample = null;
-                                flacChunkTranscriptionJsonPath = null;
+                                flacChunkHourFilePath = null;
                                 chunkingState?.ResetAfterFlush();
                             }
 
@@ -1242,7 +1239,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                             Interlocked.Exchange(ref silenceFilledThisWindowMs, 0);
                             Interlocked.Exchange(ref realCapturedSamplesThisWindow, 0); // reset for the new window
                             ResetCheckpoints();
-                            currentTranscriptionJsonPath = CurrentTranscriptionJsonPath(activeOpusPath ?? string.Empty);
+                            currentHourFilePath = activeOpusPath ?? string.Empty;
                             currentWindowStart = nextRotationAt;
                             currentOpusStartedAt = nextRotationAt;
                             currentOpusSampleCursor = 0;
@@ -1275,8 +1272,8 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     var chunkStartSample = flacChunkStartSample ?? currentOpusSampleCursor;
                     var chunkStartedAt = ResolveChunkTime(currentOpusStartedAt, chunkStartSample);
                     var chunkEndedAt = ResolveChunkTime(currentOpusStartedAt, currentOpusSampleCursor);
-                    var chunkTranscriptionJsonPath = flacChunkTranscriptionJsonPath ?? currentTranscriptionJsonPath;
-                    EnqueueChunkTranscription(pendingFlacPcm, chunkStartedAt, chunkEndedAt, chunkTranscriptionJsonPath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: false);
+                    var chunkHourFilePath = flacChunkHourFilePath ?? currentHourFilePath;
+                    EnqueueChunkTranscription(pendingFlacPcm, chunkStartedAt, chunkEndedAt, chunkHourFilePath, ref transcriptionOverlapTailPcm, preserveOverlapForNextChunk: false);
                 }
                 // A pending resume file (session ending before the next rotation — EOF or clean
                 // stop) is finalized in the finally block below, once FFmpeg has actually released
@@ -1813,7 +1810,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             PcmByteQueue pcmBuffer,
             DateTimeOffset chunkStartedAt,
             DateTimeOffset chunkEndedAt,
-            string? transcriptionJsonPath,
+            string? hourFilePath,
             ref byte[]? overlapTailPcm,
             bool preserveOverlapForNextChunk)
         {
@@ -1822,7 +1819,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(transcriptionJsonPath))
+            if (string.IsNullOrWhiteSpace(hourFilePath))
             {
                 pcmBuffer.ResetAfterWrite();
                 overlapTailPcm = null;
@@ -1850,14 +1847,13 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             }
 
             chunkTranscriptionPipeline.Enqueue(new ChunkTranscriptionRequest(
-                transcriptionJsonPath,
                 chunkStartedAt,
                 chunkEndedAt,
                 pcmWindows,
                 sourceId,
                 source.Platform,
                 source.Media,
-                Path.ChangeExtension(transcriptionJsonPath, ".opus")));
+                hourFilePath));
 
             if (preserveOverlapForNextChunk)
             {
@@ -2613,16 +2609,16 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
     }
 
     internal readonly record struct ChunkTranscriptionRequest(
-        string JsonPath,
         DateTimeOffset StartTime,
         DateTimeOffset EndTime,
         IReadOnlyList<byte[]> PcmWindows,
         string SourceId,
         string Platform,
         string Media,
+        // The audio file of the hour this chunk belongs to: what its transcriptions are saved under.
         string FilePath);
 
-    private sealed record ChunkTranscriptionItem(string Text, string StartTime, string EndTime, string Status);
+    private sealed record ChunkTranscriptionItem(string Text, DateTimeOffset StartTime, DateTimeOffset EndTime, string Status);
 
     // Internal (not private) so MediaOpsCore.UnitTests can exercise StripTextPrefixOverlap
     // directly — see AssemblyInfo.cs's InternalsVisibleTo.
@@ -2634,17 +2630,21 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         private static readonly Counter<long> TranscriptionWindowsProcessed = TranscriptionMeter.CreateCounter<long>("media_transcription_windows_processed");
         private static readonly Counter<long> TranscriptionRateLimited = TranscriptionMeter.CreateCounter<long>("media_transcription_rate_limited");
 
-        private static readonly JsonSerializerOptions JsonOptions = new()
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-            WriteIndented = true
-        };
+        private static readonly Counter<long> TranscriptionsNotSaved = TranscriptionMeter.CreateCounter<long>("media_transcription_not_saved");
+
+        // The waits before each retry of a save: the first try and three more.
+        private static readonly TimeSpan[] SaveRetryDelays = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(9)];
+        private static readonly TimeSpan NotSavedReportEvery = TimeSpan.FromMinutes(10);
 
         private readonly ILogger logger;
         private readonly IDetectAlertsUseCase detectAlertsUseCase;
         // The speech engine (Google's web endpoint today): the pipeline only knows the port.
         private readonly ISpeechToText speechToText;
+        // Where the transcriptions go (the transcription collection): nothing is written next to the audio any more.
+        private readonly ITranscriptionStore transcriptionStore;
+        private readonly ISourceIncidentRecorder? incidentRecorder;
+        private readonly Func<TimeSpan, CancellationToken, Task> delay;
+        private readonly ConcurrentDictionary<string, DateTimeOffset> lastNotSavedReport = new(StringComparer.Ordinal);
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private readonly ConcurrentDictionary<string, SourcePipeline> sourcePipelines = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, PathState> pathStates = new(StringComparer.OrdinalIgnoreCase);
@@ -2652,18 +2652,27 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
         private int disposed;
 
         // Per-source ordered channel + single worker. Ensures FIFO processing within a source,
-        // preventing out-of-order API responses from creating timestamp gaps in the JSON output.
+        // preventing out-of-order API responses from creating timestamp gaps in the saved transcription.
         private sealed class SourcePipeline(Channel<ChunkTranscriptionRequest> channel, Task worker)
         {
             public readonly Channel<ChunkTranscriptionRequest> Channel = channel;
             public readonly Task Worker = worker;
         }
 
-        public ChunkTranscriptionPipeline(ILogger logger, IDetectAlertsUseCase detectAlertsUseCase, ISpeechToText speechToText)
+        public ChunkTranscriptionPipeline(
+            ILogger logger,
+            IDetectAlertsUseCase detectAlertsUseCase,
+            ISpeechToText speechToText,
+            ITranscriptionStore transcriptionStore,
+            ISourceIncidentRecorder? incidentRecorder = null,
+            Func<TimeSpan, CancellationToken, Task>? delay = null)
         {
             this.logger = logger;
             this.detectAlertsUseCase = detectAlertsUseCase;
             this.speechToText = speechToText;
+            this.transcriptionStore = transcriptionStore;
+            this.incidentRecorder = incidentRecorder;
+            this.delay = delay ?? Task.Delay;
 
             logger.LogInformation(
                 "Transcription windowing configured with chunkOverlap={ChunkOverlapSeconds}s, recognitionWindow={RecognitionWindowSeconds}s, recognitionOverlap={RecognitionOverlapSeconds}s.",
@@ -2793,13 +2802,9 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     var dedupedText = entryText;
                     try
                     {
-                        var windowEntry = new ChunkTranscriptionItem(
-                            entryText,
-                            request.StartTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
-                            request.EndTime.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
-                            entryStatus);
+                        var windowEntry = new ChunkTranscriptionItem(entryText, request.StartTime, request.EndTime, entryStatus);
 
-                        dedupedText = await AppendOrderedAsync(request.JsonPath, windowEntry).ConfigureAwait(false);
+                        dedupedText = await AppendOrderedAsync(request, windowEntry).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     {
@@ -2807,7 +2812,7 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     }
                     catch (Exception exception)
                     {
-                        logger.LogWarning(exception, "Failed to persist chunk transcription entry for source {SourceId} into {JsonPath}.", request.SourceId, request.JsonPath);
+                        logger.LogWarning(exception, "Failed to persist chunk transcription entry for source {SourceId} of {HourFile}.", request.SourceId, request.FilePath);
                     }
 
                     if (recognized && !string.IsNullOrWhiteSpace(dedupedText))
@@ -3041,33 +3046,22 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
             return Math.Clamp(parsed, min, max);
         }
 
-        private async Task<string> AppendOrderedAsync(string jsonPath, ChunkTranscriptionItem windowEntry)
+        private async Task<string> AppendOrderedAsync(ChunkTranscriptionRequest request, ChunkTranscriptionItem windowEntry)
         {
-            var directory = Path.GetDirectoryName(jsonPath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            var state = pathStates.GetOrAdd(jsonPath, _ => new PathState());
+            var state = pathStates.GetOrAdd(request.FilePath, _ => new PathState());
             await state.Lock.WaitAsync(cancellationTokenSource.Token).ConfigureAwait(false);
             try
             {
-                // Every chunk produces one JSON entry regardless of recognition outcome.
-                // Entries with empty text (no_speech, timeout, etc.) are written with their
-                // status so the transcription file has complete temporal coverage: a gap in
-                // the JSON always means the audio was never submitted, not that SR ran and
+                // Every chunk produces one entry regardless of recognition outcome.
+                // Entries with empty text (no_speech, timeout, etc.) are saved with their
+                // status so the transcription of an hour has complete temporal coverage: a gap
+                // in it always means the audio was never submitted, not that SR ran and
                 // found nothing.
                 var entry = windowEntry;
 
-                if (state.CachedItems is null)
-                {
-                    state.CachedItems = File.Exists(jsonPath)
-                        ? JsonSerializer.Deserialize<List<ChunkTranscriptionItem>>(
-                            await File.ReadAllTextAsync(jsonPath, cancellationTokenSource.Token).ConfigureAwait(false),
-                            JsonOptions) ?? []
-                        : [];
-                }
+                // The hour as it already is in the store (this process may have restarted mid-hour); after that
+                // it is kept here, so the store is asked once per hour and source.
+                state.CachedItems ??= await LoadHourAsync(request.FilePath).ConfigureAwait(false);
 
                 // Strip any prefix of the merged entry that duplicates the tail of the previous entry.
                 // minOverlapWords was 8, higher than the function's own default (5) — too strict for
@@ -3082,14 +3076,11 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                 state.CachedItems.Add(entry);
                 state.CachedItems.Sort(static (a, b) =>
                 {
-                    var cmp = StringComparer.Ordinal.Compare(a.StartTime, b.StartTime);
-                    return cmp != 0 ? cmp : StringComparer.Ordinal.Compare(a.EndTime, b.EndTime);
+                    var cmp = a.StartTime.CompareTo(b.StartTime);
+                    return cmp != 0 ? cmp : a.EndTime.CompareTo(b.EndTime);
                 });
 
-                await File.WriteAllTextAsync(
-                    jsonPath,
-                    JsonSerializer.Serialize(state.CachedItems, JsonOptions),
-                    cancellationTokenSource.Token).ConfigureAwait(false);
+                await SaveAsync(request, entry).ConfigureAwait(false);
 
                 state.LastWriteAt = DateTimeOffset.UtcNow;
                 return entry.Text;
@@ -3103,6 +3094,71 @@ public sealed class InProcessFfmpegAudioCapturePlugin : IAudioCapturePlugin, ILi
                     EvictStalePathStates();
                 }
             }
+        }
+
+        // The entries of an hour already saved. If the store cannot be reached the hour starts empty: only the first
+        // chunk after a restart loses its de-duplication against the previous one.
+        private async Task<List<ChunkTranscriptionItem>> LoadHourAsync(string hourFile)
+        {
+            try
+            {
+                var saved = await transcriptionStore.LoadHourAsync(hourFile, cancellationTokenSource.Token).ConfigureAwait(false);
+                return saved
+                    .Select(entry => new ChunkTranscriptionItem(entry.Text, entry.StartTime, entry.EndTime, entry.Status))
+                    .OrderBy(item => item.StartTime)
+                    .ThenBy(item => item.EndTime)
+                    .ToList();
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(exception, "Could not read the saved transcription of {HourFile}; the hour starts empty.", hourFile);
+                return [];
+            }
+        }
+
+        // Saves one entry: the first try and three more, waiting longer each time. If it never works it is reported and
+        // the chunk goes on (the alert must not wait for the database): the failure is in the log, the counter and an incident.
+        private async Task SaveAsync(ChunkTranscriptionRequest request, ChunkTranscriptionItem entry)
+        {
+            var document = new TranscriptionEntry(
+                request.SourceId, request.Platform, request.Media, request.FilePath, entry.StartTime, entry.EndTime, entry.Text, entry.Status);
+
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    await transcriptionStore.AppendAsync(document, cancellationTokenSource.Token).ConfigureAwait(false);
+                    return;
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    if (attempt >= SaveRetryDelays.Length)
+                    {
+                        ReportNotSaved(request, exception);
+                        return;
+                    }
+
+                    await delay(SaveRetryDelays[attempt], cancellationTokenSource.Token).ConfigureAwait(false);
+                }
+            }
+        }
+
+        private void ReportNotSaved(ChunkTranscriptionRequest request, Exception exception)
+        {
+            TranscriptionsNotSaved.Add(1, KeyValuePair.Create<string, object?>("source_id", request.SourceId));
+            logger.LogError(
+                exception, "Could not save the transcription of source {SourceId} [{Start:HH:mm:ss}] after {Attempts} tries.",
+                request.SourceId, request.StartTime, SaveRetryDelays.Length + 1);
+
+            // One incident per source every few minutes, not one per chunk while the database is down.
+            var now = DateTimeOffset.UtcNow;
+            if (lastNotSavedReport.TryGetValue(request.SourceId, out var last) && now - last < NotSavedReportEvery)
+            {
+                return;
+            }
+
+            lastNotSavedReport[request.SourceId] = now;
+            incidentRecorder?.Record(request.SourceId, IncidentKinds.TranscriptionNotSaved, exception.Message);
         }
 
         private void EvictStalePathStates()

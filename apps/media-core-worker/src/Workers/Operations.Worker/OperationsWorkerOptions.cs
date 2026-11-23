@@ -159,6 +159,14 @@ public sealed class OperationsWorkerOptions
     // shares the CPU with the capture, so it stays small.
     public int RadioOpusConversionMaxParallel { get; set; } = 2;
 
+    // How long the transcriptions stay in the transcription collection, counted from the time of the audio. Only the
+    // documents the worker writes expire; the 3 million of the old system are left alone.
+    public int TranscriptionRetentionDays { get; set; } = 365;
+
+    // Turn on once to load the transcription JSON files that are on disk into the collection (see
+    // TranscriptionJsonImporter), then turn off. It can be left on without duplicating anything, but it reads every file at each start.
+    public bool ImportTranscriptionJson { get; set; }
+
     public bool EnableDecoderReconnect { get; set; } = true;
 
     public int DecoderReconnectDelayMaxSeconds { get; set; } = 5;

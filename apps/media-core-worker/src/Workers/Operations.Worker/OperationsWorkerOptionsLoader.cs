@@ -68,6 +68,8 @@ public static class OperationsWorkerOptionsLoader
         int? DefaultOpusRotationIntervalHours,
         int? DefaultOpusBitrateKbps,
         int? RadioOpusBitrateKbps,
+        int? TranscriptionRetentionDays,
+        bool? ImportTranscriptionJson,
         bool? EnableDecoderReconnect,
         int? DecoderReconnectDelayMaxSeconds,
         bool? RtspPreferTcp,
@@ -341,6 +343,16 @@ public static class OperationsWorkerOptionsLoader
         if (model.RadioOpusBitrateKbps is > 0)
         {
             options.RadioOpusBitrateKbps = model.RadioOpusBitrateKbps.Value;
+        }
+
+        if (model.TranscriptionRetentionDays is > 0)
+        {
+            options.TranscriptionRetentionDays = model.TranscriptionRetentionDays.Value;
+        }
+
+        if (model.ImportTranscriptionJson.HasValue)
+        {
+            options.ImportTranscriptionJson = model.ImportTranscriptionJson.Value;
         }
 
         if (model.EnableDecoderReconnect.HasValue)

@@ -26,6 +26,9 @@ public static class IncidentKinds
     public const string DiskRecovered = "disk-recovered";
     public const string PurgeFailed = "purge-failed";
 
+    // ChunkTranscriptionPipeline: a chunk could not be saved to the transcription collection after retrying.
+    public const string TranscriptionNotSaved = "transcription-not-saved";
+
     // ArchiveUploadWorker / RetentionPurgeWorker, worker-wide: the archive server is unreachable,
     // or local files are piling up older than retention because they could not be archived yet.
     public const string ArchiveFailed = "archive-failed";

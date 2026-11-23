@@ -221,6 +221,22 @@ builder.Services.AddSingleton<ISpeechToText>(_ => SpeechEngines.Create(options.S
 // The portal's on-demand transcription (POST /transcribe on the worker's HTTP service) goes through the same engine.
 builder.Services.AddSingleton<IPcmFileReader, WavPcmFileReader>();
 builder.Services.AddSingleton<TranscribeAudioFilesUseCase>();
+// Where the transcriptions go: the transcription collection (not a JSON file next to the audio any more).
+builder.Services.AddSingleton<ITranscriptionStore>(sp => new MongoTranscriptionStore(
+	sp.GetRequiredService<MongoAlertingOptions>(),
+	options.TranscriptionRetentionDays,
+	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<MongoTranscriptionStore>>()));
+// Loads the transcription JSON files already on disk, once, while importTranscriptionJson is on.
+builder.Services.AddHostedService(sp => new TranscriptionJsonImporter(
+	options,
+	sp.GetRequiredService<ITranscriptionStore>(),
+	sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TranscriptionJsonImporter>>(),
+	platformOf: async cancellationToken =>
+	{
+		var sources = await sp.GetRequiredService<ICaptureSourceRepository>().ListAllAsync(cancellationToken).ConfigureAwait(false);
+		return sources.GroupBy(source => source.SourceId, StringComparer.OrdinalIgnoreCase)
+			.ToDictionary(group => group.Key, group => group.First().Platform, StringComparer.OrdinalIgnoreCase);
+	}));
 // The one-time conversion of the radio hours on disk to 32 kbps: it only runs when asked through /maintenance/radio-opus.
 builder.Services.AddSingleton(sp => new RadioOpusConversionJob(
 	options,
@@ -240,7 +256,9 @@ builder.Services.AddSingleton<IAudioCapturePlugin>(sp => new InProcessFfmpegAudi
 	sp.GetRequiredService<ICaptureAttemptObserver>(),
 	sp.GetRequiredService<IMonitoringArtifactRepository>(),
 	sp.GetRequiredService<IDetectAlertsUseCase>(),
-	sp.GetRequiredService<ISpeechToText>()));
+	sp.GetRequiredService<ISpeechToText>(),
+	sp.GetRequiredService<ITranscriptionStore>(),
+	sp.GetService<ISourceIncidentRecorder>()));
 builder.Services.AddSingleton<ILiveCaptureProgressReader>(
 	sp => (ILiveCaptureProgressReader)sp.GetRequiredService<IAudioCapturePlugin>());
 builder.Services.AddSingleton<IClosedHourAudioReader>(sp => new ClosedHourAudioSegmentReader(
