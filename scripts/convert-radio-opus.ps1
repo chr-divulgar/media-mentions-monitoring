@@ -3,10 +3,14 @@
   Converts the radio hour files already on disk to the quality the capture now records at (Opus mono, 16 kHz, 32 kbps).
 
 .DESCRIPTION
-  Run once, after confirming that the new hours are being recorded at the new quality (the closed hours weigh ~14 MB
+  Run after confirming that the new hours are being recorded at the new quality (the closed hours weigh ~14 MB
   instead of ~28 MB). The work is done by the worker service itself (it has to be running), through its
   /maintenance/radio-opus routes: it keeps the archive ledger consistent, so nothing is uploaded to the FTP again.
 
+  It can be run as many times as needed: what is already converted is skipped, so running it again CONTINUES.
+
+  -Parallel N        how many files are re-encoded at the same time (1 to 16, default 8). If a conversion is already
+                     running with another number, it is stopped (the files in hand finish) and restarted with this one.
   -DryRun -Limit 3   converts 3 hours into the service's stage-evidence\radio-opus-preview folder, touching nothing,
                      so they can be listened to and the time per file measured.
   (no switches)      converts every radio hour that is still at the old quality, newest first.
@@ -16,12 +20,14 @@
 
 .EXAMPLE
   .\convert-radio-opus.ps1 -DryRun -Limit 3
-  .\convert-radio-opus.ps1
+  .\convert-radio-opus.ps1 -Parallel 8
   .\convert-radio-opus.ps1 -Stop
 #>
 param(
     [switch]$DryRun,
     [int]$Limit = 0,
+    [ValidateRange(1, 16)]
+    [int]$Parallel = 8,
     [switch]$Stop,
     [switch]$Status,
     # Start even when the latest closed hours are still big (the capture is not on the new quality yet).
@@ -37,8 +43,17 @@ function Show-Status($s) {
     $savedGb = ($s.bytesBefore - $s.bytesAfter) / 1GB
     $left = if ($null -ne $s.estimatedMinutesLeft) { " · faltan ~$([int]$s.estimatedMinutesLeft) min" } else { '' }
     $mode = if ($s.dryRun) { ' (prueba)' } else { '' }
-    Write-Host ("[{0:HH:mm:ss}] {1}{2}: {3} de {4} convertidos · {5} ya pequeños · {6} fallidos · {7} para después · liberado {8:N1} GB · {9} s por archivo{10}" -f `
-            (Get-Date), $s.state, $mode, $s.converted, $s.total, $s.skipped, $s.failed, $s.deferred, $savedGb, $s.averageSecondsPerFile, $left)
+    Write-Host ("[{0:HH:mm:ss}] {1}{2} ({3} a la vez): {4} de {5} convertidos · {6} ya pequeños · {7} fallidos · {8} para después · liberado {9:N1} GB · {10} s por archivo{11}" -f `
+            (Get-Date), $s.state, $mode, $s.parallel, $s.converted, $s.total, $s.skipped, $s.failed, $s.deferred, $savedGb, $s.averageSecondsPerFile, $left)
+}
+
+function Watch-Conversion {
+    do {
+        Start-Sleep -Seconds $PollSeconds
+        $current = Invoke-RestMethod -Uri $base -Method Get
+        Show-Status $current
+    } while ($current.state -eq 'running')
+    return $current
 }
 
 try {
@@ -54,6 +69,30 @@ try {
         return
     }
 
+    if ($Parallel -gt 12) {
+        Write-Host "Con más de 12 a la vez la captura en vivo puede quedarse sin procesador: vigila con -Status y baja el número si hace falta." -ForegroundColor Yellow
+    }
+
+    if ($current.state -eq 'running') {
+        if ($PSBoundParameters.ContainsKey('Parallel') -and $current.parallel -ne $Parallel) {
+            Write-Host "La conversión va con $($current.parallel) a la vez: se detiene (terminan los archivos en curso) y sigue con $Parallel."
+            Invoke-RestMethod -Uri "$base/stop" -Method Post | Out-Null
+            $deadline = (Get-Date).AddMinutes(15)
+            do {
+                Start-Sleep -Seconds 5
+                $current = Invoke-RestMethod -Uri $base -Method Get
+            } while ($current.state -eq 'running' -and (Get-Date) -lt $deadline)
+            if ($current.state -eq 'running') {
+                throw 'La conversión no terminó de detenerse en 15 minutos; vuelve a intentarlo con -Status.'
+            }
+        }
+        else {
+            Write-Host "Ya hay una conversión en marcha ($($current.parallel) a la vez). Mostrando el avance; usa -Parallel N para cambiar el número."
+            Show-Status (Watch-Conversion)
+            return
+        }
+    }
+
     if ($null -ne $current.recentClosedHoursAverageMb) {
         Write-Host ("Las últimas horas cerradas pesan {0:N1} MB en promedio (~14 MB con la calidad nueva, ~28 MB con la anterior)." -f $current.recentClosedHoursAverageMb)
         if ($current.recentClosedHoursAverageMb -gt 20 -and -not $Force) {
@@ -62,22 +101,17 @@ try {
         }
     }
 
-    $body = @{ dryRun = [bool]$DryRun }
+    $body = @{ dryRun = [bool]$DryRun; parallel = $Parallel }
     if ($Limit -gt 0) { $body.limit = $Limit }
     $started = Invoke-RestMethod -Uri "$base/convert" -Method Post -Body ($body | ConvertTo-Json) -ContentType 'application/json'
-    Write-Host ("Conversión iniciada{0}: {1} archivos." -f $(if ($DryRun) { ' (prueba)' } else { '' }), $started.total)
+    Write-Host ("Conversión iniciada{0}: {1} archivos, {2} a la vez." -f $(if ($DryRun) { ' (prueba)' } else { '' }), $started.total, $started.parallel)
 
-    do {
-        Start-Sleep -Seconds $PollSeconds
-        $current = Invoke-RestMethod -Uri $base -Method Get
-        Show-Status $current
-    } while ($current.state -eq 'running')
-
+    $current = Watch-Conversion
     if ($DryRun) {
         Write-Host "Archivos de prueba en: $($current.previewDirectory)" -ForegroundColor Green
     }
 }
 catch {
-    Write-Host "No se pudo hablar con el servicio en $Endpoint (¿está corriendo?): $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "No se pudo completar (¿el servicio está corriendo en $Endpoint?): $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }

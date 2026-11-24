@@ -11,12 +11,16 @@ public sealed class RadioOpusConvertRequest
     public bool DryRun { get; set; }
 
     public int? Limit { get; set; }
+
+    /// <summary>How many files are re-encoded at once in this run; empty means the number in the options.</summary>
+    public int? Parallel { get; set; }
 }
 
 /// <summary>Where the one-time conversion stands. State is idle, running or finished.</summary>
 public sealed record RadioOpusConversionStatus(
     string State,
     bool DryRun,
+    int Parallel,
     int Total,
     int Converted,
     int Skipped,
@@ -48,6 +52,9 @@ public sealed class RadioOpusConversionJob
 {
     // A file already at or under this average bitrate was recorded (or converted) with the new quality.
     private const double AlreadyLowKbps = 40;
+
+    /// <summary>The most files re-encoded at once: the machine has 16 logical processors and the capture needs its share.</summary>
+    public const int MaxParallel = 16;
     private static readonly TimeSpan StaleTemporary = TimeSpan.FromHours(1);
     private static readonly Meter ConversionMeter = new("MediaOpsCore.Workers.Operations.RadioOpusConversion", "1.0.0");
     private static readonly Counter<long> FilesConverted = ConversionMeter.CreateCounter<long>("radio_opus_converted_files");
@@ -67,6 +74,7 @@ public sealed class RadioOpusConversionJob
     private CancellationTokenSource? cancellation;
     private string state = "idle";
     private bool dryRun;
+    private int parallel;
     private int total, converted, skipped, failed, deferred;
     private long bytesBefore, bytesAfter;
     private double processedSeconds;
@@ -108,10 +116,10 @@ public sealed class RadioOpusConversionJob
                 var average = processedFiles == 0 ? 0 : processedSeconds / processedFiles;
                 var pending = Math.Max(0, total - converted - skipped - failed - deferred);
                 double? left = state == "running" && processedFiles > 0
-                    ? pending * average / Math.Max(1, options.RadioOpusConversionMaxParallel) / 60
+                    ? pending * average / Math.Max(1, parallel) / 60
                     : null;
                 return new RadioOpusConversionStatus(
-                    state, dryRun, total, converted, skipped, failed, deferred, bytesBefore, bytesAfter,
+                    state, dryRun, parallel, total, converted, skipped, failed, deferred, bytesBefore, bytesAfter,
                     Math.Round(average, 1), left is null ? null : Math.Round(left.Value, 0), current.Keys.Order().ToArray(),
                     RadioOpusConversion.RecentClosedHoursAverageMb(
                         options.AudioOutputRootPath, clock(), TimeSpan.FromMinutes(options.ArchiveMinIdleMinutes), null, count: 24),
@@ -121,9 +129,9 @@ public sealed class RadioOpusConversionJob
     }
 
     /// <summary>Starts a run in the background. False when one is already running.</summary>
-    public bool TryStart(bool dryRun, int? limit)
+    public bool TryStart(bool dryRun, int? limit, int? parallel = null)
     {
-        if (!TryBegin(dryRun, out var token))
+        if (!TryBegin(dryRun, parallel, out var token))
         {
             return false;
         }
@@ -133,9 +141,9 @@ public sealed class RadioOpusConversionJob
     }
 
     /// <summary>Runs to the end (or until stopped). Throws when a run is already going.</summary>
-    public Task RunAsync(bool dryRun, int? limit, CancellationToken cancellationToken)
+    public Task RunAsync(bool dryRun, int? limit, CancellationToken cancellationToken, int? parallel = null)
     {
-        if (!TryBegin(dryRun, out var token))
+        if (!TryBegin(dryRun, parallel, out var token))
         {
             throw new InvalidOperationException("The conversion is already running.");
         }
@@ -161,7 +169,7 @@ public sealed class RadioOpusConversionJob
         }
     }
 
-    private bool TryBegin(bool isDryRun, out CancellationToken token)
+    private bool TryBegin(bool isDryRun, int? requestedParallel, out CancellationToken token)
     {
         lock (gate)
         {
@@ -176,6 +184,7 @@ public sealed class RadioOpusConversionJob
             token = cancellation.Token;
             state = "running";
             dryRun = isDryRun;
+            parallel = Math.Clamp(requestedParallel is > 0 ? requestedParallel.Value : options.RadioOpusConversionMaxParallel, 1, MaxParallel);
             total = converted = skipped = failed = deferred = processedFiles = 0;
             bytesBefore = bytesAfter = 0;
             processedSeconds = 0;
@@ -221,11 +230,11 @@ public sealed class RadioOpusConversionJob
             }
 
             logger.LogInformation(
-                "[RadioOpusConversion] {Mode}: {Count} radio hour file(s) to convert to {Kbps} kbps.",
-                isDryRun ? "Trial run" : "Converting", candidates.Count, options.RadioOpusBitrateKbps);
+                "[RadioOpusConversion] {Mode}: {Count} radio hour file(s) to convert to {Kbps} kbps, {Parallel} at a time.",
+                isDryRun ? "Trial run" : "Converting", candidates.Count, options.RadioOpusBitrateKbps, Status.Parallel);
 
             var queue = new ConcurrentQueue<RadioOpusCandidate>(candidates);
-            var threads = Enumerable.Range(0, Math.Max(1, options.RadioOpusConversionMaxParallel))
+            var threads = Enumerable.Range(0, Math.Max(1, Status.Parallel))
                 .Select(_ => new Thread(() => Work(queue, isDryRun, linked.Token))
                 {
                     IsBackground = true,

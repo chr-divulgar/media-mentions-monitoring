@@ -31,7 +31,7 @@ namespace MediaOpsCore.Workers.Operations;
 ///   POST /transcribe       — the text of WAV chunks the portal cut ({audioPaths, language?} → {chunks: [{status, text}]}),
 ///     through the speech engine behind ISpeechToText: the note editor's "transcribe" button.
 ///   POST /maintenance/radio-opus/convert — starts the one-time conversion of the radio hours on disk to 32 kbps
-///     ({dryRun?, limit?}); GET /maintenance/radio-opus reports how it is going and POST .../stop stops it (see
+///     ({dryRun?, limit?, parallel?}); GET /maintenance/radio-opus reports how it is going and POST .../stop stops it (see
 ///     RadioOpusConversionJob and scripts/convert-radio-opus.ps1).
 ///   GET  /whatsapp/status  — relays the WhatsApp sidecar's own /status (connected/pending_qr/
 ///     disconnected), consumed by NestJS's WhatsAppService/web-ui's status tab.
@@ -566,7 +566,7 @@ public sealed class YouTubeCookiesHttpService : IHostedService
             return;
         }
 
-        if (!radioOpusConversion.TryStart(request.DryRun, request.Limit))
+        if (!radioOpusConversion.TryStart(request.DryRun, request.Limit, request.Parallel))
         {
             await SendJsonResponse(context, 409, NotAvailable("La conversión ya está en marcha.")).ConfigureAwait(false);
             return;

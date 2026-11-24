@@ -275,6 +275,71 @@ public sealed class RadioOpusConversionJobTests : IDisposable
         Assert.True(File.Exists(fresh));
     }
 
+    // Records how many files were being re-encoded at the same moment.
+    private sealed class ConcurrencyProbe
+    {
+        private int running;
+        public int Max { get; private set; }
+
+        public void Encode(string input, string output)
+        {
+            var now = Interlocked.Increment(ref running);
+            lock (this) Max = Math.Max(Max, now);
+            Thread.Sleep(150);
+            HalveTheSize(input, output);
+            Interlocked.Decrement(ref running);
+        }
+    }
+
+    [Fact]
+    public async Task Converts_as_many_files_at_once_as_the_run_asks_for()
+    {
+        for (var i = 1; i <= 8; i++) Write($"2026-11-{10 + i:00}", "A", "09-00-00");
+        var probe = new ConcurrencyProbe();
+        var job = Build(reencode: probe.Encode, parallel: 1);
+
+        await job.RunAsync(dryRun: false, limit: null, CancellationToken.None, parallel: 4);
+
+        Assert.Equal(4, probe.Max);
+        Assert.Equal(4, job.Status.Parallel);
+        Assert.Equal(8, job.Status.Converted);
+    }
+
+    [Fact]
+    public async Task Never_runs_more_than_sixteen_at_once_whatever_is_asked()
+    {
+        for (var i = 1; i <= 20; i++) Write($"2026-11-{i:00}", "A", "09-00-00");
+        var probe = new ConcurrencyProbe();
+        var job = Build(reencode: probe.Encode);
+
+        await job.RunAsync(dryRun: false, limit: null, CancellationToken.None, parallel: 100);
+
+        Assert.InRange(probe.Max, 2, 16);
+        Assert.Equal(16, job.Status.Parallel);
+    }
+
+    [Fact]
+    public async Task Uses_the_number_in_the_options_when_the_run_does_not_ask_for_one()
+    {
+        Write("2026-11-20", "A", "09-00-00");
+        var job = Build(parallel: 3);
+
+        await job.RunAsync(dryRun: false, limit: null, CancellationToken.None);
+
+        Assert.Equal(3, job.Status.Parallel);
+    }
+
+    [Fact]
+    public async Task A_number_below_one_means_the_one_in_the_options()
+    {
+        Write("2026-11-20", "A", "09-00-00");
+        var job = Build(parallel: 2);
+
+        await job.RunAsync(dryRun: false, limit: null, CancellationToken.None, parallel: 0);
+
+        Assert.Equal(2, job.Status.Parallel);
+    }
+
     [Fact]
     public async Task The_status_shows_the_size_of_the_hours_the_capture_is_writing_now()
     {
