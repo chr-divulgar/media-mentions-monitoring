@@ -65,12 +65,15 @@ public sealed class MongoTranscriptionStoreTests
     }
 
     [Fact]
-    public void The_key_of_an_entry_is_its_hour_file_and_its_times()
+    public void The_key_of_an_entry_is_its_hour_file_and_its_times_and_says_it_is_a_new_document()
     {
         var filter = MongoTranscriptionStore.KeyFilter(Entry()).ToBsonDocument();
 
-        Assert.Equal(3, filter.ElementCount);
         Assert.True(filter.Contains("filePath") && filter.Contains("startTime") && filter.Contains("endTime"));
+        // The indexes only cover documents with a sourceId: a filter that does not say so cannot use them, and
+        // every save would read the 3 million documents of the old system.
+        Assert.Equal(new BsonDocument("$exists", true), filter["sourceId"]);
+        Assert.Equal(4, filter.ElementCount);
     }
 
     [Fact]

@@ -56,6 +56,16 @@ public sealed class MongoTranscriptionStoreIntegrationTests
             Assert.Equal(1, await collection.CountDocumentsAsync(Builders<BsonDocument>.Filter.Exists("sourceId", false)));
             Assert.Empty(await store.LoadHourAsync(@"C:\other\hour.opus"));
 
+            // The key filter of a save must use the unique index, not read the whole collection.
+            var explained = await client.GetDatabase(databaseName).RunCommandAsync<BsonDocument>(new BsonDocument
+            {
+                { "explain", new BsonDocument { { "find", "transcription" }, { "filter", MongoTranscriptionStore.KeyFilter(Entry(1)) } } },
+                { "verbosity", "queryPlanner" },
+            });
+            var plan = explained["queryPlanner"]["winningPlan"].ToJson();
+            Assert.Contains("IXSCAN", plan);
+            Assert.DoesNotContain("COLLSCAN", plan);
+
             var indexes = await (await collection.Indexes.ListAsync()).ToListAsync();
             var unique = indexes.Single(i => i["name"] == "transcription_hour_unique");
             var expiry = indexes.Single(i => i["name"] == "transcription_expiry");

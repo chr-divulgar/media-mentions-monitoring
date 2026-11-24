@@ -74,12 +74,17 @@ public sealed class MongoTranscriptionStore : ITranscriptionStore
         await collection.BulkWriteAsync(writes, new BulkWriteOptions { IsOrdered = false }, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The key of an entry: its hour file and its times.</summary>
+    /// <summary>
+    /// The key of an entry: its hour file and its times. It also says "has a sourceId": the indexes only cover those
+    /// documents, and MongoDB uses a partial index only for a filter that implies its own. Without it every save read the
+    /// 3 million documents of the old system.
+    /// </summary>
     public static BsonDocument KeyFilter(TranscriptionEntry entry) => new()
     {
         { "filePath", entry.FilePath },
         { "startTime", entry.StartTime.UtcDateTime },
         { "endTime", entry.EndTime.UtcDateTime },
+        { HasSourceId, new BsonDocument("$exists", true) },
     };
 
     public static BsonDocument ToDocument(TranscriptionEntry entry, DateTime createdAtUtc) => new()
