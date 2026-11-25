@@ -441,7 +441,10 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
             <div>
               {"Fecha: " +
                 (fragment.startTime
-                  ? moment(fragment.startTime).format("YYYY-MM-DD")
+                  ? moment
+                      .utc(fragment.startTime)
+                      .utcOffset(-300)
+                      .format("YYYY-MM-DD")
                   : "")}
             </div>
           </Col>
@@ -449,7 +452,10 @@ const AlertsModal: React.FC<AlertsModalProps> = ({ visible, onClose }) => {
             <div>
               {"Inicio: " +
                 (fragment.startTime
-                  ? moment(fragment.startTime).format("HH:mm:ss")
+                  ? moment
+                      .utc(fragment.startTime)
+                      .utcOffset(-300)
+                      .format("HH:mm:ss")
                   : "")}
             </div>
           </Col>

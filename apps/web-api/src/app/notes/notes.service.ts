@@ -452,7 +452,11 @@ export class NotesService {
     // Web notes have no clip, so no duration to show.
     const duration =
       typeof note.duration === 'number' ? ` ${formatDuration(note.duration)}` : '';
-    return `NOTA ${note.index} ${note.program} **${note.title}** ${formatPlainText(note.summary ?? '')}${duration} (${moment(note.startTime).format('h:mm A')})`;
+    const bogotaStart = moment
+      .utc(note.startTime)
+      .utcOffset(NotesService.BOGOTA_OFFSET_MINUTES)
+      .format('h:mm A');
+    return `NOTA ${note.index} ${note.program} **${note.title}** ${formatPlainText(note.summary ?? '')}${duration} (${bogotaStart})`;
   }
 
   /**

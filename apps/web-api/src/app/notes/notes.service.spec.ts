@@ -635,6 +635,38 @@ describe('NotesService.importNotes (Excel)', () => {
   });
 });
 
+describe('NotesService.generateMessage', () => {
+  it('formats the note start time in Bogotá time (UTC-5)', () => {
+    const { service } = build(null, null);
+
+    const message = service.generateMessage({
+      index: '1',
+      program: 'Blu Radio',
+      title: 'Titular',
+      summary: 'Resumen',
+      startTime: '2026-11-25T12:40:00.000Z',
+    });
+
+    expect(message).toContain('(7:40 AM)');
+  });
+
+  it('keeps duration text and Bogotá time together', () => {
+    const { service } = build(null, null);
+
+    const message = service.generateMessage({
+      index: '2',
+      program: 'LaFM',
+      title: 'Otra nota',
+      summary: 'Resumen largo',
+      startTime: '2026-11-25T13:05:10.000Z',
+      duration: 90,
+    });
+
+    expect(message).toContain('(1’30”)');
+    expect(message).toContain('(8:05 AM)');
+  });
+});
+
 describe('NotesService.sendMessage: the alert learns its note was sent', () => {
   const noteDto = { alert_id: 'al1', clientName: 'Ecopetrol', media: 'radio', message: 'NOTA 1 ...' };
 

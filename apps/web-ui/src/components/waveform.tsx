@@ -15,6 +15,8 @@ interface WaveformProps {
 const Waveform: React.FC<WaveformProps> = ({ url, onSelection }) => {
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
+  const regionRefs = useRef<any[]>([]);
+  const regionSetRef = useRef<[boolean, boolean]>([false, false]);
 
   const createWaveSurfer = (url: string) => {
     const wavesurfer = WaveSurfer.create({
@@ -87,18 +89,41 @@ const Waveform: React.FC<WaveformProps> = ({ url, onSelection }) => {
   useEffect(() => {
     if (!waveformRef.current) return;
 
+    regionRefs.current = [];
+    regionSetRef.current = [false, false];
     wsRef.current = createWaveSurfer(url);
 
     const wsRegions = wsRef.current.registerPlugin(RegionsPlugin.create());
+    const emitSelectionIfReady = () => {
+      const [firstSet, secondSet] = regionSetRef.current;
+      if (!firstSet || !secondSet) return;
+
+      const [region1, region2] = regionRefs.current;
+      if (!region1 || !region2) return;
+      if (region1.start === region2.start) return;
+
+      onSelection(
+        Math.min(region1.start, region2.start),
+        Math.max(region1.start, region2.start)
+      );
+    };
+
+    const markRegionAsSet = (region: any) => {
+      const index = regionRefs.current.findIndex((candidate) => candidate === region);
+      if (index < 0) return;
+      regionSetRef.current[index] = true;
+    };
+
     wsRef.current.on("decode", () => {
-      wsRegions.addRegion({
+      const region1 = wsRegions.addRegion({
         start: 0,
         color: "rgba(180, 180, 180, 0.5)",
       });
-      wsRegions.addRegion({
+      const region2 = wsRegions.addRegion({
         start: 0,
         color: "rgba(180, 180, 180, 0.5)",
       });
+      regionRefs.current = [region1, region2];
     });
     let touchtime = 0;
     let currentTime = 0;
@@ -117,22 +142,21 @@ const Waveform: React.FC<WaveformProps> = ({ url, onSelection }) => {
         const pos = wsRef.current.getCurrentTime();
         // double click occurred
 
-        const region1 = wsRegions.getRegions()[0];
-        const region2 = wsRegions.getRegions()[1];
+        const [region1, region2] = regionRefs.current;
+        if (!region1 || !region2) return;
+        const [firstSet, secondSet] = regionSetRef.current;
         const shouldUpdateRegion1 =
-          region1.start === 0 ||
-          (region2.start !== 0 &&
-            Math.abs(region1.start - pos) < Math.abs(region2.start - pos));
+          !firstSet ||
+          (secondSet && Math.abs(region1.start - pos) < Math.abs(region2.start - pos));
 
         if (shouldUpdateRegion1) {
           region1.setOptions({ start: pos });
-        } else if (region2.start === 0 || !shouldUpdateRegion1) {
+          regionSetRef.current[0] = true;
+        } else {
           region2.setOptions({ start: pos });
+          regionSetRef.current[1] = true;
         }
-        onSelection(
-          Math.min(region1.start, region2.start),
-          Math.max(region1.start, region2.start)
-        );
+        emitSelectionIfReady();
 
         touchtime = 0;
       } else {
@@ -142,13 +166,9 @@ const Waveform: React.FC<WaveformProps> = ({ url, onSelection }) => {
       }
     });
 
-    wsRegions.on("region-updated", () => {
-      const region1 = wsRegions.getRegions()[0];
-      const region2 = wsRegions.getRegions()[1];
-      onSelection(
-        Math.min(region1.start, region2.start),
-        Math.max(region1.start, region2.start)
-      );
+    wsRegions.on("region-updated", (region: any) => {
+      markRegionAsSet(region);
+      emitSelectionIfReady();
     });
 
     return () => {
