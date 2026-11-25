@@ -414,6 +414,7 @@ export class NotesService {
         date: note.date,
         stamp: moment_.format('YYYY-MM-DD_HH-mm-ss'),
         alertId,
+        audioLabel: note.audioLabel,
         filePath,
       });
       await this.keepClipLink(alertId, filed.link);

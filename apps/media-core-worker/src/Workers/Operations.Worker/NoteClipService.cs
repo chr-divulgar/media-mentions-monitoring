@@ -27,6 +27,10 @@ public sealed class NoteClipRequest
 
     public string AlertId { get; set; } = string.Empty;
 
+    // The business label of the note clip (e.g. NOTA_01_...mp3). When valid, it is used as
+    // the remote filename instead of the alert id based name.
+    public string? AudioLabel { get; set; }
+
     // The clip on this machine: fragment_{alertId}.mp3 or .mp4, which the API writes when the note is edited.
     public string FilePath { get; set; } = string.Empty;
 }
@@ -48,7 +52,8 @@ public sealed record NoteClipResult(string? Path, string? Error, string? Link = 
 
 /// <summary>
 /// Files the clip of a radio or TV note in the archive, in the account of its medium, under
-/// {country}/{client}/{yyyy}/{MM}/{dd}/ (see ArchiveLayout). Those are the notes — what the contract requires keeping —
+/// {client}/{yyyy}/{MM}/{dd}/ for radio and {client}/{Month_yyyy}/{dd}/ for television (see ArchiveLayout). Those are
+/// the notes — what the contract requires keeping —
 /// so, unlike the backup of the raw recordings, nothing ever purges them. Saving the same note again overwrites its
 /// clip in place: the name carries the alert's id.
 /// </summary>
@@ -103,9 +108,15 @@ public sealed partial class NoteClipService
             return new NoteClipResult(null, $"No hay una cuenta de archivo configurada para {medium}.");
         }
 
-        var country = request.Country ?? await CountryOfAsync(request.Platform, cancellationToken).ConfigureAwait(false);
+        _ = request.Country ?? await CountryOfAsync(request.Platform, cancellationToken).ConfigureAwait(false);
         var platform = NotePdfService.ToFileSlug(request.Platform, 40, "sin-fuente");
-        var remote = $"{ArchiveLayout.NoteDirectory(country, request.Client, day)}/{platform}_{request.Stamp}_{request.AlertId}{Path.GetExtension(fileName).ToLowerInvariant()}";
+        var directory = medium == ArchiveMedia.Radio
+            ? ArchiveLayout.RadioNoteDirectory(request.Client, day)
+            : ArchiveLayout.TelevisionNoteDirectory(request.Client, day);
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        var labeledName = BuildRemoteFileName(request.AudioLabel, extension);
+        var remoteFileName = labeledName ?? $"{platform}_{request.Stamp}_{request.AlertId}{extension}";
+        var remote = $"{directory}/{remoteFileName}";
 
         try
         {
@@ -151,4 +162,25 @@ public sealed partial class NoteClipService
 
     [GeneratedRegex(@"^[A-Za-z0-9]{1,40}$")]
     private static partial Regex IdPattern();
+
+    [GeneratedRegex(@"^[A-Za-z0-9_\-]{1,160}\.(mp3|mp4)$", RegexOptions.IgnoreCase)]
+    private static partial Regex AudioLabelPattern();
+
+    private static string? BuildRemoteFileName(string? audioLabel, string extension)
+    {
+        var label = (audioLabel ?? string.Empty).Trim();
+        if (label.Length == 0)
+        {
+            return null;
+        }
+
+        label = label.Replace(' ', '_');
+        if (!AudioLabelPattern().IsMatch(label))
+        {
+            return null;
+        }
+
+        var labelExtension = Path.GetExtension(label).ToLowerInvariant();
+        return labelExtension == extension ? label : null;
+    }
 }

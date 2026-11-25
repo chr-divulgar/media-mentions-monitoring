@@ -309,6 +309,7 @@ describe('NotesService.archiveNoteClip', () => {
 
   const radioNote = {
     media: 'radio', mediaName: 'Blu Radio', clientName: 'Ecopetrol', date: '2026-10-14', startTime: '2026-10-14T15:30:48.000Z',
+    audioLabel: 'NOTA_01_BLU_RADIO_14-10-26_ECOP.mp3',
   };
 
   beforeEach(() => {
@@ -328,6 +329,7 @@ describe('NotesService.archiveNoteClip', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
       medium: 'radio', client: 'Ecopetrol', platform: 'Blu Radio', date: '2026-10-14', stamp: '2026-10-14_10-30-48', alertId: 'AL1',
+      audioLabel: 'NOTA_01_BLU_RADIO_14-10-26_ECOP.mp3',
     });
     expect(body.filePath.replace(/\\/g, '/')).toMatch(/audioFiles\/fragment_AL1\.mp3$/);
   });

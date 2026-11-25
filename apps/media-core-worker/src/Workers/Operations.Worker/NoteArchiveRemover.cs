@@ -17,8 +17,9 @@ public sealed record NoteArchiveDeleteResult(IReadOnlyList<string> Deleted, IRea
 /// Deletes from the archive the file a deleted note had there: the PDF of a web note (press account) or the clip of a
 /// radio or TV note (that medium's account). The file is found by its public link: a link under one of the media's
 /// public addresses names the path in that medium's account. Only a note's own file is ever deleted — a path shaped
-/// {country}/{client}/{yyyy}/{MM}/{dd}/{file}.pdf|.mp3|.mp4, never anything of the backup — and any other link (the
-/// article itself) is left alone.
+/// {client}/{yyyy}/{MM}/{dd}/{file}.mp3|.mp4 (radio), {client}/{Month_yyyy}/{dd}/{file}.mp3|.mp4 (television),
+/// or {yyyy}/{MONTH}/{dd}/{file}.pdf (web), never anything of the backup — and any other link (the article itself)
+/// is left alone.
 /// </summary>
 public sealed partial class NoteArchiveRemover
 {
@@ -95,8 +96,12 @@ public sealed partial class NoteArchiveRemover
         return null;
     }
 
-    // {country}/{client}/{yyyy}/{MM}/{dd}/{file}.pdf|.mp3|.mp4 — what ArchiveLayout.NoteDirectory files the notes under —
-    // or {yyyy}/{MONTH}/{dd}/{file}.pdf, the web notes' ArchiveLayout.WebNoteDirectory.
-    [GeneratedRegex(@"^((?!backup/)[a-z0-9-]{1,30}/[a-z0-9-]{1,60}/\d{4}/\d{2}/\d{2}/[^/\\]+\.(pdf|mp3|mp4)|\d{4}/[A-Z]{4,10}/\d{2}/[^/\\]+\.pdf)$", RegexOptions.IgnoreCase)]
+    // Current note paths:
+    // - {client}/{yyyy}/{MM}/{dd}/{file}.mp3|.mp4 (radio)
+    // - {client}/{Month_yyyy}/{dd}/{file}.mp3|.mp4 (television)
+    // - {yyyy}/{MONTH}/{dd}/{file}.pdf (web)
+    // Legacy note paths still accepted for safe cleanup:
+    // - {country}/{client}/{yyyy}/{MM}/{dd}/{file}.pdf|.mp3|.mp4
+    [GeneratedRegex(@"^((?!backup/)([a-z0-9-]{1,60}/\d{4}/\d{2}/\d{2}/[^/\\]+\.(mp3|mp4)|[a-z0-9-]{1,60}/[a-z]{3,12}_\d{4}/\d{2}/[^/\\]+\.(mp3|mp4)|[a-z0-9-]{1,30}/[a-z0-9-]{1,60}/\d{4}/\d{2}/\d{2}/[^/\\]+\.(pdf|mp3|mp4)|\d{4}/[A-Z]{4,10}/\d{2}/[^/\\]+\.pdf))$", RegexOptions.IgnoreCase)]
     private static partial Regex NoteFilePath();
 }

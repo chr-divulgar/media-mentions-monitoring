@@ -4,7 +4,8 @@ namespace MediaOpsCore.Workers.Operations;
 /// Where things go inside an archive account. Two kinds of content, two shapes:
 ///
 ///   the raw backup of the recordings   backup/{country}/{yyyy}/{MM}/{dd}/{source}/{file}
-///   a radio or TV note (its clip)      {country}/{client}/{yyyy}/{MM}/{dd}/{file}
+///   a radio note (its clip)            {client}/{yyyy}/{MM}/{dd}/{file}
+///   a TV note (its clip)               {client}/{Month_yyyy}/{dd}/{file}
 ///   a web note (its PDF)               {yyyy}/{MONTH}/{dd}/{file}, the day of the 6 a.m. report
 ///
 /// The backup is the company's own copy of what was recorded and is deleted after a few days (see
@@ -41,15 +42,22 @@ internal static class ArchiveLayout
     public static string BackupDirectory(string? country, DateOnly day, string sourceId) =>
         $"{BackupRoot}/{CountrySlug(country)}/{day.Year:D4}/{day.Month:D2}/{day.Day:D2}/{sourceId}";
 
-    // The folder of the notes of one client on one day.
-    public static string NoteDirectory(string? country, string? client, DateOnly day) =>
-        $"{CountrySlug(country)}/{ClientSlug(client)}/{day.Year:D4}/{day.Month:D2}/{day.Day:D2}";
+    // The folder of one client's radio notes of one day.
+    public static string RadioNoteDirectory(string? client, DateOnly day) =>
+        $"{ClientSlug(client)}/{day.Year:D4}/{day.Month:D2}/{day.Day:D2}";
 
-    public static string NoteDirectory(string? country, string? client, DateTimeOffset date) =>
-        NoteDirectory(country, client, new DateOnly(date.Year, date.Month, date.Day));
+    public static string RadioNoteDirectory(string? client, DateTimeOffset date) =>
+        RadioNoteDirectory(client, new DateOnly(date.Year, date.Month, date.Day));
 
     private static readonly string[] MonthNames =
         ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"];
+
+    // The folder of one client's TV notes of one day.
+    public static string TelevisionNoteDirectory(string? client, DateOnly day) =>
+        $"{ClientSlug(client)}/{MonthNames[day.Month - 1]}_{day.Year:D4}/{day.Day:D2}";
+
+    public static string TelevisionNoteDirectory(string? client, DateTimeOffset date) =>
+        TelevisionNoteDirectory(client, new DateOnly(date.Year, date.Month, date.Day));
 
     // The folder of a web note (its PDF): {yyyy}/{MONTH}/{dd} of the report it goes in. The report is cut at 6 a.m.
     // Bogota, so a note from 6:00 of one day to 5:59 of the next is filed under that next day.

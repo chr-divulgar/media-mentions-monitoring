@@ -74,6 +74,22 @@ public sealed class NoteArchiveRemoverTests
         var remover = Remover(new FakeStorage(), radio, television);
 
         await remover.DeleteAsync([
+            "https://chrmonitoreo.org/ecopetrol/2026/10/23/blu-radio_2026-10-23_10-30-48_6700ab12cd.mp3",
+            "https://chrmonitoreo.com/ecopetrol/NOVIEMBRE_2026/23/rcn_2026-10-23_10-30-48_6700ab12cd.mp4",
+        ]);
+
+        Assert.Equal(["ecopetrol/2026/10/23/blu-radio_2026-10-23_10-30-48_6700ab12cd.mp3"], radio.Deleted);
+        Assert.Equal(["ecopetrol/NOVIEMBRE_2026/23/rcn_2026-10-23_10-30-48_6700ab12cd.mp4"], television.Deleted);
+    }
+
+    [Fact]
+    public async Task Deletes_legacy_radio_or_tv_paths_too_for_backward_compatibility()
+    {
+        var radio = new FakeStorage();
+        var television = new FakeStorage();
+        var remover = Remover(new FakeStorage(), radio, television);
+
+        await remover.DeleteAsync([
             "https://chrmonitoreo.org/colombia/ecopetrol/2026/10/23/blu-radio_2026-10-23_10-30-48_6700ab12cd.mp3",
             "https://chrmonitoreo.com/colombia/ecopetrol/2026/10/23/rcn_2026-10-23_10-30-48_6700ab12cd.mp4",
         ]);

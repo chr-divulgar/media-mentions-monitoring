@@ -3,8 +3,9 @@ using Xunit;
 
 namespace MediaOpsCore.UnitTests;
 
-// Where things go in an account: the raw backup under backup/<country>/<year>/<month>/<day>/<source>/..., and a note
-// (its clip, or the PDF of a press note) under <country>/<client>/<year>/<month>/<day>/...
+// Where things go in an account: the raw backup under backup/<country>/<year>/<month>/<day>/<source>/..., radio notes
+// under <client>/<year>/<month>/<day>/..., TV notes under <client>/<Month_yyyy>/<day>/..., and web notes under
+// <year>/<MONTH>/<day>/...
 public sealed class ArchiveLayoutTests
 {
     [Theory]
@@ -34,14 +35,24 @@ public sealed class ArchiveLayoutTests
     }
 
     [Fact]
-    public void NoteDirectory_is_country_client_and_day()
+    public void RadioNoteDirectory_is_client_and_day()
     {
         var day = new DateTimeOffset(2026, 10, 14, 9, 30, 0, TimeSpan.FromHours(-5));
 
-        Assert.Equal("colombia/ecopetrol/2026/10/14", ArchiveLayout.NoteDirectory("Colombia", "Ecopetrol", day));
-        Assert.Equal("colombia/ecopetrol-s-a/2026/10/14", ArchiveLayout.NoteDirectory(null, "Ecopetrol S.A.", day));
-        Assert.Equal("colombia/sin-cliente/2026/10/14", ArchiveLayout.NoteDirectory("colombia", "  ", day));
-        Assert.Equal("colombia/ecopetrol/2026/10/14", ArchiveLayout.NoteDirectory("colombia", "Ecopetrol", new DateOnly(2026, 10, 14)));
+        Assert.Equal("ecopetrol/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol", day));
+        Assert.Equal("ecopetrol-s-a/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol S.A.", day));
+        Assert.Equal("sin-cliente/2026/10/14", ArchiveLayout.RadioNoteDirectory("  ", day));
+        Assert.Equal("ecopetrol/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol", new DateOnly(2026, 10, 14)));
+    }
+
+    [Fact]
+    public void TelevisionNoteDirectory_is_client_month_year_and_day()
+    {
+        var day = new DateTimeOffset(2026, 11, 23, 21, 15, 0, TimeSpan.FromHours(-5));
+
+        Assert.Equal("ecopetrol/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory("Ecopetrol", day));
+        Assert.Equal("sin-cliente/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory(null, day));
+        Assert.Equal("ecopetrol/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory("Ecopetrol", new DateOnly(2026, 11, 23)));
     }
 
     // The report is cut at 6 a.m. Bogota: a web note belongs to the day of the report it goes in.
