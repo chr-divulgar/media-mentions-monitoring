@@ -2,6 +2,7 @@ import * as JSZip from 'jszip';
 import {
   buildDailyReport,
   dailyReportFileName,
+  groupByMedia,
   groupByTheme,
   ReportNote,
   reportPeriodTitle,
@@ -38,13 +39,14 @@ describe('reportPeriodTitle', () => {
     expect(reportPeriodTitle('2026-10-22', '2026-10-23')).toBe('Octubre 22 / octubre 23 de 2.026');
   });
 
-  it('writes a single day once', () => {
-    expect(reportPeriodTitle('2026-10-23', '2026-10-23')).toBe('Octubre 23 de 2.026');
+  it('writes the report day and the next day when the range has one day', () => {
+    expect(reportPeriodTitle('2026-10-23', '2026-10-23')).toBe('Octubre 23 / octubre 24 de 2.026');
   });
 
   it('names both months when the range crosses one, and both years when it crosses one', () => {
     expect(reportPeriodTitle('2026-10-31', '2026-11-01')).toBe('Octubre 31 / noviembre 1 de 2.026');
     expect(reportPeriodTitle('2026-12-31', '2027-01-01')).toBe('Diciembre 31 de 2.026 / enero 1 de 2.027');
+    expect(reportPeriodTitle('2026-12-31', '2026-12-31')).toBe('Diciembre 31 de 2.026 / enero 1 de 2.027');
   });
 });
 
@@ -94,10 +96,25 @@ describe('groupByTheme', () => {
   });
 });
 
+describe('groupByMedia', () => {
+  it('groups notes by media and keeps a stable section order', () => {
+    const groups = groupByMedia([
+      note({ media: 'internet', title: 'i' }),
+      note({ media: 'tv', title: 't' }),
+      note({ media: 'radio', title: 'r' }),
+      note({ media: 'televisión', title: 'tv-es' }),
+    ]);
+
+    expect(groups.map((group) => group.label)).toEqual(['Radio', 'Televisión', 'Internet']);
+    expect(groups[1].themes.flatMap((theme) => theme.notes.map((item) => item.title))).toEqual(['t', 'tv-es']);
+  });
+});
+
 describe('buildDailyReport', () => {
   const notes = [
-    note({ mediaName: 'Investing.com', title: 'Ecopetrol nombra vicepresidente', summary: 'Ecopetrol S.A. anunció hoy…', subtopic: 'nombramientos en Ecopetrol', index: '1' }),
+    note({ media: 'internet', mediaName: 'Investing.com', title: 'Ecopetrol nombra vicepresidente', summary: 'Ecopetrol S.A. anunció hoy…', subtopic: 'nombramientos en Ecopetrol', index: '1' }),
     note({
+      media: 'radio',
       mediaName: 'Infobae',
       title: 'Salida de Rodrigo Lara',
       summary: 'La salida del titular…',
@@ -105,7 +122,7 @@ describe('buildDailyReport', () => {
       index: '2',
       attachment: 'https://chrdivulgar.org/colombia/ecopetrol/2026/10/23/infobae-01-salida.pdf',
     }),
-    note({ mediaName: 'Pulzo', title: 'Sin PDF', summary: 'r', subtopic: 'Carlos Suarez', index: '3', attachment: undefined, link: 'https://pulzo.com/nota' }),
+    note({ media: 'tv', mediaName: 'Pulzo', title: 'Sin PDF', summary: 'r', subtopic: 'Carlos Suarez', index: '3', attachment: undefined, link: 'https://pulzo.com/nota' }),
   ];
 
   it('has the title, the period, the indicators and each theme with its notes, outlet, linked headline and summary', async () => {
@@ -130,8 +147,9 @@ describe('buildDailyReport', () => {
     expect(seen).toContain('Indicadores');
     expect(seen).toContain('El Tiempo');
     expect(seen).toContain('Divisas');
-    // Themes A-Z; each note: outlet, headline, summary.
-    expect(seen.indexOf('Temática: Carlos Suarez')).toBeLessThan(seen.indexOf('Temática: nombramientos en Ecopetrol'));
+    // Media sections are stable: Radio -> Televisión -> Internet.
+    expect(seen.indexOf('Medio: Radio')).toBeLessThan(seen.indexOf('Medio: Televisión'));
+    expect(seen.indexOf('Medio: Televisión')).toBeLessThan(seen.indexOf('Medio: Internet'));
     expect(seen).toContain('Investing.com|Ecopetrol nombra vicepresidente|Ecopetrol S.A. anunció hoy…');
     expect(seen).toContain('Infobae|Salida de Rodrigo Lara|La salida del titular…');
     // The headline links to the archived PDF, or to the article when the note has no PDF.
@@ -153,6 +171,6 @@ describe('buildDailyReport', () => {
 
     expect(text(xml.document)).not.toContain('Indicadores');
     expect(xml.media).toHaveLength(0);
-    expect(text(xml.document)).toContain('Octubre 23 de 2.026');
+    expect(text(xml.document)).toContain('Octubre 23 / octubre 24 de 2.026');
   });
 });

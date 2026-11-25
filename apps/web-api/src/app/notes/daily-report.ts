@@ -10,11 +10,12 @@ import {
   TextRun,
 } from 'docx';
 
-// The daily news report of a client (the "Reporte de Noticias" the team used to put together by hand in Word): its
-// internet notes of a date range, grouped by theme, each with its outlet, its headline linked to the archived PDF and
-// its summary. Pure: the caller hands in the notes and the client's logo and indicators.
+// The daily news report of a client (the "Reporte de Noticias" the team used to put together by hand in Word): the
+// notes of a date range, grouped by media and theme, each with its outlet, its headline linked to the archived file
+// and its summary. Pure: the caller hands in the notes and the client's logo and indicators.
 
 export interface ReportNote {
+  media?: string;
   mediaName?: string;
   title?: string;
   summary?: string;
@@ -50,11 +51,18 @@ const THEME_COLOR = '1F3864';
 const LINK_COLOR = '0000FF';
 const FONT = 'Arial';
 const SIZE = 24; // half-points: 12 pt
+const REPORT_MEDIA_ORDER = ['radio', 'tv', 'internet'];
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 // 2026 → "2.026", as the report writes it.
 const yearText = (year: number) => year.toLocaleString('es-CO').replace(/\s|,/g, '.');
+
+const addOneDay = (day: string): string => {
+  const next = new Date(`${day}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+};
 
 const parts = (day: string) => {
   const [year, month, date] = day.split('-').map(Number);
@@ -64,8 +72,8 @@ const parts = (day: string) => {
 /** "Octubre 22 / octubre 23 de 2.026": the first and last day of the report. */
 export function reportPeriodTitle(from: string, to: string): string {
   const a = parts(from);
-  const b = parts(to);
-  if (from === to) return capitalize(`${b.month} ${b.date} de ${yearText(b.year)}`);
+  const normalizedTo = from === to ? addOneDay(to) : to;
+  const b = parts(normalizedTo);
   if (a.year !== b.year) {
     return capitalize(`${a.month} ${a.date} de ${yearText(a.year)} / ${b.month} ${b.date} de ${yearText(b.year)}`);
   }
@@ -87,6 +95,24 @@ const registeredOrder = (a: ReportNote, b: ReportNote): number => {
 
 const az = (a = '', b = '') => a.trim().localeCompare(b.trim(), 'es', { sensitivity: 'base' });
 
+const normalizeMedia = (value?: string): string => {
+  const key = (value ?? '').trim().toLowerCase();
+  if (key === 'television' || key === 'televisión') return 'tv';
+  return key;
+};
+
+const mediaLabel = (media: string): string => {
+  if (media === 'tv') return 'Televisión';
+  if (media === 'radio') return 'Radio';
+  if (media === 'internet') return 'Internet';
+  return capitalize(media || 'Otros');
+};
+
+const mediaRank = (media: string): number => {
+  const index = REPORT_MEDIA_ORDER.indexOf(media);
+  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+};
+
 /** The notes by theme (the subtopic; else the topic; else "Otros"), themes A-Z, notes A-Z by outlet (then registered order). */
 export function groupByTheme(notes: ReportNote[]): { theme: string; notes: ReportNote[] }[] {
   const groups = new Map<string, ReportNote[]>();
@@ -97,6 +123,18 @@ export function groupByTheme(notes: ReportNote[]): { theme: string; notes: Repor
   return [...groups.entries()]
     .sort(([a], [b]) => az(a, b))
     .map(([theme, grouped]) => ({ theme, notes: grouped.sort((a, b) => az(a.mediaName, b.mediaName)) }));
+}
+
+export function groupByMedia(notes: ReportNote[]): { media: string; label: string; themes: { theme: string; notes: ReportNote[] }[] }[] {
+  const groups = new Map<string, ReportNote[]>();
+  for (const note of notes) {
+    const media = normalizeMedia(note.media) || 'otros';
+    groups.set(media, [...(groups.get(media) ?? []), note]);
+  }
+
+  return [...groups.entries()]
+    .sort(([a], [b]) => mediaRank(a) - mediaRank(b) || az(a, b))
+    .map(([media, grouped]) => ({ media, label: mediaLabel(media), themes: groupByTheme(grouped) }));
 }
 
 const run = (text: string, options: { bold?: boolean; color?: string } = {}) =>
@@ -174,16 +212,21 @@ export async function buildDailyReport(input: {
     body.push(blank());
   }
 
-  for (const group of groupByTheme(notes)) {
-    body.push(new Paragraph({ children: [run(`Temática: ${group.theme}`, { bold: true, color: THEME_COLOR })] }), blank());
-    for (const item of group.notes) {
-      const url = item.attachment?.trim() || item.link?.trim();
-      const title = item.title?.trim() || 'Sin titular';
-      body.push(
-        new Paragraph({ children: [run(item.mediaName?.trim() || 'Sin medio', { bold: true })] }),
-        new Paragraph({ children: [url ? link(url, title) : run(title, { bold: true })] }),
-      );
-      if (item.summary?.trim()) body.push(new Paragraph({ children: [run(item.summary.trim())] }));
+  for (const section of groupByMedia(notes)) {
+    body.push(new Paragraph({ children: [run(`Medio: ${section.label}`, { bold: true, color: THEME_COLOR })] }), blank());
+
+    for (const group of section.themes) {
+      body.push(new Paragraph({ children: [run(`Temática: ${group.theme}`, { bold: true, color: THEME_COLOR })] }), blank());
+      for (const item of group.notes) {
+        const url = item.attachment?.trim() || item.link?.trim();
+        const title = item.title?.trim() || 'Sin titular';
+        body.push(
+          new Paragraph({ children: [run(item.mediaName?.trim() || 'Sin medio', { bold: true })] }),
+          new Paragraph({ children: [url ? link(url, title) : run(title, { bold: true })] }),
+        );
+        if (item.summary?.trim()) body.push(new Paragraph({ children: [run(item.summary.trim())] }));
+        body.push(blank());
+      }
       body.push(blank());
     }
   }

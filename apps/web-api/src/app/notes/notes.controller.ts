@@ -81,13 +81,15 @@ export class NotesController {
   @Get('daily-report')
   @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
   async dailyReport(
-    @Query('client') client: string,
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query() query: Record<string, string | string[] | undefined>,
     @Res({ passthrough: true }) reply: { header: (name: string, value: string) => void },
   ) {
     try {
-      const report = await this.notesService.dailyReport(client, from, to);
+      const client = typeof query.client === 'string' ? query.client : '';
+      const from = typeof query.from === 'string' ? query.from : '';
+      const to = typeof query.to === 'string' ? query.to : '';
+      const media = this.parseMediaQuery(query);
+      const report = await this.notesService.dailyReport(client, from, to, media);
       reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(report.fileName)}`);
       return new StreamableFile(report.content);
     } catch (error) {
@@ -126,6 +128,18 @@ export class NotesController {
       },
       HttpStatus.BAD_GATEWAY,
     );
+  }
+
+  private parseMediaQuery(query: Record<string, string | string[] | undefined>): string[] {
+    const raw = [query.media, query['media[]']].flatMap((value) => {
+      if (!value) return [];
+      return Array.isArray(value) ? value : [value];
+    });
+
+    return raw
+      .flatMap((value) => value.split(','))
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
   }
 
   @Post('send-note')

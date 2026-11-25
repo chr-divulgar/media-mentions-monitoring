@@ -30,6 +30,11 @@ async function errorMessage(error: unknown): Promise<string> {
 const DailyReportModal: React.FC<DailyReportModalProps> = ({ open, onClose, defaultRange }) => {
   const [form] = Form.useForm();
   const [generating, setGenerating] = useState(false);
+  const mediaOptions = [
+    { value: "radio", label: "Radio" },
+    { value: "tv", label: "Televisión" },
+    { value: "internet", label: "Internet" },
+  ];
 
   const { data: clients = [] } = useQuery<{ name: string }[]>(
     ["clients"],
@@ -39,17 +44,21 @@ const DailyReportModal: React.FC<DailyReportModalProps> = ({ open, onClose, defa
 
   useEffect(() => {
     if (open) {
-      form.setFieldsValue({ range: defaultRange ?? [dayjs().subtract(1, "day"), dayjs()] });
+      form.setFieldsValue({
+        range: defaultRange ?? [dayjs().subtract(1, "day"), dayjs()],
+        media: [],
+      });
     }
   }, [open, defaultRange, form]);
 
   const generate = async () => {
-    const { client, range } = await form.validateFields();
+    const { client, range, media } = await form.validateFields();
     const [from, to] = (range as [Dayjs, Dayjs]).map((day) => day.format("YYYY-MM-DD"));
+    const selectedMedia = media as string[];
     setGenerating(true);
     try {
       const response = await api.get("/notes/daily-report", {
-        params: { client, from, to },
+        params: { client, from, to, media: selectedMedia.join(",") },
         responseType: "blob",
       });
       const disposition = String(response.headers["content-disposition"] ?? "");
@@ -93,6 +102,18 @@ const DailyReportModal: React.FC<DailyReportModalProps> = ({ open, onClose, defa
         </Form.Item>
         <Form.Item name="range" label="Fechas de las notas" rules={[{ required: true, message: "Elige las fechas" }]}>
           <DatePicker.RangePicker allowClear={false} style={{ width: "100%" }} />
+        </Form.Item>
+        <Form.Item
+          name="media"
+          label="Medios a incluir"
+          rules={[{ required: true, type: "array", min: 1, message: "Elige al menos un medio" }]}
+        >
+          <Select
+            mode="multiple"
+            allowClear
+            placeholder="Selecciona uno o más medios"
+            options={mediaOptions}
+          />
         </Form.Item>
       </Form>
     </Modal>

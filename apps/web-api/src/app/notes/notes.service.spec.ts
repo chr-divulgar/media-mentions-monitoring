@@ -4,15 +4,20 @@ import { NotesService } from './notes.service';
 // Minimal in-memory stand-ins for the two Mongo repositories the service reads and writes.
 function build(
   alert: Record<string, unknown> | null,
-  existingNote: Record<string, unknown> | null = null,
+  existingNote: Record<string, unknown> | Record<string, unknown>[] | null = null,
   clients: unknown = {},
 ) {
+  const existingNotes = Array.isArray(existingNote)
+    ? existingNote
+    : existingNote
+      ? [existingNote]
+      : [];
   const saved: Record<string, unknown>[] = [];
   const noteRepo = {
     delete: jest.fn().mockResolvedValue({ affected: 1 }),
-    find: jest.fn().mockResolvedValue(existingNote ? [existingNote] : []),
-    findOne: jest.fn().mockResolvedValue(existingNote),
-    findOneBy: jest.fn().mockResolvedValue(existingNote),
+    find: jest.fn().mockResolvedValue(existingNotes),
+    findOne: jest.fn().mockResolvedValue(existingNotes[0] ?? null),
+    findOneBy: jest.fn().mockResolvedValue(existingNotes[0] ?? null),
     create: jest.fn((fields: Record<string, unknown>) => ({ ...fields })),
     save: jest.fn(async (note: Record<string, unknown>) => {
       saved.push(note);
@@ -406,24 +411,36 @@ describe('NotesService.dailyReport', () => {
     summary: 'Resumen', subtopic: 'Carlos Suarez', attachment: 'https://chrdivulgar.org/x.pdf',
   };
 
-  it('asks only for the internet notes of the client in the range and names the file after the last day', async () => {
+  it('asks for the selected media of the client in the range and names the file after the last day', async () => {
     const clients = { getClients: jest.fn().mockResolvedValue([{ name: 'Ecopetrol', reportIndicators: [{ source: 'El Tiempo', label: 'Divisas' }] }]) };
     const { service } = build(null, internetNote, clients);
 
-    const report = await service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23');
+    const report = await service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23', ['internet']);
 
     const query = (service.noteRepo.find as jest.Mock).mock.calls[0][0];
-    expect(query.where).toEqual({ media: 'internet', clientName: 'Ecopetrol', date: { $gte: '2026-10-22', $lte: '2026-10-23' } });
+    expect(query.where).toEqual({ media: { $in: ['internet'] }, clientName: 'Ecopetrol', date: { $gte: '2026-10-22', $lte: '2026-10-23' } });
     expect(report.fileName).toBe('Informe Ecopetrol-23-10-26.docx');
     expect(report.content.subarray(0, 2).toString()).toBe('PK'); // a .docx is a zip
   });
 
-  it('says so when there is no note to report, and refuses a missing client or a reversed range', async () => {
+  it('expands television aliases when tv is selected', async () => {
+    const clients = { getClients: jest.fn().mockResolvedValue([{ name: 'Ecopetrol' }]) };
+    const { service } = build(null, { ...internetNote, media: 'tv' }, clients);
+
+    await service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23', ['tv', 'radio']);
+
+    const query = (service.noteRepo.find as jest.Mock).mock.calls[0][0];
+    expect(query.where.media.$in).toEqual(expect.arrayContaining(['tv', 'television', 'televisión', 'radio']));
+  });
+
+  it('says so when there is no note to report, and refuses missing media, a missing client or a reversed range', async () => {
     const { service } = build(null, null, { getClients: jest.fn().mockResolvedValue([]) });
 
-    await expect(service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23')).rejects.toThrow('No hay notas de internet de Ecopetrol');
-    await expect(service.dailyReport('', '2026-10-22', '2026-10-23')).rejects.toThrow('Elige el cliente');
-    await expect(service.dailyReport('Ecopetrol', '2026-10-24', '2026-10-23')).rejects.toThrow('Elige el cliente');
+    await expect(service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23', ['internet'])).rejects.toThrow('No hay notas de internet de Ecopetrol');
+    await expect(service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23', [])).rejects.toThrow('Elige al menos un medio');
+    await expect(service.dailyReport('Ecopetrol', '2026-10-22', '2026-10-23', ['prensa'])).rejects.toThrow('solo permite Radio, Televisión e Internet');
+    await expect(service.dailyReport('', '2026-10-22', '2026-10-23', ['internet'])).rejects.toThrow('Elige el cliente');
+    await expect(service.dailyReport('Ecopetrol', '2026-10-24', '2026-10-23', ['internet'])).rejects.toThrow('Elige el cliente');
   });
 });
 

@@ -674,24 +674,40 @@ export class NotesService {
   }
 
   /**
-   * The daily news report of a client (Word): its internet notes of the range, grouped by subtopic, with the
-   * client's logo and indicators. Throws when there is no note to report (the message is for the user).
+    * The daily news report of a client (Word): the notes of the selected media in the range, grouped by
+    * media and then by subtopic, with the client's logo and indicators. Throws when there is no note to report
+    * (the message is for the user).
    */
   async dailyReport(
     clientName: string,
     from: string,
     to: string,
+    mediaKeys: string[],
   ): Promise<{ fileName: string; content: Buffer }> {
     const day = /^\d{4}-\d{2}-\d{2}$/;
     if (!clientName?.trim() || !day.test(from ?? '') || !day.test(to ?? '') || from > to) {
       throw new Error('Elige el cliente y un rango de fechas válido.');
     }
 
+    const selectedMedia = this.normalizeReportMediaSelection(mediaKeys);
+    if (selectedMedia.length === 0) {
+      throw new Error('Elige al menos un medio para generar el informe.');
+    }
+
+    const invalidMedia = selectedMedia.filter((media) => !['radio', 'tv', 'internet'].includes(media));
+    if (invalidMedia.length > 0) {
+      throw new Error('El informe solo permite Radio, Televisión e Internet.');
+    }
+
+    const mediaQueryValues = this.expandReportMediaSelection(selectedMedia);
+
     const notes = await this.noteRepo.find({
-      where: { media: 'internet', clientName, date: { $gte: from, $lte: to } },
+      where: { media: { $in: mediaQueryValues }, clientName, date: { $gte: from, $lte: to } },
     } as never);
     if (notes.length === 0) {
-      throw new Error(`No hay notas de internet de ${clientName} en esas fechas.`);
+      throw new Error(
+        `No hay notas de ${this.reportMediaText(selectedMedia)} de ${clientName} en esas fechas.`,
+      );
     }
 
     const client = (await this.clientsService.getClients()).find((candidate) => candidate.name === clientName);
@@ -706,6 +722,35 @@ export class NotesService {
       notes,
     });
     return { fileName: dailyReportFileName(clientName, to), content };
+  }
+
+  private normalizeReportMediaSelection(mediaKeys: string[]): string[] {
+    const normalized = mediaKeys
+      .map((media) => this.normalizeMediaKey(media))
+      .filter((media) => !!media);
+    return [...new Set(normalized)];
+  }
+
+  private expandReportMediaSelection(mediaKeys: string[]): string[] {
+    const values = new Set<string>();
+    for (const media of mediaKeys) {
+      if (media === 'tv') {
+        values.add('tv');
+        values.add('television');
+        values.add('televisión');
+        continue;
+      }
+      values.add(media);
+    }
+    return [...values];
+  }
+
+  private reportMediaText(mediaKeys: string[]): string {
+    const labels = mediaKeys.map((media) => {
+      if (media === 'tv') return 'televisión';
+      return media;
+    });
+    return labels.join(', ');
   }
 
   // Trae todas las notas en un rango de fechas (inclusive)
