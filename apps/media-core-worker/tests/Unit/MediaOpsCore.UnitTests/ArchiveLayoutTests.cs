@@ -39,10 +39,10 @@ public sealed class ArchiveLayoutTests
     {
         var day = new DateTimeOffset(2026, 10, 14, 9, 30, 0, TimeSpan.FromHours(-5));
 
-        Assert.Equal("ecopetrol/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol", day));
-        Assert.Equal("ecopetrol-s-a/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol S.A.", day));
-        Assert.Equal("sin-cliente/2026/10/14", ArchiveLayout.RadioNoteDirectory("  ", day));
-        Assert.Equal("ecopetrol/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol", new DateOnly(2026, 10, 14)));
+        Assert.Equal("ECOPETROL/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol", day));
+        Assert.Equal("ECOPETROL-S-A/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol S.A.", day));
+        Assert.Equal("SIN-CLIENTE/2026/10/14", ArchiveLayout.RadioNoteDirectory("  ", day));
+        Assert.Equal("ECOPETROL/2026/10/14", ArchiveLayout.RadioNoteDirectory("Ecopetrol", new DateOnly(2026, 10, 14)));
     }
 
     [Fact]
@@ -50,9 +50,9 @@ public sealed class ArchiveLayoutTests
     {
         var day = new DateTimeOffset(2026, 11, 23, 21, 15, 0, TimeSpan.FromHours(-5));
 
-        Assert.Equal("ecopetrol/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory("Ecopetrol", day));
-        Assert.Equal("sin-cliente/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory(null, day));
-        Assert.Equal("ecopetrol/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory("Ecopetrol", new DateOnly(2026, 11, 23)));
+        Assert.Equal("ECOPETROL/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory("Ecopetrol", day));
+        Assert.Equal("SIN-CLIENTE/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory(null, day));
+        Assert.Equal("ECOPETROL/NOVIEMBRE_2026/23", ArchiveLayout.TelevisionNoteDirectory("Ecopetrol", new DateOnly(2026, 11, 23)));
     }
 
     // The report is cut at 6 a.m. Bogota: a web note belongs to the day of the report it goes in.

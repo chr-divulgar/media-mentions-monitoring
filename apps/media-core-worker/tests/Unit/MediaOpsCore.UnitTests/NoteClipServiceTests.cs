@@ -82,7 +82,7 @@ public sealed class NoteClipServiceTests
         var result = await Service(radio, television).ArchiveAsync(Request(clip));
 
         Assert.Null(result.Error);
-        Assert.Equal("ecopetrol/2026/10/14/NOTA_01_BLU_RADIO_14-10-26_ECOP.mp3", result.Path);
+        Assert.Equal("ECOPETROL/2026/10/14/NOTA_01_BLU_RADIO_14-10-26_ECOP.mp3", result.Path);
         Assert.Equal([result.Path!], radio.Uploaded);
         Assert.Empty(television.Uploaded);
     }
@@ -96,7 +96,7 @@ public sealed class NoteClipServiceTests
 
         var result = await Service(radio, television).ArchiveAsync(Request(clip, medium: "tv", platform: "RCN"));
 
-        Assert.Equal("ecopetrol/OCTUBRE_2026/14/rcn_2026-10-14_10-30-48_6700ab12cd.mp4", result.Path);
+        Assert.Equal("ECOPETROL/OCTUBRE_2026/14/rcn_2026-10-14_10-30-48_6700ab12cd.mp4", result.Path);
         Assert.Equal([result.Path!], television.Uploaded);
         Assert.Empty(radio.Uploaded);
     }
@@ -107,8 +107,8 @@ public sealed class NoteClipServiceTests
         var radio = await Service(new FakeStorage(), new FakeStorage()).ArchiveAsync(Request(MakeClip()));
         var tv = await Service(new FakeStorage(), new FakeStorage()).ArchiveAsync(Request(MakeClip("fragment_6700ab12cd.mp4"), medium: "tv", platform: "RCN"));
 
-        Assert.Equal("https://radio.example.org/ecopetrol/2026/10/14/NOTA_01_BLU_RADIO_14-10-26_ECOP.mp3", radio.Link);
-        Assert.Equal("https://tv.example.com/ecopetrol/OCTUBRE_2026/14/rcn_2026-10-14_10-30-48_6700ab12cd.mp4", tv.Link);
+        Assert.Equal("https://radio.example.org/ECOPETROL/2026/10/14/NOTA_01_BLU_RADIO_14-10-26_ECOP.mp3", radio.Link);
+        Assert.Equal("https://tv.example.com/ECOPETROL/OCTUBRE_2026/14/rcn_2026-10-14_10-30-48_6700ab12cd.mp4", tv.Link);
     }
 
     [Fact]
@@ -121,9 +121,9 @@ public sealed class NoteClipServiceTests
         var invalidLabel = await service.ArchiveAsync(RequestWithLabel(MakeClip(), "NOTA_01_BLU?.mp3"));
         var mismatchedExtension = await service.ArchiveAsync(RequestWithLabel(MakeClip(), "NOTA_01_BLU_RADIO_14-10-26_ECOP.mp4"));
 
-        Assert.Equal("ecopetrol/2026/10/14/blu-radio_2026-10-14_10-30-48_6700ab12cd.mp3", missingLabel.Path);
-        Assert.Equal("ecopetrol/2026/10/14/blu-radio_2026-10-14_10-30-48_6700ab12cd.mp3", invalidLabel.Path);
-        Assert.Equal("ecopetrol/2026/10/14/blu-radio_2026-10-14_10-30-48_6700ab12cd.mp3", mismatchedExtension.Path);
+        Assert.Equal("ECOPETROL/2026/10/14/blu-radio_2026-10-14_10-30-48_6700ab12cd.mp3", missingLabel.Path);
+        Assert.Equal("ECOPETROL/2026/10/14/blu-radio_2026-10-14_10-30-48_6700ab12cd.mp3", invalidLabel.Path);
+        Assert.Equal("ECOPETROL/2026/10/14/blu-radio_2026-10-14_10-30-48_6700ab12cd.mp3", mismatchedExtension.Path);
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public sealed class NoteClipServiceTests
 
         var result = await Service(radio, null, mexico).ArchiveAsync(Request(MakeClip(), platform: "Azteca Radio"));
 
-        Assert.StartsWith("ecopetrol/2026/10/14/", result.Path!);
+        Assert.StartsWith("ECOPETROL/2026/10/14/", result.Path!);
     }
 
     [Fact]

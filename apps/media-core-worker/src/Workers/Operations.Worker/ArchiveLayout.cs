@@ -30,6 +30,9 @@ internal static class ArchiveLayout
     public static string ClientSlug(string? client) =>
         NotePdfService.ToFileSlug(client ?? string.Empty, MaxClientLength, "sin-cliente");
 
+    private static string ClientSlugUpper(string? client) =>
+        ClientSlug(client).ToUpperInvariant();
+
     // The local file {medium}/{yyyy}/{MM}/{dd}/{source}/{file} as the backup keeps it: the medium folder gives way to
     // backup/{country}.
     public static string BackupPathFor(string? country, string localRelativePath)
@@ -44,7 +47,7 @@ internal static class ArchiveLayout
 
     // The folder of one client's radio notes of one day.
     public static string RadioNoteDirectory(string? client, DateOnly day) =>
-        $"{ClientSlug(client)}/{day.Year:D4}/{day.Month:D2}/{day.Day:D2}";
+        $"{ClientSlugUpper(client)}/{day.Year:D4}/{day.Month:D2}/{day.Day:D2}";
 
     public static string RadioNoteDirectory(string? client, DateTimeOffset date) =>
         RadioNoteDirectory(client, new DateOnly(date.Year, date.Month, date.Day));
@@ -54,7 +57,7 @@ internal static class ArchiveLayout
 
     // The folder of one client's TV notes of one day.
     public static string TelevisionNoteDirectory(string? client, DateOnly day) =>
-        $"{ClientSlug(client)}/{MonthNames[day.Month - 1]}_{day.Year:D4}/{day.Day:D2}";
+        $"{ClientSlugUpper(client)}/{MonthNames[day.Month - 1]}_{day.Year:D4}/{day.Day:D2}";
 
     public static string TelevisionNoteDirectory(string? client, DateTimeOffset date) =>
         TelevisionNoteDirectory(client, new DateOnly(date.Year, date.Month, date.Day));
