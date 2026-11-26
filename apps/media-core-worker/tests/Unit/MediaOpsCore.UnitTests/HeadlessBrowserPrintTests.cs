@@ -257,4 +257,19 @@ public sealed class HeadlessBrowserPrintTests : IAsyncLifetime
         Assert.Equal("article", await CenterOfPageAsync("/plain"));
         Assert.True(new FileInfo(pdf).Length > 1000);
     }
+
+    [Fact]
+    public void Pdf_options_use_explicit_margins_and_scale_to_avoid_printer_edge_clipping()
+    {
+        var options = HeadlessBrowser.BuildPdfOptions("C:/tmp/test.pdf");
+
+        Assert.Equal("A4", options.Format);
+        Assert.True(options.PrintBackground);
+        Assert.Equal(0.97f, options.Scale);
+        Assert.NotNull(options.Margin);
+        Assert.Equal("12mm", options.Margin!.Top);
+        Assert.Equal("12mm", options.Margin.Right);
+        Assert.Equal("12mm", options.Margin.Bottom);
+        Assert.Equal("12mm", options.Margin.Left);
+    }
 }

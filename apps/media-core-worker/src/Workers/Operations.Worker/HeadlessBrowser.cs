@@ -40,6 +40,8 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
     // never come) does not stall the note: past this the page is printed as it is.
     private static readonly TimeSpan DefaultLoadWait = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ConsentWait = TimeSpan.FromSeconds(3);
+    private const string PdfMargin = "12mm";
+    private const float PdfScale = 0.97f;
 
     // The consent managers outlets use (the accept button of each), and the buttons any other one labels that way.
     private const string ConsentButtonCss =
@@ -184,7 +186,7 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
                     }
 
                     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
-                    await page.PdfAsync(new PagePdfOptions { Path = outputPath, Format = "A4", PrintBackground = true }).ConfigureAwait(false);
+                    await page.PdfAsync(BuildPdfOptions(outputPath)).ConfigureAwait(false);
                     return true;
                 },
                 cancellationToken).ConfigureAwait(false);
@@ -199,6 +201,22 @@ public sealed class HeadlessBrowser : IBrowserPageReader, IBrowserPagePrinter, I
             return false;
         }
     }
+
+    // Many office printers cannot print edge-to-edge; explicit margins prevent clipping at print time.
+    internal static PagePdfOptions BuildPdfOptions(string outputPath) => new()
+    {
+        Path = outputPath,
+        Format = "A4",
+        PrintBackground = true,
+        Scale = PdfScale,
+        Margin = new Margin
+        {
+            Top = PdfMargin,
+            Right = PdfMargin,
+            Bottom = PdfMargin,
+            Left = PdfMargin,
+        },
+    };
 
     // Opens the page the way the note's PDF needs it (loaded as far as it will, consent wall out of the way) and hands
     // it to use. Default when the page could not be opened (an anti-bot challenge it never passed).
