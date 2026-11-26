@@ -228,9 +228,19 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
   const getSubtopicOptions = (note: NoteDto) => {
     const client = clientByName.get(note.clientName);
     const topic = (client?.topics ?? []).find((candidate) => candidate.name === note.topic);
-    return (topic?.subtopics ?? [])
+    const options = (topic?.subtopics ?? [])
       .filter((item) => !!item?.name)
       .map((item) => ({ label: item.name as string, value: item.name as string }));
+
+    const currentSubtopic = (note.subtopic ?? "").trim();
+    if (
+      currentSubtopic.length > 0 &&
+      !options.some((option) => fold(option.value) === fold(currentSubtopic))
+    ) {
+      options.unshift({ label: currentSubtopic, value: currentSubtopic });
+    }
+
+    return options;
   };
 
   const handleAddSubtopic = async (note: NoteDto, newName: string) => {
@@ -320,7 +330,23 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
     if (status === "failed") return "Fallido";
     if (status === "pending") return "Pendiente";
     if (status === "not_required") return "No aplica";
-    return "Sin dato";
+
+    const media = (record.media ?? "").trim().toLowerCase();
+    if (["radio", "tv", "television"].includes(media)) {
+      return record.link ? "Subido" : "Pendiente";
+    }
+
+    return "No aplica";
+  };
+
+  const canRetryArchive = (record: NoteDto): boolean => {
+    const media = (record.media ?? "").trim().toLowerCase();
+    if (!["radio", "tv", "television"].includes(media)) return false;
+    if (!record.id) return false;
+
+    const status = record.archiveUploadStatus;
+    if (status === "uploaded" || status === "not_required") return false;
+    return true;
   };
 
   const columns: TableColumnsType<NoteDto> = [
@@ -472,7 +498,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       render: (_, record) => (
         <Space size={6}>
           <span>{renderArchiveStatus(record)}</span>
-          {record.archiveUploadStatus === "failed" && (
+          {canRetryArchive(record) && (
             <Button
               size="small"
               onClick={() => handleRetryArchive(record)}
