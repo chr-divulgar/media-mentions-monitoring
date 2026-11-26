@@ -148,6 +148,21 @@ const link = (url: string, text: string, bold = true) =>
     children: [new TextRun({ text, font: FONT, size: SIZE, bold, color: LINK_COLOR, underline: {} })],
   });
 
+// The report links only to the generated archive link (FileZilla flow). If missing, no hyperlink.
+const reportUrl = (item: ReportNote): string | undefined => {
+  const media = normalizeMedia(item.media);
+  if (media === 'internet') {
+    return item.attachment?.trim() || undefined;
+  }
+  if (media === 'radio') {
+    return item.link?.trim() || undefined;
+  }
+  if (media === 'tv') {
+    return item.link?.trim() || undefined;
+  }
+  return undefined;
+};
+
 // The logo at a fixed width, keeping its proportions (read from the PNG or JPEG header).
 function logoRun(dataUrl: string): ImageRun | null {
   const match = /^data:image\/(png|jpe?g);base64,(.+)$/i.exec(dataUrl);
@@ -218,7 +233,7 @@ export async function buildDailyReport(input: {
     for (const group of section.themes) {
       body.push(new Paragraph({ children: [run(`Temática: ${group.theme}`, { bold: true, color: THEME_COLOR })] }), blank());
       for (const item of group.notes) {
-        const url = item.attachment?.trim() || item.link?.trim();
+        const url = reportUrl(item);
         const title = item.title?.trim() || 'Sin titular';
         body.push(
           new Paragraph({ children: [run(item.mediaName?.trim() || 'Sin medio', { bold: true })] }),

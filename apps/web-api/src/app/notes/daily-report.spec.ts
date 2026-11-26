@@ -121,8 +121,9 @@ describe('buildDailyReport', () => {
       subtopic: 'Carlos Suarez',
       index: '2',
       attachment: 'https://chrdivulgar.org/colombia/ecopetrol/2026/10/23/infobae-01-salida.pdf',
+      link: 'https://chrmonitoreo.org/colombia/ecopetrol/2026/10/23/nota-2.mp3',
     }),
-    note({ media: 'tv', mediaName: 'Pulzo', title: 'Sin PDF', summary: 'r', subtopic: 'Carlos Suarez', index: '3', attachment: undefined, link: 'https://pulzo.com/nota' }),
+    note({ media: 'tv', mediaName: 'Pulzo', title: 'Sin PDF', summary: 'r', subtopic: 'Carlos Suarez', index: '3', attachment: undefined, link: 'https://chrmonitoreo.com/colombia/ecopetrol/2026/10/23/nota-3.mp4' }),
   ];
 
   it('has the title, the period, the indicators and each theme with its notes, outlet, linked headline and summary', async () => {
@@ -152,9 +153,10 @@ describe('buildDailyReport', () => {
     expect(seen.indexOf('Medio: Televisión')).toBeLessThan(seen.indexOf('Medio: Internet'));
     expect(seen).toContain('Investing.com|Ecopetrol nombra vicepresidente|Ecopetrol S.A. anunció hoy…');
     expect(seen).toContain('Infobae|Salida de Rodrigo Lara|La salida del titular…');
-    // The headline links to the archived PDF, or to the article when the note has no PDF.
-    expect(xml.rels).toContain('https://chrdivulgar.org/colombia/ecopetrol/2026/10/23/infobae-01-salida.pdf');
-    expect(xml.rels).toContain('https://pulzo.com/nota');
+    // Radio notes link only to the generated archive link (FileZilla flow).
+    expect(xml.rels).toContain('https://chrmonitoreo.org/colombia/ecopetrol/2026/10/23/nota-2.mp3');
+    expect(xml.rels).not.toContain('https://chrdivulgar.org/colombia/ecopetrol/2026/10/23/infobae-01-salida.pdf');
+    expect(xml.rels).toContain('https://chrmonitoreo.com/colombia/ecopetrol/2026/10/23/nota-3.mp4');
     expect(xml.rels).toContain('https://larepublica.co/acciones');
     // The stray "A" lines of the hand-made report are not there.
     expect(seen.split('|')).not.toContain('A');
@@ -172,5 +174,57 @@ describe('buildDailyReport', () => {
     expect(text(xml.document)).not.toContain('Indicadores');
     expect(xml.media).toHaveLength(0);
     expect(text(xml.document)).toContain('Octubre 23 / octubre 24 de 2.026');
+  });
+
+  it('uses the public clip link when attachment is not an URL', async () => {
+    const xml = await xmlOf(await buildDailyReport({
+      client: { name: 'Ecopetrol' },
+      from: '2026-10-23',
+      to: '2026-10-23',
+      notes: [note({
+        media: 'radio',
+        mediaName: 'Blu Radio',
+        title: 'Nota de hoy',
+        attachment: 'NOTA_12_BLU_23-10-26.mp3',
+        link: 'https://chrmonitoreo.org/colombia/ecopetrol/2026/10/23/nota-12.mp3',
+      })],
+    }));
+
+    expect(xml.rels).toContain('https://chrmonitoreo.org/colombia/ecopetrol/2026/10/23/nota-12.mp3');
+    expect(xml.rels).not.toContain('NOTA_12_BLU_23-10-26.mp3');
+  });
+
+  it('does not hyperlink a radio note when the generated link is missing', async () => {
+    const xml = await xmlOf(await buildDailyReport({
+      client: { name: 'Ecopetrol' },
+      from: '2026-10-23',
+      to: '2026-10-23',
+      notes: [note({
+        media: 'radio',
+        mediaName: 'Blu Radio',
+        title: 'Sin link generado',
+        attachment: 'https://chrdivulgar.org/colombia/ecopetrol/2026/10/23/algo.pdf',
+        link: undefined,
+      })],
+    }));
+
+    expect(xml.rels).not.toContain('https://chrdivulgar.org/colombia/ecopetrol/2026/10/23/algo.pdf');
+  });
+
+  it('does not hyperlink an internet note when the archived PDF link is missing', async () => {
+    const xml = await xmlOf(await buildDailyReport({
+      client: { name: 'Ecopetrol' },
+      from: '2026-10-23',
+      to: '2026-10-23',
+      notes: [note({
+        media: 'internet',
+        mediaName: 'Portal X',
+        title: 'Sin PDF archivado',
+        attachment: undefined,
+        link: 'https://portal-x.com/nota',
+      })],
+    }));
+
+    expect(xml.rels).not.toContain('https://portal-x.com/nota');
   });
 });
