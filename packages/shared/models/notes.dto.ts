@@ -58,7 +58,23 @@ export class NoteDto {
   readonly audience?: string;
   readonly link?: string;
   readonly attachment?: string;
+  readonly archiveUploadStatus?: NoteArchiveUploadStatus;
+  readonly archiveUploadError?: string;
   message?: string;
+}
+
+export type NoteArchiveUploadStatus =
+  | "pending"
+  | "uploaded"
+  | "failed"
+  | "not_required";
+
+export interface RetryNoteArchiveDto {
+  noteId: string;
+}
+
+export interface RetryNoteArchiveResultDto {
+  note: NoteDto;
 }
 
 /** One note of an Excel import, with the sheet and row it came from (to say which row failed). */

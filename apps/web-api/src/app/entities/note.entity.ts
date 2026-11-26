@@ -1,4 +1,5 @@
 import { Entity, ObjectIdColumn, Column } from 'typeorm';
+import { NoteArchiveUploadStatus } from '@repo/shared';
 
 @Entity()
 export class Note {
@@ -85,6 +86,12 @@ export class Note {
 
   @Column()
   attachment!: string;
+
+  @Column()
+  archiveUploadStatus?: NoteArchiveUploadStatus;
+
+  @Column()
+  archiveUploadError?: string;
 
   /** When the note was sent by WhatsApp to at least one recipient; absent until then. */
   @Column()

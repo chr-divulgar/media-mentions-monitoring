@@ -376,7 +376,10 @@ describe('NotesService.archiveNoteClip', () => {
 
     await service.archiveNoteClip(radioNote, 'AL1');
 
-    expect(saved).toHaveLength(0);
+    expect(saved[0]).toMatchObject({
+      link: 'https://news.example/own',
+      archiveUploadStatus: 'uploaded',
+    });
   });
 
   it('never lets an archive failure break saving the note', async () => {
@@ -404,6 +407,47 @@ describe('NotesService.setNote and the clip', () => {
     });
 
     expect(archive).toHaveBeenCalledWith(expect.objectContaining({ media: 'radio', clientName: 'Ecopetrol' }), 'AL1');
+  });
+
+  it('marks clip archive as pending while the async upload runs', async () => {
+    const existing = { alert_id: 'AL1', title: 'T' };
+    const { service, saved } = build(null, existing);
+    jest.spyOn(service, 'archiveNoteClip').mockResolvedValue(true);
+
+    await service.setNote({
+      id: ALERT_ID,
+      title: 'Nuevo',
+      date: '2026-10-14',
+      media: 'radio',
+      mediaName: 'Blu Radio',
+      clientName: 'Ecopetrol',
+      summary: 's',
+      index: '10',
+      program: 'p',
+    });
+
+    expect(saved[0]).toMatchObject({ archiveUploadStatus: 'pending' });
+  });
+});
+
+describe('NotesService.retryArchive', () => {
+  it('returns failed when retrying a clip whose file is not available', async () => {
+    const existing = {
+      id: ALERT_ID,
+      alert_id: 'AL1',
+      media: 'radio',
+      mediaName: 'Blu Radio',
+      clientName: 'Ecopetrol',
+      date: '2026-10-14',
+      title: 'T',
+    };
+    const { service } = build(null, existing);
+    const existsSync = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+
+    const result = await service.retryArchive({ noteId: ALERT_ID });
+
+    expect(result.note).toMatchObject({ archiveUploadStatus: 'failed' });
+    existsSync.mockRestore();
   });
 });
 

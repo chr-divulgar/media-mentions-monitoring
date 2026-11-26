@@ -9,6 +9,9 @@ import {
   SaveInternetNoteDto,
   BulkUpdateSentimentDto,
   BulkUpdateSentimentResultDto,
+  RetryNoteArchiveDto,
+  RetryNoteArchiveResultDto,
+  NoteArchiveUploadStatus,
   DashboardDataDto,
   DashboardPeriod,
   NoteOrigin,
@@ -56,6 +59,7 @@ export class NotesService {
   private static readonly PDF_TIMEOUT_MS = 120_000;
   // Same day boundary the alerts UI uses for worker alerts (see AlertsService.getAlerts).
   private static readonly BOGOTA_OFFSET_MINUTES = -5 * 60;
+  private static readonly CLIP_MEDIA = ['radio', 'tv', 'television'];
 
   noteRepo: MongoRepository<Note>;
   workerAlertRepo: MongoRepository<WorkerAlert>;
@@ -360,6 +364,16 @@ export class NotesService {
     const keepGeneratedLink = /^https?:\/\//i.test(existingNote.attachment ?? '');
     const incoming = keepGeneratedLink ? editable : { ...editable, attachment };
     incoming.message = this.generateMessage({ ...existingNote, ...incoming });
+
+    const normalizedMedia = (noteDto.media ?? '').trim().toLowerCase();
+    if (NotesService.CLIP_MEDIA.includes(normalizedMedia)) {
+      incoming.archiveUploadStatus = 'pending';
+      incoming.archiveUploadError = undefined;
+    } else {
+      incoming.archiveUploadStatus = 'not_required';
+      incoming.archiveUploadError = undefined;
+    }
+
     Object.assign(existingNote, incoming);
     // Save the updated note
     const saved = await this.noteRepo.save(existingNote);
@@ -368,6 +382,33 @@ export class NotesService {
     // it (a TV clip is tens of MB) and never fails because of it.
     void this.archiveNoteClip(noteDto, existingNote.alert_id);
     return saved;
+  }
+
+  async retryArchive(input: RetryNoteArchiveDto): Promise<RetryNoteArchiveResultDto> {
+    if (!ObjectId.isValid(input?.noteId)) {
+      throw new BadRequestException('Invalid note id.');
+    }
+
+    const note = await this.noteRepo.findOneBy({ _id: new ObjectId(input.noteId) } as never);
+    if (!note) {
+      throw new BadRequestException('Note not found.');
+    }
+
+    const media = (note.media ?? '').trim().toLowerCase();
+    if (!NotesService.CLIP_MEDIA.includes(media)) {
+      note.archiveUploadStatus = 'not_required';
+      note.archiveUploadError = undefined;
+      const saved = await this.noteRepo.save(note);
+      return { note: saved };
+    }
+
+    note.archiveUploadStatus = 'pending';
+    note.archiveUploadError = undefined;
+    await this.noteRepo.save(note);
+
+    await this.archiveNoteClip(note, note.alert_id);
+    const updated = await this.noteRepo.findOneBy({ _id: new ObjectId(input.noteId) } as never);
+    return { note: (updated ?? note) as NoteDto };
   }
 
   async bulkUpdateSentiment(
@@ -419,6 +460,18 @@ export class NotesService {
     }
   }
 
+  private async setClipArchiveState(
+    alertId: string,
+    status: NoteArchiveUploadStatus,
+    error?: string,
+  ): Promise<void> {
+    const note = await this.noteRepo.findOne({ where: { alert_id: alertId } });
+    if (!note) return;
+    note.archiveUploadStatus = status;
+    note.archiveUploadError = error;
+    await this.noteRepo.save(note);
+  }
+
   /**
    * Files the clip of a radio or TV note (the mp3, or the mp4 of a TV note edited on its video) in the archive
    * account of its medium, under {country}/{client}/{year}/{month}/{day}, through the worker. These are the notes,
@@ -441,6 +494,9 @@ export class NotesService {
     const filePath =
       noteMediaKind(media, fs.existsSync(clip('mp4'))) === 'video' ? clip('mp4') : clip('mp3');
     if (!fs.existsSync(filePath)) {
+      if (alertId) {
+        await this.setClipArchiveState(alertId, 'failed', 'Clip file not found on disk.');
+      }
       return false;
     }
 
@@ -459,8 +515,13 @@ export class NotesService {
         filePath,
       });
       await this.keepClipLink(alertId, filed.link);
+      await this.setClipArchiveState(alertId, 'uploaded');
       return true;
     } catch (error) {
+      if (alertId) {
+        const reason = error instanceof Error ? error.message : String(error);
+        await this.setClipArchiveState(alertId, 'failed', reason);
+      }
       console.error(`Could not file the clip of note ${alertId} in the archive:`, error);
       return false;
     }

@@ -45,6 +45,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [bulkSentiment, setBulkSentiment] = useState<NoteSentiment | undefined>();
   const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [retryingArchiveId, setRetryingArchiveId] = useState<string>();
   const [subtopicSearchByNote, setSubtopicSearchByNote] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -287,6 +288,41 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
     }
   };
 
+  const handleRetryArchive = async (note: NoteDto) => {
+    if (!note.id) return;
+    setRetryingArchiveId(note.id);
+    try {
+      const response = await api.post("/notes/retry-archive", { noteId: note.id });
+      const updated = response.data?.note as NoteDto | undefined;
+      if (updated?.id) {
+        setTableNotes((prev) => prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+      }
+      queryClient.invalidateQueries(["notes"]);
+
+      const finalStatus = updated?.archiveUploadStatus;
+      if (finalStatus === "uploaded") {
+        message.success("Archivo subido correctamente");
+      } else if (finalStatus === "failed") {
+        message.warning(updated?.archiveUploadError ?? "Falló nuevamente la subida del archivo");
+      } else {
+        message.info("Reintento enviado");
+      }
+    } catch {
+      message.error("No se pudo reintentar la subida del archivo");
+    } finally {
+      setRetryingArchiveId(undefined);
+    }
+  };
+
+  const renderArchiveStatus = (record: NoteDto) => {
+    const status = record.archiveUploadStatus;
+    if (status === "uploaded") return "Subido";
+    if (status === "failed") return "Fallido";
+    if (status === "pending") return "Pendiente";
+    if (status === "not_required") return "No aplica";
+    return "Sin dato";
+  };
+
   const columns: TableColumnsType<NoteDto> = [
     {
       title: "Fecha",
@@ -429,6 +465,25 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
         ),
       ellipsis: true,
       width: "80px",
+    },
+    {
+      title: "Archivo",
+      key: "archive",
+      render: (_, record) => (
+        <Space size={6}>
+          <span>{renderArchiveStatus(record)}</span>
+          {record.archiveUploadStatus === "failed" && (
+            <Button
+              size="small"
+              onClick={() => handleRetryArchive(record)}
+              loading={retryingArchiveId === record.id}
+            >
+              Reintentar
+            </Button>
+          )}
+        </Space>
+      ),
+      width: "180px",
     },
     {
       title: "Acciones",

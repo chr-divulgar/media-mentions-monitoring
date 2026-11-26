@@ -21,6 +21,7 @@ import {
   SaveInternetNoteDto,
   ImportNotesRequestDto,
   BulkUpdateSentimentDto,
+  RetryNoteArchiveDto,
 } from '@repo/shared';
 
 @Controller('notes')
@@ -51,6 +52,21 @@ export class NotesController {
         {
           status: HttpStatus.INTERNAL_SERVER_ERROR,
           error: `There was an error processing the request bulkUpdateSentiment ${error}`,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('retry-archive')
+  async retryArchive(@Body() body: RetryNoteArchiveDto) {
+    try {
+      return await this.notesService.retryArchive(body);
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: `There was an error processing the request retryArchive ${error}`,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
