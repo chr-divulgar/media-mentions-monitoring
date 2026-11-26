@@ -407,6 +407,53 @@ describe('NotesService.setNote and the clip', () => {
   });
 });
 
+describe('NotesService.bulkUpdateSentiment', () => {
+  it('updates sentiment of valid note ids and reports missing/invalid ids', async () => {
+    const firstId = '507f1f77bcf86cd799439011';
+    const secondId = '507f1f77bcf86cd799439012';
+    const missingId = '507f1f77bcf86cd799439013';
+    const first = { _id: { toString: () => firstId }, sentiment: 'Neutra' } as unknown as Record<string, unknown>;
+    const second = { _id: { toString: () => secondId }, sentiment: 'Negativa' } as unknown as Record<string, unknown>;
+    const { service } = build(null, [first, second]);
+    const findOneByMock = jest
+      .spyOn(service.noteRepo, 'findOneBy')
+      .mockImplementation(async (where: unknown) => {
+        const id = (where as { _id?: { toString: () => string } })?._id?.toString();
+        if (id === firstId) return first as never;
+        if (id === secondId) return second as never;
+        return null;
+      });
+
+    const result = await service.bulkUpdateSentiment({
+      noteIds: [firstId, secondId, missingId, 'invalid-id'],
+      sentiment: 'Positiva',
+    });
+
+    expect(result).toEqual({
+      updatedCount: 2,
+      notFoundIds: [missingId, 'invalid-id'],
+    });
+    expect((first as { sentiment: string }).sentiment).toBe('Positiva');
+    expect((second as { sentiment: string }).sentiment).toBe('Positiva');
+    expect(findOneByMock).toHaveBeenCalled();
+  });
+
+  it('rejects an empty list and invalid sentiment', async () => {
+    const { service } = build(null);
+
+    await expect(
+      service.bulkUpdateSentiment({ noteIds: [], sentiment: 'Positiva' }),
+    ).rejects.toThrow('Selecciona al menos una nota');
+
+    await expect(
+      service.bulkUpdateSentiment({
+        noteIds: ['507f1f77bcf86cd799439011'],
+        sentiment: 'Muy positiva',
+      }),
+    ).rejects.toThrow('Sentimiento inválido');
+  });
+});
+
 describe('NotesService.dailyReport', () => {
   const internetNote = {
     media: 'internet', clientName: 'Ecopetrol', date: '2026-10-23', mediaName: 'Infobae', title: 'Titular',

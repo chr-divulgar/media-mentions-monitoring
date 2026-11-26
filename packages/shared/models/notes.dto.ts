@@ -76,3 +76,15 @@ export interface ImportNotesResultDto {
   duplicates: number;
   errors: { sheet?: string; row?: number; reason: string }[];
 }
+
+/** Body of POST /notes/bulk-sentiment: applies one sentiment to many notes. */
+export interface BulkUpdateSentimentDto {
+  noteIds: string[];
+  sentiment: string;
+}
+
+/** Result of POST /notes/bulk-sentiment. */
+export interface BulkUpdateSentimentResultDto {
+  updatedCount: number;
+  notFoundIds: string[];
+}

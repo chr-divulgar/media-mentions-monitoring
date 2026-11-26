@@ -20,6 +20,7 @@ import {
   CreateInternetPdfDto,
   SaveInternetNoteDto,
   ImportNotesRequestDto,
+  BulkUpdateSentimentDto,
 } from '@repo/shared';
 
 @Controller('notes')
@@ -35,6 +36,21 @@ export class NotesController {
         {
           status: HttpStatus.INTERNAL_SERVER_ERROR,
           error: `There was an error processing the request setNote ${error}`,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('bulk-sentiment')
+  async bulkUpdateSentiment(@Body() body: BulkUpdateSentimentDto) {
+    try {
+      return await this.notesService.bulkUpdateSentiment(body);
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          error: `There was an error processing the request bulkUpdateSentiment ${error}`,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );

@@ -1,16 +1,17 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import dayjs from "dayjs";
-import { NoteDto } from "@repo/shared/index";
+import { NoteDto, NoteSentiment } from "@repo/shared/index";
 import { SearchOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
-import { useQueryClient } from "react-query";
+import { useQuery, useQueryClient } from "react-query";
 import type {
   InputRef,
   TableColumnsType,
   TableColumnType,
   TableProps,
 } from "antd";
-import { Button, Input, Popconfirm, Space, Table, message } from "antd";
+import { Button, Input, Popconfirm, Select, Space, Table, message } from "antd";
 import type { FilterDropdownProps } from "antd/es/table/interface";
+import type { TableRowSelection } from "antd/es/table/interface";
 import Highlighter from "react-highlight-words";
 import NoteEditModal from "./NoteEditModal";
 import api from "../../services/Agent";
@@ -20,14 +21,57 @@ interface NotesTableProps {
   notes: NoteDto[];
 }
 
+interface ClientTopicNode {
+  name?: string;
+  subtopics?: Array<{ name?: string }>;
+}
+
+interface ClientWithTopics {
+  id?: string;
+  name?: string;
+  topics?: ClientTopicNode[];
+}
+
 type DataIndex = keyof NoteDto;
 
 const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
+  const [tableNotes, setTableNotes] = useState<NoteDto[]>(notes);
   const [searchText, setSearchText] = useState("");
   const [searchedColumn, setSearchedColumn] = useState("");
   const searchInput = useRef<InputRef>(null);
   const queryClient = useQueryClient();
   const [deletingId, setDeletingId] = useState<string>();
+  const [updatingId, setUpdatingId] = useState<string>();
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [bulkSentiment, setBulkSentiment] = useState<NoteSentiment | undefined>();
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [subtopicSearchByNote, setSubtopicSearchByNote] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setTableNotes(notes);
+  }, [notes]);
+
+  const { data: clients = [] } = useQuery<ClientWithTopics[]>(
+    ["clients"],
+    async () => {
+      const res = await api.get("/clients");
+      return res.data as ClientWithTopics[];
+    },
+    { staleTime: 5 * 60 * 1000 },
+  );
+
+  const clientByName = useMemo(() => {
+    return new Map(clients.map((client) => [client.name, client]));
+  }, [clients]);
+
+  const sentimentOptions = [
+    { label: NoteSentiment.NEUTRO, value: NoteSentiment.NEUTRO },
+    { label: NoteSentiment.POSITIVO, value: NoteSentiment.POSITIVO },
+    { label: NoteSentiment.NEGATIVO, value: NoteSentiment.NEGATIVO },
+  ];
+
+  const fold = (value?: string): string =>
+    (value ?? "").normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
 
   // The note goes, and with it its file in the archive (the PDF or the clip); the alert it came from stays.
   const handleDelete = async (record: NoteDto) => {
@@ -153,13 +197,93 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
     setEditModalOpen(true);
   };
 
+  const updateSingleNote = async (note: NoteDto, patch: Partial<NoteDto>) => {
+    if (!note.id) return;
+    setUpdatingId(note.id);
+    try {
+      const payload = { ...note, ...patch };
+      await api.post("/notes/set-note", payload);
+      setTableNotes((prev) => prev.map((item) => (item.id === note.id ? { ...item, ...patch } : item)));
+      queryClient.invalidateQueries(["notes"]);
+    } catch {
+      message.error("No se pudo actualizar la nota");
+    } finally {
+      setUpdatingId(undefined);
+    }
+  };
+
   const handleSave = async (note: NoteDto) => {
     try {
       await api.post("/notes/set-note", note);
       message.success("Nota actualizada correctamente");
+      setTableNotes((prev) => prev.map((item) => (item.id === note.id ? { ...item, ...note } : item)));
+      queryClient.invalidateQueries(["notes"]);
       setEditModalOpen(false);
     } catch (err) {
       message.error("Error al actualizar la nota");
+    }
+  };
+
+  const getSubtopicOptions = (note: NoteDto) => {
+    const client = clientByName.get(note.clientName);
+    const topic = (client?.topics ?? []).find((candidate) => candidate.name === note.topic);
+    return (topic?.subtopics ?? [])
+      .filter((item) => !!item?.name)
+      .map((item) => ({ label: item.name as string, value: item.name as string }));
+  };
+
+  const handleAddSubtopic = async (note: NoteDto, newName: string) => {
+    const client = clientByName.get(note.clientName);
+    if (!client?.id || !note.topic) {
+      message.warning("Para crear subtema, la nota debe tener cliente y tema");
+      return;
+    }
+
+    try {
+      const response = await api.post(`/clients/${client.id}/subtopics`, {
+        topic: note.topic,
+        name: newName,
+      });
+      await queryClient.refetchQueries(["clients"]);
+      await updateSingleNote(note, { subtopic: (response.data as { name: string }).name });
+      message.success("Subtema agregado");
+    } catch {
+      message.error("No se pudo agregar el subtema");
+    }
+  };
+
+  const handleBulkSentimentApply = async () => {
+    if (!bulkSentiment || selectedRowKeys.length === 0) {
+      return;
+    }
+
+    setBulkUpdating(true);
+    try {
+      const noteIds = selectedRowKeys.map(String);
+      const res = await api.post("/notes/bulk-sentiment", {
+        noteIds,
+        sentiment: bulkSentiment,
+      });
+      const notFoundIds = (res.data?.notFoundIds ?? []) as string[];
+      const notFoundSet = new Set(notFoundIds);
+      setTableNotes((prev) =>
+        prev.map((item) =>
+          item.id && noteIds.includes(item.id) && !notFoundSet.has(item.id)
+            ? { ...item, sentiment: bulkSentiment }
+            : item,
+        ),
+      );
+      setSelectedRowKeys([]);
+      queryClient.invalidateQueries(["notes"]);
+      if (notFoundIds.length > 0) {
+        message.warning(`Se actualizaron ${res.data?.updatedCount ?? 0} notas; ${notFoundIds.length} no se encontraron`);
+      } else {
+        message.success(`Sentimiento actualizado en ${res.data?.updatedCount ?? 0} notas`);
+      }
+    } catch {
+      message.error("No se pudo actualizar el sentimiento en lote");
+    } finally {
+      setBulkUpdating(false);
     }
   };
 
@@ -172,6 +296,21 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       sorter: (a, b) => (a.date ?? "").localeCompare(b.date ?? ""),
       ellipsis: true,
       width: "110px",
+    },
+    {
+      title: "No. nota",
+      key: "index",
+      render: (_, record) => record.index ?? record.audioLabel ?? "",
+      width: "130px",
+      ellipsis: true,
+    },
+    {
+      title: "Emisora",
+      dataIndex: "mediaName",
+      key: "mediaName",
+      ...getColumnSearchProps("mediaName"),
+      ellipsis: true,
+      width: "180px",
     },
     {
       title: "Medio",
@@ -208,25 +347,73 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       title: "Sentimiento",
       dataIndex: "sentiment",
       key: "sentiment",
-      ...getColumnSearchProps("sentiment"),
-      ellipsis: true,
-      width: "100px",
+      render: (_, record) => (
+        <Select
+          size="small"
+          style={{ width: "100%" }}
+          options={sentimentOptions}
+          value={record.sentiment as NoteSentiment | undefined}
+          loading={updatingId === record.id}
+          onChange={(value) => updateSingleNote(record, { sentiment: value })}
+        />
+      ),
+      width: "140px",
     },
     {
-      title: "Valor",
-      dataIndex: "value",
-      key: "value",
-      ...getColumnSearchProps("value"),
-      ellipsis: true,
-      width: "100px",
-    },
-    {
-      title: "Audiencia",
-      dataIndex: "audience",
-      key: "audience",
-      ...getColumnSearchProps("audience"),
-      ellipsis: true,
-      width: "100px",
+      title: "Subtema",
+      dataIndex: "subtopic",
+      key: "subtopic",
+      render: (_, record) => {
+        const options = getSubtopicOptions(record);
+        const typed = (subtopicSearchByNote[record.id ?? ""] ?? "").trim();
+        const canAdd =
+          typed.length > 0 &&
+          !!record.topic &&
+          !options.some((option) => fold(option.label) === fold(typed));
+
+        return (
+          <Select
+            size="small"
+            showSearch
+            allowClear
+            disabled={!record.topic}
+            value={record.subtopic}
+            options={options}
+            filterOption={(input, option) =>
+              fold(String(option?.label ?? "")).includes(fold(input))
+            }
+            onChange={(value) => updateSingleNote(record, { subtopic: value })}
+            loading={updatingId === record.id}
+            searchValue={subtopicSearchByNote[record.id ?? ""]}
+            onSearch={(value) => {
+              const key = record.id ?? "";
+              if (!key) return;
+              setSubtopicSearchByNote((prev) => ({ ...prev, [key]: value }));
+            }}
+            onBlur={() => {
+              const key = record.id ?? "";
+              if (!key) return;
+              setSubtopicSearchByNote((prev) => ({ ...prev, [key]: "" }));
+            }}
+            popupRender={(menu) => (
+              <>
+                {menu}
+                {canAdd && (
+                  <Button
+                    type="link"
+                    style={{ width: "100%", textAlign: "left" }}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleAddSubtopic(record, typed)}
+                  >
+                    Agregar «{typed}»
+                  </Button>
+                )}
+              </>
+            )}
+          />
+        );
+      },
+      width: "180px",
     },
     {
       title: "Link",
@@ -282,7 +469,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
     size: "small",
     rowKey: "id",
     columns: columns,
-    dataSource: notes,
+    dataSource: tableNotes,
     pagination: {
       current: pagination.current,
       pageSize: pagination.pageSize,
@@ -292,9 +479,32 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
     onChange: handleTableChange,
   };
 
+  const rowSelection: TableRowSelection<NoteDto> = {
+    selectedRowKeys,
+    onChange: (keys: React.Key[]) => setSelectedRowKeys(keys),
+    getCheckboxProps: (record: NoteDto) => ({ disabled: !record.id }),
+  };
+
   return (
     <>
-      <Table {...tableProps} />
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Select
+          placeholder="Sentimiento masivo"
+          value={bulkSentiment}
+          onChange={(value) => setBulkSentiment(value)}
+          options={sentimentOptions}
+          style={{ minWidth: 180 }}
+        />
+        <Button
+          type="primary"
+          disabled={!bulkSentiment || selectedRowKeys.length === 0}
+          loading={bulkUpdating}
+          onClick={handleBulkSentimentApply}
+        >
+          Aplicar a seleccionadas ({selectedRowKeys.length})
+        </Button>
+      </Space>
+      <Table {...tableProps} rowSelection={rowSelection} />
       <NoteEditModal
         open={editModalOpen}
         note={editingNote}

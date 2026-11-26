@@ -7,6 +7,8 @@ import {
   NoteDto,
   InternetNotePreviewDto,
   SaveInternetNoteDto,
+  BulkUpdateSentimentDto,
+  BulkUpdateSentimentResultDto,
   DashboardDataDto,
   DashboardPeriod,
   NoteOrigin,
@@ -366,6 +368,45 @@ export class NotesService {
     // it (a TV clip is tens of MB) and never fails because of it.
     void this.archiveNoteClip(noteDto, existingNote.alert_id);
     return saved;
+  }
+
+  async bulkUpdateSentiment(
+    input: BulkUpdateSentimentDto,
+  ): Promise<BulkUpdateSentimentResultDto> {
+    const noteIds = Array.isArray(input?.noteIds)
+      ? input.noteIds.filter((id) => typeof id === 'string' && id.trim().length > 0)
+      : [];
+
+    if (noteIds.length === 0) {
+      throw new BadRequestException('Selecciona al menos una nota para actualizar.');
+    }
+
+    const allowedSentiments = Object.values(NoteSentiment);
+    if (!allowedSentiments.includes(input?.sentiment as NoteSentiment)) {
+      throw new BadRequestException('Sentimiento inválido.');
+    }
+
+    const updatedSet = new Set<string>();
+    for (const id of noteIds) {
+      if (!ObjectId.isValid(id)) {
+        continue;
+      }
+
+      const note = await this.noteRepo.findOneBy({ _id: new ObjectId(id) } as never);
+      if (!note) {
+        continue;
+      }
+
+      note.sentiment = input.sentiment;
+      await this.noteRepo.save(note);
+      updatedSet.add(id);
+    }
+
+    const notFoundIds = noteIds.filter((id) => !updatedSet.has(id));
+    return {
+      updatedCount: updatedSet.size,
+      notFoundIds,
+    };
   }
 
   // The public link of the clip is the note's "enlace o archivo" (RQ-021) — unless the note already has a link of its own.
