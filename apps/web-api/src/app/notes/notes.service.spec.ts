@@ -183,7 +183,7 @@ describe('internet notes', () => {
   describe('saveInternetNote', () => {
     const dto = { alertId: ALERT_ID, previewId: 'p1', index: '10', program: 'Runrun', title: '  Mi titular ', summary: 'Resumen' };
 
-    it('archives the previewed PDF only now and stores its link, with the Bogotá date', async () => {
+    it('archives the previewed PDF only now and stores its link, with the report day date', async () => {
       fetchMock.mockResolvedValue(workerReply({ link: 'https://files.test/runrun-01-x.pdf' }));
       const { service, saved } = build(alert);
 
@@ -195,7 +195,7 @@ describe('internet notes', () => {
         media: 'internet',
         mediaName: 'Runrun',
         clientName: 'Ecopetrol',
-        date: '2026-10-05',
+        date: '2026-10-06',
         link: alert.url,
         attachment: 'https://files.test/runrun-01-x.pdf',
         index: '10',

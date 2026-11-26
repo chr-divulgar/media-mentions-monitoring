@@ -230,6 +230,7 @@ export class NotesService {
     }
     const alert = await this.loadInternetAlert(dto.alertId);
     const published = this.publishedAt(alert);
+    const reportDay = this.internetReportDay(published);
 
     const { link } = await this.callWorker<{ link: string }>(
       '/notes/pdf/commit',
@@ -244,7 +245,7 @@ export class NotesService {
     note.media = 'internet';
     note.mediaName = alert.platform;
     note.clientName = alert.clientName;
-    note.date = published.format('YYYY-MM-DD');
+    note.date = reportDay;
     note.startTime = published.format();
     note.link = alert.url;
     note.attachment = link;
@@ -281,6 +282,12 @@ export class NotesService {
 
   private publishedAt(alert: WorkerAlert): moment.Moment {
     return moment(alert.startTime).utcOffset(NotesService.BOGOTA_OFFSET_MINUTES);
+  }
+
+  // Internet notes are grouped by report day: from 06:00 of day D to 05:59 of day D+1.
+  private internetReportDay(publishedAt: moment.Moment): string {
+    const bogota = publishedAt.clone();
+    return (bogota.hour() >= 6 ? bogota.add(1, 'day') : bogota).format('YYYY-MM-DD');
   }
 
   private async callWorker<T>(route: string, body: unknown): Promise<T> {
