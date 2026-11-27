@@ -83,6 +83,8 @@ export class NotesService {
     const alert = await this.loadInternetAlert(alertId);
     const title = alert.title?.trim() || `nota-${alertId}`;
     const published = this.publishedAt(alert);
+    const reportDay = this.internetReportDay(published);
+    const archiveClient = this.archiveClientName(alert.clientName);
 
     const preview = await this.callWorker<{ previewId: string; link: string }>(
       '/notes/pdf/preview',
@@ -90,9 +92,9 @@ export class NotesService {
         outlet: alert.platform,
         title,
         url: alert.url,
-        date: published.format(),
+        date: reportDay,
         // The worker files the PDF under the day of the 6 a.m. report: {year}/{MONTH}/{day}.
-        client: alert.clientName,
+        client: archiveClient,
         // Marked in yellow in the PDF, as when searching the page in a browser.
         keywords: await this.highlightTerms(alert),
         alertId,
@@ -137,12 +139,15 @@ export class NotesService {
     }
     const alert = await this.loadInternetAlert(alertId);
     const title = alert.title?.trim() || `nota-${alertId}`;
+    const published = this.publishedAt(alert);
+    const reportDay = this.internetReportDay(published);
+    const archiveClient = this.archiveClientName(alert.clientName);
 
     const query = new URLSearchParams({
       outlet: alert.platform ?? '',
       title,
-      date: this.publishedAt(alert).format(),
-      client: alert.clientName ?? '',
+      date: reportDay,
+      client: archiveClient,
     });
     const workerUrl =
       process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
@@ -290,6 +295,10 @@ export class NotesService {
     return (bogota.hour() >= 6 ? bogota.add(1, 'day') : bogota).format('YYYY-MM-DD');
   }
 
+  private archiveClientName(clientName?: string): string {
+    return (clientName ?? '').trim().toUpperCase();
+  }
+
   private async callWorker<T>(route: string, body: unknown): Promise<T> {
     const workerUrl =
       process.env.YOUTUBE_WORKER_ENDPOINT || 'http://localhost:5000';
@@ -343,6 +352,10 @@ export class NotesService {
   }
 
   async setNote(input: NoteDto): Promise<NoteDto> {
+    if (!ObjectId.isValid(input.id ?? '')) {
+      throw new Error('Note not found');
+    }
+
     const existingNote = await this.noteRepo.findOneBy({
       _id: new ObjectId(input.id),
     });
@@ -367,7 +380,7 @@ export class NotesService {
     }
 
     // A generated PDF link is read-only: it can only change by generating the PDF again.
-    const { attachment, ...editable } = noteDto;
+    const { attachment, id: _, alert_id: __, ...editable } = noteDto;
     const keepGeneratedLink = /^https?:\/\//i.test(existingNote.attachment ?? '');
     const incoming = keepGeneratedLink ? editable : { ...editable, attachment };
     incoming.message = this.generateMessage({ ...existingNote, ...incoming });

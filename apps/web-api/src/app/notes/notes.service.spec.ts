@@ -70,9 +70,9 @@ describe('internet notes', () => {
         outlet: 'Runrun',
         title: alert.title,
         url: alert.url,
-        date: '2026-10-05T19:26:28-05:00',
+        date: '2026-10-06',
         // The PDF is filed under the client's folder.
-        client: 'Ecopetrol',
+        client: 'ECOPETROL',
         // The words the alert matched come out highlighted in yellow in the PDF.
         keywords: ['Ecopetrol', 'Cenit'],
         // So the worker can use the PDF it made when the alert was created, instead of printing the page again.
@@ -149,8 +149,8 @@ describe('internet notes', () => {
       expect(Object.fromEntries(query)).toMatchObject({
         outlet: 'Runrun',
         title: alert.title,
-        date: '2026-10-05T19:26:28-05:00',
-        client: 'Ecopetrol',
+        date: '2026-10-06',
+        client: 'ECOPETROL',
       });
       expect(init.method).toBe('POST');
       expect(init.headers).toMatchObject({ 'Content-Type': 'application/pdf' });
@@ -253,6 +253,12 @@ describe('internet notes', () => {
 });
 
 describe('NotesService.setNote', () => {
+  it('rejects an invalid note id before trying to update', async () => {
+    const { service } = build(alert, { title: 'T' });
+
+    await expect(service.setNote({ id: 'invalid-id', title: 'Nuevo' })).rejects.toThrow('Note not found');
+  });
+
   it('does not let the client overwrite a generated PDF link', async () => {
     const existing = { attachment: 'https://files.test/x.pdf', title: 'T', date: '2026-10-05', media: 'internet', mediaName: 'Runrun' };
     const { service, saved } = build(null, existing);
@@ -263,6 +269,25 @@ describe('NotesService.setNote', () => {
     });
 
     expect(saved[0]).toMatchObject({ title: 'Nuevo', attachment: 'https://files.test/x.pdf' });
+  });
+
+  it('keeps immutable identity fields even if the client sends them', async () => {
+    const existing = { alert_id: 'AL1', title: 'T', date: '2026-10-05', media: 'internet', mediaName: 'Runrun' };
+    const { service, saved } = build(alert, existing);
+
+    await service.setNote({
+      id: ALERT_ID,
+      alert_id: 'CHANGED-BY-CLIENT',
+      title: 'Nuevo',
+      date: '2026-10-05',
+      media: 'internet',
+      mediaName: 'Runrun',
+      summary: 's',
+      index: '10',
+      program: 'p',
+    });
+
+    expect(saved[0]).toMatchObject({ alert_id: 'AL1' });
   });
 
   it('completes the date, medium, outlet and client of a note made from an alert', async () => {

@@ -317,8 +317,11 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       } else {
         message.info("Reintento enviado");
       }
-    } catch {
-      message.error("No se pudo reintentar la subida del archivo");
+    } catch (error) {
+      const reason =
+        (error as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+        "No se pudo reintentar la subida del archivo";
+      message.error(reason);
     } finally {
       setRetryingArchiveId(undefined);
     }
@@ -345,8 +348,9 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
     if (!record.id) return false;
 
     const status = record.archiveUploadStatus;
-    if (status === "uploaded" || status === "not_required") return false;
-    return true;
+    if (status === "failed") return true;
+    if (!status && !record.link) return true;
+    return false;
   };
 
   const columns: TableColumnsType<NoteDto> = [
@@ -420,6 +424,14 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
         />
       ),
       width: "140px",
+    },
+    {
+      title: "Tema",
+      dataIndex: "topic",
+      key: "topic",
+      ...getColumnSearchProps("topic"),
+      ellipsis: true,
+      width: "180px",
     },
     {
       title: "Subtema",
@@ -496,8 +508,16 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       title: "Archivo",
       key: "archive",
       render: (_, record) => (
-        <Space size={6}>
+        <Space size={6} direction="vertical">
           <span>{renderArchiveStatus(record)}</span>
+          {record.archiveUploadStatus === "failed" && record.archiveUploadError ? (
+            <span
+              style={{ color: "#d4380d", maxWidth: 220, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+              title={record.archiveUploadError}
+            >
+              {record.archiveUploadError}
+            </span>
+          ) : null}
           {canRetryArchive(record) && (
             <Button
               size="small"
