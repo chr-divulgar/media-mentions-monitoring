@@ -474,6 +474,54 @@ describe('NotesService.retryArchive', () => {
     expect(result.note).toMatchObject({ archiveUploadStatus: 'failed' });
     existsSync.mockRestore();
   });
+
+  it('returns failed with a clear reason when the note has no associated alert', async () => {
+    const existing = {
+      id: ALERT_ID,
+      media: 'radio',
+      mediaName: 'Blu Radio',
+      clientName: 'Ecopetrol',
+      date: '2026-10-14',
+      title: 'T',
+    };
+    const { service } = build(null, existing);
+
+    const result = await service.retryArchive({ noteId: ALERT_ID });
+
+    expect(result.note).toMatchObject({
+      archiveUploadStatus: 'failed',
+      archiveUploadError: expect.stringContaining('alerta asociada'),
+    });
+  });
+
+  it('completes missing note metadata from alert before checking clip path', async () => {
+    const existing = {
+      id: ALERT_ID,
+      alert_id: ALERT_ID,
+      media: 'radio',
+      title: 'T',
+    };
+    const radioAlert = {
+      ...alert,
+      media: 'radio',
+      platform: 'Blu Radio',
+      clientName: 'Ecopetrol',
+      startTime: new Date('2026-10-14T15:30:48.000Z'),
+    };
+    const { service } = build(radioAlert, existing);
+    const existsSync = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+
+    const result = await service.retryArchive({ noteId: ALERT_ID });
+
+    expect(result.note).toMatchObject({
+      archiveUploadStatus: 'failed',
+      mediaName: 'Blu Radio',
+      clientName: 'Ecopetrol',
+      date: '2026-10-14',
+    });
+    expect(result.note.archiveUploadError).toContain('Clip file not found on disk');
+    existsSync.mockRestore();
+  });
 });
 
 describe('NotesService.bulkUpdateSentiment', () => {

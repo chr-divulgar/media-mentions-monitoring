@@ -414,6 +414,27 @@ export class NotesService {
       throw new BadRequestException('Note not found.');
     }
 
+    const completed = await this.completeFromAlert(note as NoteDto, note.alert_id);
+    note.date = completed.date ?? note.date;
+    note.media = completed.media ?? note.media;
+    note.mediaName = completed.mediaName ?? note.mediaName;
+    note.clientName = completed.clientName ?? note.clientName;
+
+    if (!note.alert_id || !ObjectId.isValid(note.alert_id)) {
+      note.archiveUploadStatus = 'failed';
+      note.archiveUploadError = 'La nota no tiene una alerta asociada válida para ubicar su clip.';
+      const saved = await this.noteRepo.save(note);
+      return { note: saved };
+    }
+
+    if (!note.clientName || !note.mediaName || !note.date) {
+      note.archiveUploadStatus = 'failed';
+      note.archiveUploadError =
+        'La nota no tiene cliente, medio o fecha para construir la ruta del archivo en FileZilla.';
+      const saved = await this.noteRepo.save(note);
+      return { note: saved };
+    }
+
     const media = this.normalizeMediaKey(note.media);
     if (!NotesService.CLIP_MEDIA.includes(media)) {
       note.archiveUploadStatus = 'not_required';
@@ -519,11 +540,17 @@ export class NotesService {
 
     const clip = (extension: string) =>
       path.resolve(`./audioFiles/fragment_${alertId}.${extension}`);
+    const mp3Path = clip('mp3');
+    const mp4Path = clip('mp4');
     const filePath =
-      noteMediaKind(media, fs.existsSync(clip('mp4'))) === 'video' ? clip('mp4') : clip('mp3');
+      noteMediaKind(media, fs.existsSync(mp4Path)) === 'video' ? mp4Path : mp3Path;
     if (!fs.existsSync(filePath)) {
       if (alertId) {
-        await this.setClipArchiveState(alertId, 'failed', 'Clip file not found on disk.');
+        await this.setClipArchiveState(
+          alertId,
+          'failed',
+          `Clip file not found on disk (expected ${mp3Path}${media === 'tv' ? ` or ${mp4Path}` : ''}).`,
+        );
       }
       return false;
     }
