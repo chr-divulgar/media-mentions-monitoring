@@ -227,7 +227,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
 
   const getSubtopicOptions = (note: NoteDto) => {
     const client = clientByName.get(note.clientName);
-    const topic = (client?.topics ?? []).find((candidate) => candidate.name === note.topic);
+    const topic = (client?.topics ?? []).find((candidate) => fold(candidate.name) === fold(note.topic));
     const options = (topic?.subtopics ?? [])
       .filter((item) => !!item?.name)
       .map((item) => ({ label: item.name as string, value: item.name as string }));
@@ -238,6 +238,20 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       !options.some((option) => fold(option.value) === fold(currentSubtopic))
     ) {
       options.unshift({ label: currentSubtopic, value: currentSubtopic });
+    }
+
+    return options;
+  };
+
+  const getTopicOptions = (note: NoteDto) => {
+    const client = clientByName.get(note.clientName);
+    const options = (client?.topics ?? [])
+      .filter((item) => !!item?.name)
+      .map((item) => ({ label: item.name as string, value: item.name as string }));
+
+    const currentTopic = (note.topic ?? "").trim();
+    if (currentTopic.length > 0 && !options.some((option) => fold(option.value) === fold(currentTopic))) {
+      options.unshift({ label: currentTopic, value: currentTopic });
     }
 
     return options;
@@ -349,7 +363,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
 
     const status = record.archiveUploadStatus;
     if (status === "failed") return true;
-    if (!status && !record.link) return true;
+    if (!record.link && status !== "uploaded" && status !== "not_required") return true;
     return false;
   };
 
@@ -429,8 +443,26 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       title: "Tema",
       dataIndex: "topic",
       key: "topic",
-      ...getColumnSearchProps("topic"),
-      ellipsis: true,
+      render: (_, record) => (
+        <Select
+          size="small"
+          showSearch
+          allowClear
+          value={record.topic}
+          options={getTopicOptions(record)}
+          filterOption={(input, option) =>
+            fold(String(option?.label ?? "")).includes(fold(input))
+          }
+          onChange={(value) =>
+            updateSingleNote(record, {
+              topic: value,
+              // If topic changes, subtopic can become invalid.
+              subtopic: undefined,
+            })
+          }
+          loading={updatingId === record.id}
+        />
+      ),
       width: "180px",
     },
     {
