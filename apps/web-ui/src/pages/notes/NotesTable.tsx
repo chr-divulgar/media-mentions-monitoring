@@ -332,10 +332,8 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
       const finalStatus = updated?.archiveUploadStatus;
       if (finalStatus === "uploaded") {
         message.success("Archivo subido correctamente");
-      } else if (finalStatus === "failed") {
-        message.warning(updated?.archiveUploadError ?? "Falló nuevamente la subida del archivo");
       } else {
-        message.info("Reintento enviado");
+        message.warning(updated?.archiveUploadError ?? "No se pudo subir el archivo");
       }
     } catch (error) {
       const reason =

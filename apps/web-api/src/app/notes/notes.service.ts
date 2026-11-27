@@ -59,7 +59,7 @@ export class NotesService {
   private static readonly PDF_TIMEOUT_MS = 120_000;
   // Same day boundary the alerts UI uses for worker alerts (see AlertsService.getAlerts).
   private static readonly BOGOTA_OFFSET_MINUTES = -5 * 60;
-  private static readonly CLIP_MEDIA = ['radio', 'tv', 'television'];
+  private static readonly CLIP_MEDIA = ['radio', 'tv'];
 
   noteRepo: MongoRepository<Note>;
   workerAlertRepo: MongoRepository<WorkerAlert>;
@@ -385,7 +385,7 @@ export class NotesService {
     const incoming = keepGeneratedLink ? editable : { ...editable, attachment };
     incoming.message = this.generateMessage({ ...existingNote, ...incoming });
 
-    const normalizedMedia = (noteDto.media ?? '').trim().toLowerCase();
+    const normalizedMedia = this.normalizeMediaKey(noteDto.media);
     if (NotesService.CLIP_MEDIA.includes(normalizedMedia)) {
       incoming.archiveUploadStatus = 'pending';
       incoming.archiveUploadError = undefined;
@@ -414,7 +414,7 @@ export class NotesService {
       throw new BadRequestException('Note not found.');
     }
 
-    const media = (note.media ?? '').trim().toLowerCase();
+    const media = this.normalizeMediaKey(note.media);
     if (!NotesService.CLIP_MEDIA.includes(media)) {
       note.archiveUploadStatus = 'not_required';
       note.archiveUploadError = undefined;
@@ -428,6 +428,14 @@ export class NotesService {
 
     await this.archiveNoteClip(note, note.alert_id);
     const updated = await this.noteRepo.findOneBy({ _id: new ObjectId(input.noteId) } as never);
+    if (updated && updated.archiveUploadStatus === 'pending') {
+      updated.archiveUploadStatus = 'failed';
+      updated.archiveUploadError =
+        updated.archiveUploadError ?? 'No se pudo confirmar la subida del archivo.';
+      const saved = await this.noteRepo.save(updated);
+      return { note: saved as NoteDto };
+    }
+
     return { note: (updated ?? note) as NoteDto };
   }
 
@@ -498,10 +506,10 @@ export class NotesService {
    * so they are kept for the whole contract. Returns whether it was filed; a failure is logged, never thrown.
    */
   async archiveNoteClip(note: NoteDto, alertId?: string): Promise<boolean> {
-    const media = (note.media ?? '').trim().toLowerCase();
+    const media = this.normalizeMediaKey(note.media);
     if (
       !alertId ||
-      !['radio', 'tv', 'television'].includes(media) ||
+      !NotesService.CLIP_MEDIA.includes(media) ||
       !note.clientName ||
       !note.mediaName ||
       !note.date
