@@ -452,6 +452,9 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
           size="small"
           showSearch
           allowClear
+          style={{ width: "100%" }}
+          popupMatchSelectWidth={false}
+          dropdownStyle={{ minWidth: 280 }}
           value={record.topic}
           options={getTopicOptions(record)}
           filterOption={(input, option) =>
@@ -467,7 +470,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
           loading={updatingId === record.id}
         />
       ),
-      width: "180px",
+      width: "240px",
     },
     {
       title: "Subtema",
@@ -486,6 +489,9 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
             size="small"
             showSearch
             allowClear
+            style={{ width: "100%" }}
+            popupMatchSelectWidth={false}
+            dropdownStyle={{ minWidth: 320 }}
             disabled={!record.topic}
             value={record.subtopic}
             options={options}
@@ -523,7 +529,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
           />
         );
       },
-      width: "180px",
+      width: "260px",
     },
     {
       title: "Link",
