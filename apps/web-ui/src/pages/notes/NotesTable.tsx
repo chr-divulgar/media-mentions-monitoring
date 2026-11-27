@@ -65,6 +65,12 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
     return new Map(clients.map((client) => [client.name, client]));
   }, [clients]);
 
+  const getClientForNote = (note: NoteDto): ClientWithTopics | undefined => {
+    const exact = clientByName.get(note.clientName);
+    if (exact) return exact;
+    return clients.find((client) => fold(client.name) === fold(note.clientName));
+  };
+
   const sentimentOptions = [
     { label: NoteSentiment.NEUTRO, value: NoteSentiment.NEUTRO },
     { label: NoteSentiment.POSITIVO, value: NoteSentiment.POSITIVO },
@@ -226,7 +232,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
   };
 
   const getSubtopicOptions = (note: NoteDto) => {
-    const client = clientByName.get(note.clientName);
+    const client = getClientForNote(note);
     const topic = (client?.topics ?? []).find((candidate) => fold(candidate.name) === fold(note.topic));
     const options = (topic?.subtopics ?? [])
       .filter((item) => !!item?.name)
@@ -244,7 +250,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
   };
 
   const getTopicOptions = (note: NoteDto) => {
-    const client = clientByName.get(note.clientName);
+    const client = getClientForNote(note);
     const options = (client?.topics ?? [])
       .filter((item) => !!item?.name)
       .map((item) => ({ label: item.name as string, value: item.name as string }));
@@ -258,7 +264,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
   };
 
   const handleAddSubtopic = async (note: NoteDto, newName: string) => {
-    const client = clientByName.get(note.clientName);
+    const client = getClientForNote(note);
     if (!client?.id || !note.topic) {
       message.warning("Para crear subtema, la nota debe tener cliente y tema");
       return;
@@ -349,7 +355,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
     if (status === "not_required") return "No aplica";
 
     const media = (record.media ?? "").trim().toLowerCase();
-    if (["radio", "tv", "television"].includes(media)) {
+    if (["radio", "tv", "television", "televisión"].includes(media)) {
       return record.link ? "Subido" : "Pendiente";
     }
 
@@ -358,7 +364,7 @@ const NotesTable: React.FC<NotesTableProps> = ({ notes }) => {
 
   const canRetryArchive = (record: NoteDto): boolean => {
     const media = (record.media ?? "").trim().toLowerCase();
-    if (!["radio", "tv", "television"].includes(media)) return false;
+    if (!["radio", "tv", "television", "televisión"].includes(media)) return false;
     if (!record.id) return false;
 
     const status = record.archiveUploadStatus;
